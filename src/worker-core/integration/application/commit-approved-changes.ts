@@ -4,6 +4,7 @@ import {
   assertIntegrationCommitFiles,
   assertStatus,
   integrationAppliedFiles,
+  isTopologyOnlyReviewedMerge,
   markCommitCreated,
   normalizeProjectRelativePath,
   type IntegrationAttempt,
@@ -79,7 +80,7 @@ export async function commitApprovedChanges(
     const dirtyFiles = attempt.merge && observedDirtyFiles.length === 0
       ? [...integrationAppliedFiles(attempt)]
       : observedDirtyFiles;
-    if (dirtyFiles.length === 0) {
+    if (dirtyFiles.length === 0 && !isTopologyOnlyReviewedMerge(attempt)) {
       throw new IntegrationError({
         reason: IntegrationErrorReason.UnexpectedFiles,
         evidence: ["no_changed_files"],

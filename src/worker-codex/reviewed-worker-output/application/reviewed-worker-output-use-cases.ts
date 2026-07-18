@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   assertFilesWithinExpected,
+  emptyReviewedPatchSha256,
   normalizeExpectedFiles,
   ReviewDecisionStatus,
   type WorkspaceLock,
@@ -54,8 +55,10 @@ export async function captureReviewedWorkerOutputLocked(
   lock: WorkspaceLock,
 ): Promise<ReviewedWorkerOutputSnapshot> {
   const expectedPatchSha256 = normalizeSha256(input.expectedPatchSha256);
-  const approvedFiles = normalizeReviewedFiles(input.approvedFiles);
   const merge = normalizeReviewedOutputMerge(input.merge);
+  const approvedFiles = normalizeReviewedFiles(input.approvedFiles, {
+    allowEmpty: merge !== undefined,
+  });
   const captured = await deps.snapshotter.capture({
     workspacePath: lock.workspacePath,
     ...(merge ? { allowEmptyPatch: true } : {}),
@@ -69,6 +72,18 @@ export async function captureReviewedWorkerOutputLocked(
   const patchSha256 = sha256(captured.patch);
   if (patchSha256 !== expectedPatchSha256) {
     throw new Error("reviewed_worker_output_patch_hash_mismatch");
+  }
+  if (merge && changedFiles.length === 0 && approvedFiles.length === 0) {
+    if (
+      input.decision !== ReviewDecisionStatus.Approved ||
+      patchSha256 !== emptyReviewedPatchSha256 ||
+      captured.baseCommit !== merge.expectedTargetCommit ||
+      input.requiredChecks.length === 0
+    ) {
+      throw new Error(
+        "reviewed_worker_output_topology_only_merge_envelope_required",
+      );
+    }
   }
   const reviewDecision = reviewedOutputDecision({
     decision: input.decision,
@@ -146,7 +161,8 @@ function normalizeReviewedOutputMerge(
     merge.sourceBranch.startsWith("-") ||
     !merge.sourceBranch ||
     !/^[a-f0-9]{40}$/.test(merge.sourceCommit) ||
-    !/^[a-f0-9]{40}$/.test(merge.expectedTargetCommit)
+    !/^[a-f0-9]{40}$/.test(merge.expectedTargetCommit) ||
+    merge.sourceCommit === merge.expectedTargetCommit
   ) {
     throw new Error("reviewed_worker_output_merge_invalid");
   }

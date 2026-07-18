@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import {
+  emptyReviewedPatchSha256,
   OpaqueSecretDetectionPolicy,
   ReviewDecisionStatus,
   type ReviewDecision,
@@ -157,7 +158,9 @@ export class LocalReviewedWorkerOutputStore implements ReviewedWorkerOutputStore
     assertReviewedFileList(input.snapshot.changedFiles, {
       allowEmpty: input.snapshot.merge !== undefined,
     });
-    assertReviewedFileList(input.snapshot.reviewDecision.approvedFiles);
+    assertReviewedFileList(input.snapshot.reviewDecision.approvedFiles, {
+      allowEmpty: isTopologyOnlyReviewedSnapshot(input.snapshot),
+    });
     const patchSha256 = sha256(input.patch);
     if (patchSha256 !== input.snapshot.patchSha256) {
       throw new Error("reviewed_worker_output_store_patch_hash_mismatch");
@@ -581,10 +584,15 @@ function parseSnapshot(
     "merge",
     "capturedAt",
   ]);
-  const reviewDecision = parseReviewDecision(value.reviewDecision);
   const merge = value.merge === undefined
     ? undefined
     : parseMergePlan(value.merge);
+  const changedFiles = requiredReviewedFileList(value.changedFiles, {
+    allowEmpty: merge !== undefined,
+  });
+  const reviewDecision = parseReviewDecision(value.reviewDecision, {
+    allowEmptyApprovedFiles: merge !== undefined && changedFiles.length === 0,
+  });
   const patchByteLength = requiredNonNegativeInteger(value.patchByteLength);
   const snapshot: ReviewedWorkerOutputSnapshot = {
     format: reviewedWorkerOutputFormat,
@@ -599,9 +607,7 @@ function parseSnapshot(
     patchSha256: requiredString(value.patchSha256),
     patchByteLength,
     baseCommit: requiredString(value.baseCommit),
-    changedFiles: requiredReviewedFileList(value.changedFiles, {
-      allowEmpty: merge !== undefined,
-    }),
+    changedFiles,
     reviewDecision,
     ...(merge ? { merge } : {}),
     capturedAt: requiredString(value.capturedAt),
@@ -640,14 +646,18 @@ function parseMergePlan(value: unknown): NonNullable<ReviewedWorkerOutputSnapsho
     !merge.sourceBranch ||
     merge.sourceBranch.startsWith("-") ||
     !/^[a-f0-9]{40}$/.test(merge.sourceCommit) ||
-    !/^[a-f0-9]{40}$/.test(merge.expectedTargetCommit)
+    !/^[a-f0-9]{40}$/.test(merge.expectedTargetCommit) ||
+    merge.sourceCommit === merge.expectedTargetCommit
   ) {
     throw new Error("reviewed_worker_output_merge_invalid");
   }
   return merge;
 }
 
-function parseReviewDecision(value: unknown): ReviewDecision {
+function parseReviewDecision(
+  value: unknown,
+  options: { readonly allowEmptyApprovedFiles?: boolean } = {},
+): ReviewDecision {
   if (!isRecord(value) || !isReviewDecisionStatus(value.decision)) {
     throw new Error("reviewed_worker_output_review_invalid");
   }
@@ -662,7 +672,9 @@ function parseReviewDecision(value: unknown): ReviewDecision {
     reviewedBy: requiredString(value.reviewedBy),
     decision: value.decision,
     reason: requiredString(value.reason),
-    approvedFiles: requiredReviewedFileList(value.approvedFiles),
+    approvedFiles: requiredReviewedFileList(value.approvedFiles, {
+      allowEmpty: options.allowEmptyApprovedFiles === true,
+    }),
     requiredChecks: parseRequiredChecks(value.requiredChecks),
   };
 }
@@ -849,7 +861,12 @@ function requiredNonNegativeInteger(value: unknown): number {
 function assertReviewedPatchInvariant(
   snapshot: Pick<
     ReviewedWorkerOutputSnapshot,
-    "patchByteLength" | "changedFiles" | "merge"
+    | "patchByteLength"
+    | "patchSha256"
+    | "baseCommit"
+    | "changedFiles"
+    | "reviewDecision"
+    | "merge"
   >,
   patch?: string,
 ): void {
@@ -861,11 +878,35 @@ function assertReviewedPatchInvariant(
     ) {
       throw new Error("reviewed_worker_output_patch_required");
     }
+    if (
+      snapshot.reviewDecision.approvedFiles.length === 0 &&
+      (
+        snapshot.reviewDecision.decision !== ReviewDecisionStatus.Approved ||
+        snapshot.patchSha256 !== emptyReviewedPatchSha256 ||
+        snapshot.baseCommit !== snapshot.merge.expectedTargetCommit ||
+        snapshot.reviewDecision.requiredChecks.length === 0
+      )
+    ) {
+      throw new Error(
+        "reviewed_worker_output_topology_only_merge_envelope_required",
+      );
+    }
     return;
   }
   if (snapshot.changedFiles.length === 0) {
     throw new Error("reviewed_worker_output_changed_files_required");
   }
+}
+
+function isTopologyOnlyReviewedSnapshot(
+  snapshot: Pick<
+    ReviewedWorkerOutputSnapshot,
+    "merge" | "changedFiles" | "reviewDecision"
+  >,
+): boolean {
+  return snapshot.merge !== undefined &&
+    snapshot.changedFiles.length === 0 &&
+    snapshot.reviewDecision.approvedFiles.length === 0;
 }
 
 function sha256(value: string): string {

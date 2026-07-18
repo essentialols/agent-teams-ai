@@ -62,7 +62,12 @@ export function assertCanOpenIntegrationAttempt(
   });
   if (!pushDecision.allowed) throw integrationPolicyDenied(pushDecision);
   assertBaseRevisionAllowed(policy, input);
-  assertExpectedFilesAllowed(policy, input.reviewDecision.approvedFiles);
+  assertExpectedFilesAllowed(policy, input.reviewDecision.approvedFiles, {
+    allowEmpty:
+      input.merge !== undefined &&
+      input.workerOutput.changedFiles.length === 0 &&
+      input.reviewDecision.approvedFiles.length === 0,
+  });
   for (const file of input.reviewDecision.approvedFiles) {
     const writeDecision = access.canWritePath({
       path: join(input.targetWorkspacePath, normalizeProjectRelativePath(file)),
@@ -97,8 +102,11 @@ function assertBaseRevisionAllowed(
 export function assertExpectedFilesAllowed(
   policy: ProjectIntegrationPolicy,
   files: readonly string[],
+  options: { readonly allowEmpty?: boolean } = {},
 ): void {
-  const normalized = normalizeExpectedFiles(files);
+  const normalized = options.allowEmpty === true && files.length === 0
+    ? []
+    : normalizeExpectedFiles(files);
   const allowedPrefixes = policy.allowedPathPrefixes?.map(normalizeAllowedPathPrefix);
   if (!allowedPrefixes || allowedPrefixes.length === 0) return;
   const outside = normalized.filter((file) =>

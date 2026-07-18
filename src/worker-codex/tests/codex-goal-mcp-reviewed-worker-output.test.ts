@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -23,6 +24,7 @@ import {
   callToolJson,
   git,
   gitInitRepository,
+  gitStdout,
 } from "./codex-goal-mcp-test-support";
 
 const roots: string[] = [];
@@ -35,9 +37,9 @@ afterEach(async () => {
 
 describe("Codex project reviewed worker output", () => {
   it("captures through mark_reviewed and resolves through open_integration_attempt", async () => {
-    const root = await mkdtemp(
+    const root = await realpath(await mkdtemp(
       join(tmpdir(), "subscription-runtime-reviewed-mcp-"),
-    );
+    ));
     roots.push(root);
     const registryRootDir = join(root, "worker-jobs", "registry");
     const ledgerRoot = join(root, "control", "consumed-output-ledger");
@@ -46,11 +48,24 @@ describe("Codex project reviewed worker output", () => {
     const controllerJobRoot = join(root, "worker-jobs", controllerJobId);
     const workerJobRoot = join(root, "worker-jobs", workerJobId);
     const workerWorkspacePath = join(root, "worktrees", workerJobId);
+    const topologyWorkerJobId = "project-topology-reviewer";
+    const topologyWorkerJobRoot = join(
+      root,
+      "worker-jobs",
+      topologyWorkerJobId,
+    );
+    const topologyWorkspacePath = join(
+      root,
+      "worktrees",
+      topologyWorkerJobId,
+    );
     const targetWorkspacePath = join(root, "workspaces", "canonical");
     await Promise.all([
       mkdir(workerWorkspacePath, { recursive: true }),
+      mkdir(topologyWorkspacePath, { recursive: true }),
       mkdir(targetWorkspacePath, { recursive: true }),
       mkdir(workerJobRoot, { recursive: true }),
+      mkdir(topologyWorkerJobRoot, { recursive: true }),
     ]);
     await gitInitRepository(workerWorkspacePath);
     await gitInitRepository(targetWorkspacePath);
@@ -69,6 +84,13 @@ describe("Codex project reviewed worker output", () => {
       join(workerWorkspacePath, "docs", "packet.md"),
       "accepted output\n",
     );
+    await gitInitRepository(topologyWorkspacePath);
+    await writeFile(join(topologyWorkspacePath, "README.md"), "base\n");
+    await git(topologyWorkspacePath, ["add", "."]);
+    await git(topologyWorkspacePath, ["commit", "-m", "test: base"]);
+    const topologyTargetCommit = (
+      await gitStdout(topologyWorkspacePath, ["rev-parse", "HEAD"])
+    ).trim();
     const patch = await captureGitWorkspacePatch({
       workspacePath: workerWorkspacePath,
     });
@@ -116,6 +138,19 @@ describe("Codex project reviewed worker output", () => {
         join(workerJobRoot, "prompt.md"),
         "Continue reviewed remediation.\n",
       );
+      await callToolJson(client, "codex_goal_create_job", {
+        registryRootDir,
+        jobId: topologyWorkerJobId,
+        jobRootDir: topologyWorkerJobRoot,
+        authRootDir: join(root, "auth"),
+        workspacePath: topologyWorkspacePath,
+        promptPath: join(topologyWorkerJobRoot, "prompt.md"),
+        taskId: topologyWorkerJobId,
+        accounts: ["account-a"],
+        tmuxSession: topologyWorkerJobId,
+        codexBinaryPath: join(root, "missing-codex"),
+        networkAccess: NetworkAccessMode.Restricted,
+      });
       await callToolJson(client, "codex_goal_create_job", {
         registryRootDir,
         jobId: controllerJobId,
@@ -230,6 +265,89 @@ describe("Codex project reviewed worker output", () => {
             reviewedBy: controllerJobId,
             reason: "Exact packet diff accepted.",
           },
+        },
+      });
+
+      const topologyReviewed = await callToolJson(
+        client,
+        "codex_goal_project_mark_reviewed",
+        {
+          registryRootDir,
+          controllerJobId,
+          jobId: topologyWorkerJobId,
+          captureReviewedOutput: true,
+          expectedPatchSha256: sha256(""),
+          reviewDecision: "approved",
+          reviewedBy: controllerJobId,
+          reviewReason: "Exact topology-only merge accepted.",
+          approvedFiles: [],
+          requiredChecks: [{
+            checkId: "test:merge-topology",
+            command: ["git", "merge-tree"],
+          }],
+          merge: {
+            sourceRemote: "origin",
+            sourceBranch: "base/current",
+            sourceCommit: "4".repeat(40),
+            expectedTargetCommit: topologyTargetCommit,
+          },
+          note: "ACCEPT",
+        },
+      );
+      expect(topologyReviewed).toMatchObject({
+        ok: true,
+        reviewedOutputId: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      const topologyPreview = await callToolJson(
+        client,
+        "codex_goal_project_open_integration_attempt",
+        {
+          registryRootDir,
+          controllerJobId,
+          attemptId: "attempt-topology-only-merge",
+          reviewedOutputId: String(topologyReviewed.reviewedOutputId),
+          targetWorkspacePath,
+          targetBranch: "main",
+        },
+      );
+      expect(topologyPreview).toMatchObject({
+        ok: false,
+        reason: "confirm_open_required",
+        attemptPreview: {
+          workerOutput: {
+            patchSha256: sha256(""),
+            changedFiles: [],
+            evidencePaths: [expect.stringMatching(/output\.patch$/)],
+          },
+          reviewDecision: {
+            approvedFiles: [],
+            requiredChecks: [{ checkId: "test:merge-topology" }],
+          },
+          merge: {
+            sourceCommit: "4".repeat(40),
+            expectedTargetCommit: topologyTargetCommit,
+          },
+        },
+      });
+      const topologyOpened = await callToolJson(
+        client,
+        "codex_goal_project_open_integration_attempt",
+        {
+          registryRootDir,
+          controllerJobId,
+          attemptId: "attempt-topology-only-merge",
+          reviewedOutputId: String(topologyReviewed.reviewedOutputId),
+          targetWorkspacePath,
+          targetBranch: "main",
+          confirmOpen: true,
+        },
+      );
+      expect(topologyOpened).toMatchObject({
+        ok: true,
+        attempt: {
+          expectedFiles: [],
+          workerOutput: { changedFiles: [] },
+          reviewDecision: { approvedFiles: [] },
         },
       });
 

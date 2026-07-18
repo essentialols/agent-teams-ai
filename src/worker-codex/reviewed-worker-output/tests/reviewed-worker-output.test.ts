@@ -103,6 +103,78 @@ describe("reviewed worker output", () => {
     })).rejects.toThrow("reviewed_worker_output_manifest_invalid");
   });
 
+  it("captures an empty approved file set only for a fully bound topology-only merge", async () => {
+    const fixture = await reviewedOutputFixture();
+    await execFileAsync("git", ["-C", fixture.workspacePath, "reset", "--hard", "HEAD"]);
+    await rm(join(fixture.workspacePath, "src", "new.ts"), { force: true });
+    const deps = localReviewedWorkerOutputDeps({ rootDir: fixture.storeRoot });
+    const input = {
+      projectId: "project-1",
+      controllerJobId: "project-1-controller",
+      workerJobId: "project-1-topology-merge-reviewer",
+      taskId: "topology-merge-review",
+      workspacePath: fixture.workspacePath,
+      expectedPatchSha256: sha256(""),
+      decision: ReviewDecisionStatus.Approved,
+      reviewedBy: "project-1-controller",
+      reason: "Reviewed the exact topology-only merge.",
+      approvedFiles: [],
+      requiredChecks: [{
+        checkId: "test:merge-topology",
+        command: ["git", "merge-tree"],
+      }],
+      merge: {
+        sourceRemote: "origin",
+        sourceBranch: "base/current",
+        sourceCommit: "1".repeat(40),
+        expectedTargetCommit: fixture.baseCommit,
+      },
+    };
+
+    const snapshot = await captureReviewedWorkerOutput(deps, input);
+    expect(snapshot).toMatchObject({
+      patchByteLength: 0,
+      changedFiles: [],
+      reviewDecision: {
+        decision: ReviewDecisionStatus.Approved,
+        approvedFiles: [],
+        requiredChecks: [{ checkId: "test:merge-topology" }],
+      },
+    });
+
+    await commitReviewedWorkerOutputReviewAttestation({
+      store: deps.store,
+      markerVerifier: {
+        async verify() {
+          return {
+            markerSha256: sha256("topology merge marker"),
+            markerContent: "topology merge marker",
+          };
+        },
+      },
+      snapshot,
+      reviewMarkerPath: "/evidence/topology-merge-review.json",
+    });
+    await expect(resolveReviewedWorkerOutput({
+      store: deps.store,
+      projectId: "project-1",
+      reviewedOutputId: snapshot.reviewedOutputId,
+    })).resolves.toMatchObject({
+      workerOutput: {
+        patchSha256: sha256(""),
+        changedFiles: [],
+      },
+    });
+
+    await expect(captureReviewedWorkerOutput(deps, {
+      ...input,
+      workerJobId: "project-1-incomplete-topology-reviewer",
+      requiredChecks: [],
+    })).rejects.toThrow(
+      "reviewed_worker_output_topology_only_merge_envelope_required",
+    );
+  });
+
   it("rejects an empty reviewed patch without a merge envelope", async () => {
     const fixture = await reviewedOutputFixture();
     await execFileAsync("git", ["-C", fixture.workspacePath, "reset", "--hard", "HEAD"]);

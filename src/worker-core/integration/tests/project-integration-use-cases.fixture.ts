@@ -22,6 +22,8 @@ import {
 
 export const MERGE_TARGET_COMMIT = "a".repeat(40);
 export const MERGE_SOURCE_COMMIT = "b".repeat(40);
+export const EMPTY_PATCH_SHA256 =
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 export function mergeInput() {
   const base = input();
@@ -44,6 +46,25 @@ export function mergeInput() {
     reviewDecision: {
       ...base.reviewDecision,
       approvedFiles: ["src/memory.ts"],
+    },
+  };
+}
+
+export function topologyOnlyMergeInput() {
+  const candidate = mergeInput();
+  const patchPath = "/evidence/reviewed-empty.patch";
+  return {
+    ...candidate,
+    workerOutput: {
+      ...candidate.workerOutput,
+      patchPath,
+      patchSha256: EMPTY_PATCH_SHA256,
+      changedFiles: [],
+      evidencePaths: [patchPath],
+    },
+    reviewDecision: {
+      ...candidate.reviewDecision,
+      approvedFiles: [],
     },
   };
 }

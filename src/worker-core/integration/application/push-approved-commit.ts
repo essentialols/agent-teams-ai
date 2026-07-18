@@ -2,6 +2,7 @@ import {
   IntegrationAttemptStatus,
   PushAttemptStatus,
   assertStatus,
+  isTopologyOnlyReviewedMerge,
   markPushed,
   type IntegrationAttempt,
 } from "../domain/integration-attempt";
@@ -73,6 +74,12 @@ export async function pushApprovedCommit(
   const remote = input.remote ?? attempt.targetRemote;
   const branch = input.branch ?? attempt.targetBranch;
   const force = input.force ?? false;
+  if (force && isTopologyOnlyReviewedMerge(attempt)) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.PolicyDenied,
+      message: "topology_only_merge_force_push_denied",
+    });
+  }
   const decision = createAccessPolicyService(input.policy.access).canPushBranch({
     workspacePath: attempt.targetWorkspacePath,
     branch,
@@ -105,6 +112,20 @@ export async function pushApprovedCommit(
     remote,
     branch,
   });
+  if (
+    isTopologyOnlyReviewedMerge(attempt) &&
+    remoteCommit !== attempt.merge!.expectedTargetCommit &&
+    remoteCommit !== attempt.commitCandidate.commitSha
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.StaleBase,
+      message: "topology_only_merge_remote_changed",
+      evidence: [
+        `expected:${attempt.merge!.expectedTargetCommit}`,
+        `actual:${remoteCommit ?? "missing"}`,
+      ],
+    });
+  }
   if (remoteCommit !== attempt.commitCandidate.commitSha) {
     await deps.git.push({
       workspacePath: attempt.targetWorkspacePath,

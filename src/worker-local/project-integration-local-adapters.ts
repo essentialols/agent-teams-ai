@@ -275,7 +275,12 @@ export class LocalGitIntegrationAdapter implements GitPort {
         input.expectedParentCommits,
       );
     }
-    await this.git(["add", "--", ...files], workspacePath);
+    if (files.length === 0 && !input.expectedParentCommits) {
+      throw new Error("local_git_integration_commit_files_required");
+    }
+    if (files.length > 0) {
+      await this.git(["add", "--", ...files], workspacePath);
+    }
     const unmerged = await this.gitNullTerminatedPaths(
       ["diff", "--name-only", "--diff-filter=U", "-z"],
       workspacePath,

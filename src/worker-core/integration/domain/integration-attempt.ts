@@ -152,6 +152,9 @@ export type OpenIntegrationAttemptInput = {
   readonly now: string;
 };
 
+export const emptyReviewedPatchSha256 =
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
 export function openIntegrationAttempt(
   input: OpenIntegrationAttemptInput,
 ): IntegrationAttempt {
@@ -161,10 +164,19 @@ export function openIntegrationAttempt(
       message: "integration_attempt_requires_approved_review",
     });
   }
-  const expectedFiles = normalizeExpectedFiles(input.reviewDecision.approvedFiles);
   const merge = input.merge
     ? normalizeMergeIntegrationPlan(input.merge, input.workerOutput)
     : undefined;
+  const topologyOnlyMerge = merge !== undefined &&
+    input.workerOutput.changedFiles.length === 0 &&
+    input.reviewDecision.approvedFiles.length === 0;
+  if (topologyOnlyMerge) {
+    assertTopologyOnlyReviewedMerge(input, merge);
+  }
+  const expectedFiles = normalizeIntegrationFiles(
+    input.reviewDecision.approvedFiles,
+    topologyOnlyMerge,
+  );
   if (merge) {
     if (input.workerOutput.changedFiles.length > 0) {
       assertSameFiles(
@@ -213,7 +225,10 @@ export function markWorkerOutputApplied(
   },
 ): IntegrationAttempt {
   assertStatus(attempt, [IntegrationAttemptStatus.Opened]);
-  const changedFiles = normalizeExpectedFiles(input.changedFiles);
+  const changedFiles = normalizeIntegrationFiles(
+    input.changedFiles,
+    isTopologyOnlyReviewedMerge(attempt),
+  );
   assertIntegrationAppliedFiles(attempt, changedFiles);
   return {
     ...attempt,
@@ -305,7 +320,10 @@ export function markCommitCreated(
     status: IntegrationAttemptStatus.CommitCreated,
     commitCandidate: {
       ...input.commitCandidate,
-      files: normalizeExpectedFiles(input.commitCandidate.files),
+      files: normalizeIntegrationFiles(
+        input.commitCandidate.files,
+        isTopologyOnlyReviewedMerge(attempt),
+      ),
     },
     updatedAt: input.now,
   };
@@ -321,6 +339,10 @@ export function assertIntegrationAppliedFiles(
   attempt: IntegrationAttempt,
   files: readonly string[],
 ): void {
+  if (isTopologyOnlyReviewedMerge(attempt)) {
+    assertTopologyOnlyFileSet(files, "topology_only_merge_applied_files_must_be_empty");
+    return;
+  }
   if (!attempt.merge) {
     assertFilesWithinExpected(files, attempt.expectedFiles);
     return;
@@ -332,6 +354,10 @@ export function assertIntegrationCommitFiles(
   attempt: IntegrationAttempt,
   files: readonly string[],
 ): void {
+  if (isTopologyOnlyReviewedMerge(attempt)) {
+    assertTopologyOnlyFileSet(files, "topology_only_merge_commit_files_must_be_empty");
+    return;
+  }
   if (!attempt.merge) {
     assertFilesWithinExpected(files, attempt.expectedFiles);
     return;
@@ -341,6 +367,18 @@ export function assertIntegrationCommitFiles(
     integrationAppliedFiles(attempt),
     "merge_commit_files_mismatch",
   );
+}
+
+export function isTopologyOnlyReviewedMerge(
+  attempt: Pick<
+    IntegrationAttempt,
+    "merge" | "expectedFiles" | "workerOutput" | "reviewDecision"
+  >,
+): boolean {
+  return attempt.merge !== undefined &&
+    attempt.expectedFiles.length === 0 &&
+    attempt.workerOutput.changedFiles.length === 0 &&
+    attempt.reviewDecision.approvedFiles.length === 0;
 }
 
 export function assertMergeCommitParents(
@@ -398,6 +436,46 @@ function normalizeMergeIntegrationPlan(
     });
   }
   return normalized;
+}
+
+function assertTopologyOnlyReviewedMerge(
+  input: OpenIntegrationAttemptInput,
+  merge: MergeIntegrationPlan,
+): void {
+  const evidencePaths = input.workerOutput.evidencePaths ?? [];
+  if (
+    input.reviewDecision.decision !== ReviewDecisionStatus.Approved ||
+    input.workerOutput.patchSha256 !== emptyReviewedPatchSha256 ||
+    !input.workerOutput.patchPath ||
+    !evidencePaths.includes(input.workerOutput.patchPath) ||
+    input.workerOutput.baseCommit !== merge.expectedTargetCommit ||
+    input.reviewDecision.requiredChecks.length === 0
+  ) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: ["topology_only_merge_review_envelope_required"],
+    });
+  }
+}
+
+function normalizeIntegrationFiles(
+  paths: readonly string[],
+  allowEmpty: boolean,
+): readonly string[] {
+  if (allowEmpty && paths.length === 0) return [];
+  return normalizeExpectedFiles(paths);
+}
+
+function assertTopologyOnlyFileSet(
+  files: readonly string[],
+  evidence: string,
+): void {
+  if (files.length !== 0) {
+    throw new IntegrationError({
+      reason: IntegrationErrorReason.UnexpectedFiles,
+      evidence: [evidence],
+    });
+  }
 }
 
 function normalizeMergeCommit(value: string, field: string): string {

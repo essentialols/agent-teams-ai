@@ -20,6 +20,7 @@ import {
 import {
   parseProjectIntegrationChecks,
   requiredStringArrayArg,
+  stringArrayArg,
 } from "./project-integration-mcp/application/project-integration-mcp-values";
 import type { ProjectControlMcpArgs } from "./codex-goal-mcp-inputs";
 import { releaseCodexProjectAccount } from "./application/project-control/codex-goal-project-account-reservation";
@@ -113,10 +114,12 @@ export async function projectControlMarkReviewedView(
                 reviewedBy:
                   stringValue(args.reviewedBy) ?? controller.controller.jobId,
                 reason: stringValue(args.reviewReason) ?? reviewNote,
-                approvedFiles: requiredStringArrayArg(
-                  args.approvedFiles,
-                  "approvedFiles",
-                ),
+                approvedFiles: args.merge
+                  ? stringArrayArg(args.approvedFiles)
+                  : requiredStringArrayArg(
+                      args.approvedFiles,
+                      "approvedFiles",
+                    ),
                 requiredChecks: parseProjectIntegrationChecks(
                   args.requiredChecks,
                 ),

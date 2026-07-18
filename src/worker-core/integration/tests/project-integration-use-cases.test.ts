@@ -23,6 +23,7 @@ import {
   input,
   mergeInput,
   policy,
+  topologyOnlyMergeInput,
 } from "./project-integration-use-cases.fixture";
 
 describe("project integration use cases", () => {
@@ -502,6 +503,103 @@ describe("project integration use cases", () => {
       expectedFiles: ["src/base-change.ts"],
       appliedFiles: ["src/base-change.ts"],
     });
+  });
+
+  it("opens, applies, checks, commits and pushes a reviewed topology-only merge", async () => {
+    const fixture = createFixture();
+    fixture.git.appliedFiles = [];
+
+    const opened = await openProjectIntegrationAttempt(
+      fixture.deps(),
+      topologyOnlyMergeInput(),
+    );
+    expect(opened.expectedFiles).toEqual([]);
+
+    const applied = await applyWorkerOutput(fixture.deps(), {
+      attemptId: opened.attemptId,
+    });
+    expect(applied.appliedFiles).toEqual([]);
+
+    await runRequiredChecks(fixture.deps(), { attemptId: opened.attemptId });
+    const committed = await commitApprovedChanges(fixture.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): preserve reviewed merge topology",
+      policy: policy(),
+    });
+    expect(committed.commitCandidate).toMatchObject({
+      files: [],
+      parentCommits: [MERGE_TARGET_COMMIT, MERGE_SOURCE_COMMIT],
+    });
+    expect(fixture.git.lastCommittedFiles).toEqual([]);
+    expect(fixture.scanner.lastFiles).toEqual([]);
+
+    fixture.git.remoteCommit = MERGE_TARGET_COMMIT;
+    const pushed = await pushApprovedCommit(fixture.deps(), {
+      attemptId: opened.attemptId,
+      policy: policy(),
+    });
+    expect(pushed.status).toBe(IntegrationAttemptStatus.Pushed);
+  });
+
+  it("rejects incomplete or force-pushed topology-only merge envelopes", async () => {
+    const incomplete = createFixture();
+    const candidate = topologyOnlyMergeInput();
+    await expect(openProjectIntegrationAttempt(incomplete.deps(), {
+      ...candidate,
+      reviewDecision: { ...candidate.reviewDecision, requiredChecks: [] },
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.InvalidMergePlan,
+      evidence: ["topology_only_merge_review_envelope_required"],
+    });
+
+    const force = createFixture();
+    force.git.appliedFiles = [];
+    const opened = await openProjectIntegrationAttempt(
+      force.deps(),
+      topologyOnlyMergeInput(),
+    );
+    await applyWorkerOutput(force.deps(), { attemptId: opened.attemptId });
+    await runRequiredChecks(force.deps(), { attemptId: opened.attemptId });
+    await commitApprovedChanges(force.deps(), {
+      attemptId: opened.attemptId,
+      message: "chore(git): preserve reviewed merge topology",
+      policy: policy(),
+    });
+    await expect(pushApprovedCommit(force.deps(), {
+      attemptId: opened.attemptId,
+      force: true,
+      policy: { ...policy(), allowForcePush: true },
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.PolicyDenied,
+      message: "topology_only_merge_force_push_denied",
+    });
+
+    const drifted = createFixture();
+    drifted.git.appliedFiles = [];
+    const driftedAttempt = await openProjectIntegrationAttempt(
+      drifted.deps(),
+      { ...topologyOnlyMergeInput(), attemptId: "attempt-drifted" },
+    );
+    await applyWorkerOutput(drifted.deps(), {
+      attemptId: driftedAttempt.attemptId,
+    });
+    await runRequiredChecks(drifted.deps(), {
+      attemptId: driftedAttempt.attemptId,
+    });
+    await commitApprovedChanges(drifted.deps(), {
+      attemptId: driftedAttempt.attemptId,
+      message: "chore(git): preserve reviewed merge topology",
+      policy: policy(),
+    });
+    drifted.git.remoteCommit = "c".repeat(40);
+    await expect(pushApprovedCommit(drifted.deps(), {
+      attemptId: driftedAttempt.attemptId,
+      policy: policy(),
+    })).rejects.toMatchObject({
+      reason: IntegrationErrorReason.StaleBase,
+      message: "topology_only_merge_remote_changed",
+    });
+    expect(drifted.git.calls.filter((call) => call === "push")).toEqual([]);
   });
 
   it("rejects a merge whose reviewed patch is not based on the target parent", async () => {

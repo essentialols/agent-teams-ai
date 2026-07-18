@@ -98,6 +98,7 @@ export async function projectIntegrationOpenAttempt(
   if (targetCommit) assertSafeGitCommitSha(targetCommit);
   const baseStatus = optionalBaseRevisionStatus(args.baseStatus);
   const baseRevisionReasons = stringArrayArg(args.baseRevisionReasons);
+  const evidencePaths = resolvedReviewedOutput?.workerOutput.evidencePaths ?? [];
   if (!commitSha && !patchPath) {
     throw new Error("project_integration_worker_output_source_required");
   }
@@ -167,6 +168,7 @@ export async function projectIntegrationOpenAttempt(
       ...(baseStatus ? { baseStatus } : {}),
       ...(baseRevisionReasons.length ? { baseRevisionReasons } : {}),
       changedFiles,
+      ...(evidencePaths.length ? { evidencePaths } : {}),
     },
     reviewDecision,
   };

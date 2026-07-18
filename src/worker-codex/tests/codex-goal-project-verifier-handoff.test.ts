@@ -14,12 +14,14 @@ import {
   resolveCanonicalRemoteHead,
   resolveCanonicalRemoteWorktreeSource,
 } from "../application/project-control/codex-goal-project-git";
-import { resolveProjectSourceReference } from "../application/project-control/codex-goal-project-source-revision";
+import {
+  resolveProjectSourceReference,
+  resolveProjectSourceRevision,
+} from "../application/project-control/codex-goal-project-source-revision";
 import {
   readVerifiableProducerHandoff,
   readVerifiedProducerHandoff,
 } from "../application/project-control/codex-goal-project-verifier-handoff";
-import { resolveProjectSourceRevision } from "../application/project-control/codex-goal-project-source-revision";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];

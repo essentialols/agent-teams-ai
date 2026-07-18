@@ -105,6 +105,51 @@ export async function pushProjectBranch(
   throw new Error("project_control_push_failed_without_error");
 }
 
+export async function confirmProjectBranch(input: {
+  readonly workspacePath: string;
+  readonly branch: string;
+  readonly remote: string;
+  readonly expectedRemoteCommit: string;
+  readonly expectedLocalCommit: string;
+}): Promise<ProjectControlPushBranchResult> {
+  const localCommit = (
+    await execGitStdout([
+      "-C",
+      input.workspacePath,
+      "rev-parse",
+      "--verify",
+      `refs/heads/${input.branch}^{commit}`,
+    ])
+  ).trim();
+  assertFullCommit(localCommit, "project_control_push_local_commit_invalid");
+  assertFullCommit(
+    input.expectedLocalCommit,
+    "project_control_push_local_commit_invalid",
+  );
+  if (localCommit !== input.expectedLocalCommit) {
+    throw new Error("project_control_external_rewrite_local_commit_mismatch");
+  }
+  assertFullCommit(
+    input.expectedRemoteCommit,
+    "project_control_push_remote_commit_invalid",
+  );
+  const remoteCommitAfter = await remoteBranchCommit({
+    ...input,
+    force: false,
+  });
+  const recovered = remoteCommitAfter === input.expectedLocalCommit;
+  return pushResult({
+    status: recovered ? "applied" : "noop",
+    resourceId: `${input.remote}/${input.branch}`,
+    outcome: recovered
+      ? ProjectControlPushOutcome.FastForwarded
+      : ProjectControlPushOutcome.RemoteChanged,
+    localCommit,
+    remoteCommitBefore: input.expectedRemoteCommit,
+    remoteCommitAfter,
+  });
+}
+
 async function isAncestor(
   workspacePath: string,
   ancestor: string,

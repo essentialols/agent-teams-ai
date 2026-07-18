@@ -52,6 +52,7 @@ import {
   type CodexGoalProjectCreateWorktreeInput,
 } from "./application/project-control/codex-goal-project-control-contracts";
 import {
+  confirmProjectBranch as confirmProjectBranchRemoteAuthoritative,
   ProjectControlPushOutcome,
   pushProjectBranch as pushProjectBranchRemoteAuthoritative,
   type CodexGoalProjectPushBranchInput as RemoteAuthoritativePushBranchInput,
@@ -578,8 +579,13 @@ function codexProjectControlPorts(
           pushInput.confirmExternalRewriteRecovery === true
         ) {
           await pushProjectBranchWithExternalRewriteRecovery(pushInput);
-          const confirmed =
-            await pushProjectBranchRemoteAuthoritative(pushInput);
+          const confirmed = await confirmProjectBranchRemoteAuthoritative({
+            workspacePath: pushInput.workspacePath,
+            branch: pushInput.branch,
+            remote: pushInput.remote,
+            expectedRemoteCommit: pushInput.expectedRemoteCommit!,
+            expectedLocalCommit: pushInput.expectedLocalCommit!,
+          });
           return confirmed.outcome === ProjectControlPushOutcome.RemoteChanged
             ? confirmed
             : {

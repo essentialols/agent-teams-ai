@@ -47,17 +47,19 @@ vi.mock('@renderer/components/ui/button', () => ({
     className,
     onClick,
     disabled,
+    title,
     'aria-label': ariaLabel,
   }: {
     children: React.ReactNode;
     className?: string;
     onClick?: React.MouseEventHandler<HTMLButtonElement>;
     disabled?: boolean;
+    title?: string;
     'aria-label'?: string;
   }) =>
     React.createElement(
       'button',
-      { className, onClick, disabled, 'aria-label': ariaLabel, type: 'button' },
+      { className, onClick, disabled, title, 'aria-label': ariaLabel, type: 'button' },
       children
     ),
 }));
@@ -96,11 +98,13 @@ vi.mock('@renderer/components/ui/tooltip', () => ({
     React.createElement(React.Fragment, null, children),
   TooltipContent: ({
     children,
+    side,
     'data-testid': testId,
   }: {
     children: React.ReactNode;
+    side?: string;
     'data-testid'?: string;
-  }) => React.createElement('div', { 'data-testid': testId }, children),
+  }) => React.createElement('div', { 'data-side': side, 'data-testid': testId }, children),
 }));
 
 vi.mock('@renderer/hooks/useTheme', () => ({
@@ -729,7 +733,14 @@ describe('KanbanTaskCard flat board appearance', () => {
     expect(host.textContent).toContain('Implement safer onboarding flow');
     expect(host.textContent).toContain('alice');
     expect(host.querySelector('[data-member-badge-variant="text"]')?.textContent).toBe('alice');
-    expect(host.querySelector('[aria-label="Complete"]')).not.toBeNull();
+    const completeAction = host.querySelector('[aria-label="Complete"]');
+    expect(completeAction).not.toBeNull();
+    expect(completeAction?.getAttribute('title')).toBeNull();
+    expect(
+      Array.from(host.querySelectorAll('[data-side="left"]')).some(
+        (tooltip) => tooltip.textContent === 'Complete'
+      )
+    ).toBe(true);
 
     await act(async () => {
       root.unmount();
@@ -779,6 +790,13 @@ describe('KanbanTaskCard flat board appearance', () => {
     expect(host.querySelector('h5')?.className).not.toContain('h-8');
     expect(host.querySelector('[data-member-badge-variant="badge"]')?.textContent).toBe('alice');
     expect(host.querySelector('[data-kanban-task-toolbar="true"]')).toBeNull();
+    const completeAction = host.querySelector('[aria-label="Complete"]');
+    expect(completeAction?.getAttribute('title')).toBeNull();
+    expect(
+      Array.from(host.querySelectorAll('[data-side="top"]')).some(
+        (tooltip) => tooltip.textContent === 'Complete'
+      )
+    ).toBe(true);
 
     await act(async () => {
       root.unmount();

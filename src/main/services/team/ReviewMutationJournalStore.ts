@@ -34,6 +34,8 @@ export interface ReviewMutationJournalRecord {
   decisionStatuses?: ('pending' | 'applied')[];
   /** Exact path postimages captured before an applied decision is checkpointed. */
   decisionPostimages?: (ReviewMutationJournalPathPostimage[] | null)[];
+  /** Exact lock-scoped transitions checkpointed before their disk write begins. */
+  decisionTransitions?: (ReviewMutationJournalPathTransition[] | null)[];
   diskSteps?: ReviewMutationJournalDiskStep[];
   persistedState?: ReviewPersistedStateSnapshot;
   expectedDecisionRevision?: number;
@@ -66,6 +68,15 @@ export interface ReviewMutationJournalPathPostimage {
   filePath: string;
   /** Null means the path must be absent. Existing text is stored by digest only. */
   sha256: string | null;
+}
+
+export interface ReviewMutationJournalPathTransition {
+  filePath: string;
+  beforeContent: string | null;
+  afterContent: string | null;
+  operation?: 'replace' | 'delete' | 'move';
+  transactionId?: string;
+  relatedFilePath?: string;
 }
 
 interface LegacyReviewMutationJournalRecord {
@@ -142,7 +153,10 @@ export class ReviewMutationJournalStore {
     const isDecisionOnlyHistoryMutation =
       !hasDecisionBatch &&
       !hasDirectSteps &&
-      (input.kind === 'undo' || input.kind === 'redo') &&
+      (input.kind === 'undo' ||
+        input.kind === 'redo' ||
+        input.kind === 'reload-external' ||
+        input.kind === 'restore-history') &&
       !!input.persistedState;
     if (
       (!isDecisionOnlyHistoryMutation && hasDecisionBatch === hasDirectSteps) ||
@@ -240,6 +254,24 @@ export class ReviewMutationJournalStore {
       blocked: true,
       failure: message.slice(0, 2_000),
     });
+  }
+
+  async unblock(record: ReviewMutationJournalRecord): Promise<ReviewMutationJournalRecord> {
+    const current = this.parseRecord(
+      await this.readRecord(this.getRecordPath(record)),
+      record.id,
+      record.teamName,
+      record.persistenceScope
+    );
+    if (!current.blocked) return current;
+    const unblocked: ReviewMutationJournalRecord = {
+      ...current,
+      blocked: undefined,
+      failure: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeRecord(unblocked);
+    return unblocked;
   }
 
   async remove(record: ReviewMutationJournalRecord): Promise<void> {
@@ -361,7 +393,9 @@ export class ReviewMutationJournalStore {
         record.kind !== 'rename' &&
         record.kind !== 'bulk' &&
         record.kind !== 'undo' &&
-        record.kind !== 'redo') ||
+        record.kind !== 'redo' &&
+        record.kind !== 'reload-external' &&
+        record.kind !== 'restore-history') ||
       record.teamName !== expectedTeamName ||
       recordPersistenceScope?.scopeKey !== expectedScope.scopeKey ||
       recordPersistenceScope?.scopeToken !== expectedScope.scopeToken ||
@@ -393,7 +427,10 @@ export class ReviewMutationJournalStore {
     const hasDirectSteps = diskSteps.length > 0;
     if (!hasDecisionBatch && !hasDirectSteps) {
       return (
-        (record.kind === 'undo' || record.kind === 'redo') &&
+        (record.kind === 'undo' ||
+          record.kind === 'redo' ||
+          record.kind === 'reload-external' ||
+          record.kind === 'restore-history') &&
         !!record.persistedState &&
         fileContents.length === 0
       );
@@ -402,6 +439,7 @@ export class ReviewMutationJournalStore {
     if (hasDecisionBatch) {
       const statuses = record.decisionStatuses;
       const postimages = record.decisionPostimages;
+      const transitions = record.decisionTransitions;
       return (
         decisions.length === fileContents.length &&
         (statuses === undefined ||
@@ -422,6 +460,51 @@ export class ReviewMutationJournalStore {
                   (pathState.sha256 !== null &&
                     (typeof pathState.sha256 !== 'string' ||
                       !/^[a-f0-9]{64}$/.test(pathState.sha256))) ||
+                  seen.has(pathState.filePath)
+                ) {
+                  return false;
+                }
+                seen.add(pathState.filePath);
+                return true;
+              });
+            }))) &&
+        (transitions === undefined ||
+          (transitions.length === decisions.length &&
+            transitions.every((paths) => {
+              if (paths === null) return true;
+              if (!Array.isArray(paths) || paths.length === 0 || paths.length > 2_000) return false;
+              const seen = new Set<string>();
+              return paths.every((pathState) => {
+                if (
+                  !pathState ||
+                  typeof pathState.filePath !== 'string' ||
+                  pathState.filePath.length === 0 ||
+                  pathState.filePath.length > 32_768 ||
+                  (pathState.beforeContent !== null &&
+                    typeof pathState.beforeContent !== 'string') ||
+                  (pathState.afterContent !== null && typeof pathState.afterContent !== 'string') ||
+                  (pathState.operation !== undefined &&
+                    !['replace', 'delete', 'move'].includes(pathState.operation)) ||
+                  (pathState.transactionId !== undefined &&
+                    (typeof pathState.transactionId !== 'string' ||
+                      !/^[a-f0-9-]{36}$/i.test(pathState.transactionId))) ||
+                  (pathState.relatedFilePath !== undefined &&
+                    (typeof pathState.relatedFilePath !== 'string' ||
+                      pathState.relatedFilePath.length === 0 ||
+                      pathState.relatedFilePath.length > 32_768)) ||
+                  (pathState.operation === 'move' &&
+                    (pathState.transactionId === undefined ||
+                      pathState.relatedFilePath === undefined ||
+                      typeof pathState.beforeContent !== 'string' ||
+                      typeof pathState.afterContent !== 'string')) ||
+                  ((pathState.operation === 'replace' || pathState.operation === 'delete') &&
+                    pathState.transactionId === undefined) ||
+                  (pathState.operation === 'replace' &&
+                    (typeof pathState.beforeContent !== 'string' ||
+                      typeof pathState.afterContent !== 'string')) ||
+                  (pathState.operation === 'delete' &&
+                    (typeof pathState.beforeContent !== 'string' ||
+                      pathState.afterContent !== null)) ||
                   seen.has(pathState.filePath)
                 ) {
                   return false;

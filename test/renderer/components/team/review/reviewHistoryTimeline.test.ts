@@ -1,9 +1,14 @@
+import { restoreReviewDecisionRecordsForFile } from '@features/review-mutations';
 import {
+  areReviewPersistedStatesEqual,
+  buildForwardDiskMutationSteps,
   buildRedoDiskMutationSteps,
   buildUndoDiskMutationSteps,
+  classifyReviewHistoryRecovery,
   createReviewRedoAction,
   executeWithPreparedReviewWriteExpectations,
   getReviewDiskMutationExpectedContent,
+  markReviewMutationDiskPostimages,
 } from '@renderer/components/team/review/reviewHistoryTimeline';
 import { describe, expect, it } from 'vitest';
 
@@ -21,6 +26,110 @@ function snapshot(
 }
 
 describe('review history timeline', () => {
+  it('compares durable states independently of record key order', () => {
+    const left = {
+      hunkDecisions: { 'file.ts:1': 'rejected' as const, 'file.ts:0': 'accepted' as const },
+      fileDecisions: {},
+      hunkContextHashesByFile: undefined,
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
+    };
+    const equivalent = {
+      hunkDecisions: { 'file.ts:0': 'accepted' as const, 'file.ts:1': 'rejected' as const },
+      fileDecisions: {},
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
+    };
+    const different = {
+      ...equivalent,
+      hunkDecisions: { ...equivalent.hunkDecisions, 'file.ts:1': 'accepted' as const },
+    };
+
+    expect(areReviewPersistedStatesEqual(left, equivalent)).toBe(true);
+    expect(areReviewPersistedStatesEqual(left, different)).toBe(false);
+
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 3,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: false,
+          persistedState: equivalent,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
+          retried: false,
+        },
+        3,
+        left
+      )
+    ).toBe('retry-restore');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 4,
+          recoveredMutation: true,
+          recoveredRestoreHistory: true,
+          differentMutationPending: false,
+          persistedState: equivalent,
+          expectedRestoreCompleted: true,
+          diskPostimages: [{ filePath: '/repo/file.ts', content: 'before\n' }],
+          retried: true,
+        },
+        3,
+        left
+      )
+    ).toBe('apply-selected-restore');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 4,
+          recoveredMutation: true,
+          recoveredRestoreHistory: true,
+          differentMutationPending: false,
+          persistedState: different,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
+          retried: true,
+        },
+        3,
+        left
+      )
+    ).toBe('synchronize-latest');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 4,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: false,
+          persistedState: equivalent,
+          expectedRestoreCompleted: true,
+          diskPostimages: [{ filePath: '/repo/file.ts', content: 'before\n' }],
+          retried: false,
+        },
+        3,
+        left
+      )
+    ).toBe('apply-selected-restore');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 3,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: true,
+          persistedState: left,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
+          retried: false,
+        },
+        3,
+        left
+      )
+    ).toBe('different-mutation-pending');
+  });
+
   it('inverts content, create, and delete snapshots without weakening CAS', () => {
     expect(buildUndoDiskMutationSteps('action', [snapshot('content')])).toEqual([
       {
@@ -34,6 +143,15 @@ describe('review history timeline', () => {
     expect(buildRedoDiskMutationSteps('action', [snapshot('content')])).toEqual([
       {
         id: 'action:redo:0',
+        type: 'write',
+        filePath: '/repo/file.ts',
+        expectedContent: 'before\n',
+        content: 'after\n',
+      },
+    ]);
+    expect(buildForwardDiskMutationSteps('action', [snapshot('content')])).toEqual([
+      {
+        id: 'action:0',
         type: 'write',
         filePath: '/repo/file.ts',
         expectedContent: 'before\n',
@@ -147,5 +265,59 @@ describe('review history timeline', () => {
     expect(marked).toEqual(new Map([['/repo/file.ts', 'after\n']]));
     releaseMutation?.();
     await pending;
+  });
+
+  it('replaces provisional rename expectations with exact main-process postimages', () => {
+    const marked = new Map<string, string | null>();
+    marked.set('/repo/new.ts', null);
+
+    markReviewMutationDiskPostimages(
+      [
+        { filePath: '/repo/old.ts', content: null },
+        { filePath: '/repo/new.ts', content: 'authoritative agent content\n' },
+      ],
+      (filePath, content) => marked.set(filePath, content)
+    );
+
+    expect(marked).toEqual(
+      new Map([
+        ['/repo/new.ts', 'authoritative agent content\n'],
+        ['/repo/old.ts', null],
+      ])
+    );
+  });
+
+  it('restores only exact numeric hunk aliases for the selected review key', () => {
+    const file = {
+      filePath: '/repo/a',
+      changeKey: 'change:a',
+      relativePath: 'a',
+      snippets: [],
+      linesAdded: 1,
+      linesRemoved: 0,
+      isNewFile: false,
+    };
+    expect(
+      restoreReviewDecisionRecordsForFile(
+        file,
+        {
+          hunkDecisions: {
+            'change:a:0': 'rejected',
+            '/repo/a:1': 'rejected',
+            '/repo/a:shadow:0': 'accepted',
+            'change:a:shadow:0': 'accepted',
+          },
+          fileDecisions: {},
+        },
+        { hunkDecisions: { 'change:a:0': 'accepted' }, fileDecisions: {} }
+      )
+    ).toEqual({
+      hunkDecisions: {
+        'change:a:0': 'accepted',
+        '/repo/a:shadow:0': 'accepted',
+        'change:a:shadow:0': 'accepted',
+      },
+      fileDecisions: {},
+    });
   });
 });

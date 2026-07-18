@@ -264,6 +264,8 @@ export interface ReviewDiskUndoSnapshot {
   filePath: string;
   beforeContent: string;
   afterContent: string | null;
+  /** Main-observed preimage binding. Undefined snapshots predate authoritative history. */
+  authoritativeBeforeSha256?: string | null;
   file?: FileChangeSummary;
   fileIndex?: number;
   restoreConflict?: string;
@@ -278,10 +280,28 @@ export interface ReviewDiskUndoAction {
   decisionSnapshot?: ReviewDecisionSnapshot;
 }
 
+/** Stable user intent used to explain a durable Undo/Redo entry after restart. */
+export type ReviewActionDescriptor =
+  | {
+      intent: 'accept-hunk' | 'reject-hunk';
+      filePath: string;
+      /** Stable original hunk index, displayed to users as one-based. */
+      hunkIndex: number;
+    }
+  | {
+      intent: 'accept-file' | 'reject-file' | 'restore-file' | 'restore-rename';
+      filePath: string;
+    }
+  | { intent: 'accept-all' | 'reject-all'; fileCount: number };
+
+export type ReviewActionIntent = ReviewActionDescriptor['intent'];
+
 interface ReviewUndoActionBase {
   /** Stable identity used to prevent a stale async Undo from popping a newer action. */
   id: string;
   createdAt: string;
+  /** Optional for backward compatibility with history written before action previews. */
+  descriptor?: ReviewActionDescriptor;
 }
 
 /** Self-contained, ordered Accept/Reject history persisted with the decision snapshot. */
@@ -349,7 +369,9 @@ export type ReviewDirectDiskMutationStep =
 export interface ExecuteReviewMutationRequest {
   scope: ReviewFileScope;
   decisionPersistenceScope: ReviewDecisionPersistenceScope;
-  kind: 'restore' | 'rename' | 'undo' | 'redo';
+  kind: 'restore' | 'rename' | 'undo' | 'redo' | 'reload-external';
+  /** Reviewed file whose stale decisions/history are explicitly discarded on Reload. */
+  externalFilePath?: string;
   diskSteps: ReviewDirectDiskMutationStep[];
   persistedState: ReviewPersistedStateSnapshot;
   /** CAS guard preventing an old renderer from overwriting newer durable state. */
@@ -387,6 +409,87 @@ export interface ApplyReviewResult {
   }[];
   /** Revision committed together with the disk mutation. */
   decisionRevision?: number;
+  /** Main-bound action that must replace the renderer's optimistic history entry. */
+  committedReviewAction?: ReviewUndoAction;
+  /** Exact watched-path state produced by a durable disk mutation. */
+  diskPostimages?: ReviewMutationDiskPostimage[];
+}
+
+/** Exact text state expected at one watched path after a review disk mutation. */
+export interface ReviewMutationDiskPostimage {
+  filePath: string;
+  /** Null means the path is absent. */
+  content: string | null;
+}
+
+export interface ExecuteReviewMutationResult {
+  decisionRevision: number;
+  diskPostimages: ReviewMutationDiskPostimage[];
+  /** Present for Restore/Rename because main binds their authoritative disk snapshot. */
+  committedReviewAction?: ReviewUndoAction;
+}
+
+/** Explicitly resumes one failed durable mutation in its exact review scope. */
+export interface RetryReviewMutationRecoveryRequest {
+  scope: ReviewFileScope;
+  decisionPersistenceScope: ReviewDecisionPersistenceScope;
+  /** Optional fingerprint used by checkpoint Restore so it never resumes a different WAL. */
+  expectedRestore?: {
+    expectedDecisionRevision: number;
+    persistedState: ReviewPersistedStateSnapshot;
+    diskSteps: ReviewDirectDiskMutationStep[];
+  };
+}
+
+export interface RetryReviewMutationRecoveryResult {
+  decisionRevision: number;
+  /** True when this call found and finished a journaled mutation. */
+  recoveredMutation: boolean;
+  /** True only when that journal belonged to a checkpoint Restore. */
+  recoveredRestoreHistory: boolean;
+  /** A WAL exists, but it is not the exact Restore fingerprint supplied by this caller. */
+  differentMutationPending: boolean;
+  /** Exact state after recovery, or null when this scope has no persisted review state. */
+  persistedState: ReviewPersistedStateSnapshot | null;
+  /** True only when the caller's exact checkpoint Restore is durably complete. */
+  expectedRestoreCompleted: boolean;
+  /** Exact watched-path state for the recovered mutation or completed expected Restore. */
+  diskPostimages: ReviewMutationDiskPostimage[];
+  /** Kept separate so callers can explain that a previously blocked mutation was retried. */
+  retried: boolean;
+}
+
+/** A durable checkpoint in the linear Accept/Reject history. */
+export type ReviewHistoryRestoreTarget =
+  | { kind: 'start' }
+  | { kind: 'after-action'; stack: 'undo' | 'redo'; actionId: string };
+
+export interface RestoreReviewHistoryRequest {
+  scope: ReviewFileScope;
+  decisionPersistenceScope: ReviewDecisionPersistenceScope;
+  target: ReviewHistoryRestoreTarget;
+  expectedDecisionRevision: number;
+}
+
+export interface RestoreReviewHistoryResult {
+  decisionRevision: number;
+  persistedState: ReviewPersistedStateSnapshot;
+  direction: 'undo' | 'redo' | 'none';
+  actionCount: number;
+  diskPostimages: ReviewMutationDiskPostimage[];
+}
+
+/** Exact main-process disk transition used to bind durable Undo history. */
+export interface ApplyReviewDiskTransition {
+  filePath: string;
+  beforeContent: string | null;
+  afterContent: string | null;
+  /** Kernel-level mutation shape used to verify exact no-op provenance after a crash. */
+  operation?: 'replace' | 'delete' | 'move';
+  /** App-owned filesystem transaction retained until the WAL postimage checkpoint. */
+  transactionId?: string;
+  /** Destination path for a move transaction. */
+  relatedFilePath?: string;
 }
 
 /** Полный file content для CodeMirror */

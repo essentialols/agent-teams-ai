@@ -1,7 +1,7 @@
 import { atomicWriteAsync, unlinkPathDurably } from '@main/utils/atomicWrite';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import { createLogger } from '@shared/utils/logger';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -23,6 +23,7 @@ const MAX_FILE_PATH_LENGTH = 32 * 1024;
 const MAX_HISTORY_FILE_BYTES = 128 * 1024 * 1024;
 const MAX_HISTORY_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_HISTORY_ENTRIES = 512;
+const MAX_GENERATION_LENGTH = 128;
 const MAX_EXACT_SCOPES_PER_LOGICAL_SCOPE = 16;
 const MAX_JSON_DEPTH = 100;
 const MAX_JSON_NODES = 1_000_000;
@@ -38,6 +39,10 @@ interface StoredReviewDraftHistory {
 export interface SaveReviewDraftHistoryEntryInput {
   filePath: string;
   codec: 'codemirror-history-v1';
+  /** Last per-file revision durably observed by this writer. */
+  expectedRevision: number;
+  /** Exact generation paired with expectedRevision; null only when no entry was observed. */
+  expectedGeneration: string | null;
   revision: number;
   diskBaseline: string | null;
   editorState: ReviewSerializedEditorState;
@@ -115,6 +120,19 @@ function entriesEqual(
   );
 }
 
+function isValidGeneration(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= MAX_GENERATION_LENGTH &&
+    !value.includes('\0')
+  );
+}
+
+function getLegacyGeneration(entry: Omit<ReviewDraftHistoryEntry, 'generation'>): string {
+  return `legacy-${createHash('sha256').update(JSON.stringify(entry)).digest('hex')}`;
+}
+
 export class ReviewDraftHistoryStore {
   private assertSafeScope(teamName: string, scopeKey: string, scopeToken: string): void {
     if (typeof teamName !== 'string' || !TEAM_NAME_PATTERN.test(teamName)) {
@@ -140,8 +158,13 @@ export class ReviewDraftHistoryStore {
       input.filePath.length > MAX_FILE_PATH_LENGTH ||
       input.filePath.includes('\0') ||
       input.codec !== 'codemirror-history-v1' ||
+      !Number.isSafeInteger(input.expectedRevision) ||
+      input.expectedRevision < 0 ||
+      (input.expectedRevision === 0
+        ? input.expectedGeneration !== null
+        : !isValidGeneration(input.expectedGeneration)) ||
       !Number.isSafeInteger(input.revision) ||
-      input.revision < 1 ||
+      input.revision <= input.expectedRevision ||
       (input.diskBaseline !== null && typeof input.diskBaseline !== 'string') ||
       !isSerializedEditorState(input.editorState)
     ) {
@@ -193,6 +216,7 @@ export class ReviewDraftHistoryStore {
       throw new InvalidReviewDraftHistoryError('Too many review draft history entries');
     }
     for (const [filePath, entry] of entries) {
+      const candidate = entry as Partial<ReviewDraftHistoryEntry>;
       if (
         !entry ||
         typeof entry !== 'object' ||
@@ -206,10 +230,16 @@ export class ReviewDraftHistoryStore {
         entry.revision < 1 ||
         (entry.diskBaseline !== null && typeof entry.diskBaseline !== 'string') ||
         typeof entry.updatedAt !== 'string' ||
+        (candidate.generation !== undefined && !isValidGeneration(candidate.generation)) ||
         !isSerializedEditorState(entry.editorState) ||
         Buffer.byteLength(JSON.stringify(entry), 'utf8') > MAX_HISTORY_ENTRY_BYTES
       ) {
         throw new InvalidReviewDraftHistoryError('Invalid review draft history entry');
+      }
+      if (candidate.generation === undefined) {
+        candidate.generation = getLegacyGeneration(
+          entry as Omit<ReviewDraftHistoryEntry, 'generation'>
+        );
       }
     }
     return data as StoredReviewDraftHistory;
@@ -351,20 +381,29 @@ export class ReviewDraftHistoryStore {
     const stored = await this.readStored(teamName, scopeKey, scopeToken);
     const entries = { ...(stored?.entries ?? {}) };
     const existing = entries[input.filePath];
-    if (input.revision < (existing?.revision ?? 0)) {
-      throw new Error('Stale review draft history revision');
+    const currentRevision = existing?.revision ?? 0;
+    const currentGeneration = existing?.generation ?? null;
+    if (
+      input.expectedRevision !== currentRevision ||
+      input.expectedGeneration !== currentGeneration
+    ) {
+      if (existing && entriesEqual(existing, input)) return existing;
+      throw new Error('Review draft history changed; refusing stale state overwrite');
     }
-    if (input.revision === existing?.revision) {
-      if (!entriesEqual(existing, input)) {
-        throw new Error('Conflicting review draft history revision');
-      }
+    if (existing && entriesEqual(existing, input)) {
       return existing;
     }
     if (!existing && Object.keys(entries).length >= MAX_HISTORY_ENTRIES) {
       throw new Error('Too many review draft history entries');
     }
+    const {
+      expectedRevision: _expectedRevision,
+      expectedGeneration: _expectedGeneration,
+      ...entryInput
+    } = input;
     const entry: ReviewDraftHistoryEntry = {
-      ...input,
+      ...entryInput,
+      generation: randomUUID(),
       updatedAt: new Date().toISOString(),
     };
     entries[input.filePath] = entry;
@@ -376,7 +415,9 @@ export class ReviewDraftHistoryStore {
     teamName: string,
     scopeKey: string,
     scopeToken: string,
-    filePath: string
+    filePath: string,
+    expectedRevision: number,
+    expectedGeneration: string | null
   ): Promise<void> {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
     if (
@@ -387,8 +428,23 @@ export class ReviewDraftHistoryStore {
     ) {
       throw new Error('Invalid review draft history file path');
     }
+    if (
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 0 ||
+      (expectedRevision === 0
+        ? expectedGeneration !== null
+        : !isValidGeneration(expectedGeneration))
+    ) {
+      throw new Error('Invalid review draft history revision');
+    }
     const stored = await this.readStored(teamName, scopeKey, scopeToken);
     if (!stored || !(filePath in stored.entries)) return;
+    if (
+      stored.entries[filePath]?.revision !== expectedRevision ||
+      stored.entries[filePath]?.generation !== expectedGeneration
+    ) {
+      throw new Error('Review draft history changed; refusing stale state overwrite');
+    }
     const entries = { ...stored.entries };
     delete entries[filePath];
     if (Object.keys(entries).length === 0) {
@@ -409,5 +465,25 @@ export class ReviewDraftHistoryStore {
         if (error.code !== 'ENOENT') throw error;
       }
     );
+  }
+
+  async clearUnreadableScope(
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string
+  ): Promise<void> {
+    this.assertSafeScope(teamName, scopeKey, scopeToken);
+    try {
+      const current = await this.readStored(teamName, scopeKey, scopeToken);
+      if (current) {
+        throw new Error(
+          'Saved manual edit history became readable; refusing destructive recovery discard'
+        );
+      }
+      return;
+    } catch (error) {
+      if (!(error instanceof InvalidReviewDraftHistoryError)) throw error;
+    }
+    await this.clearScope(teamName, scopeKey, scopeToken);
   }
 }

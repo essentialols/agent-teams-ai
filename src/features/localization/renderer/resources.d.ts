@@ -3000,7 +3000,7 @@ export default interface Resources {
       connectionCards: {
         anthropic: {
           apiKeyDescription: 'Use ANTHROPIC_API_KEY and Anthropic API billing.';
-          autoDescription: 'Use Anthropic runtime defaults and the best local credential available.';
+          autoDescription: 'Use Anthropic runtime defaults and the best local credential available, including Amazon Bedrock when configured.';
           hint: 'Auto keeps Anthropic on its default local credential resolution.';
           subscriptionDescription: 'Use your local Anthropic sign-in session and subscription access.';
           subscriptionTitle: 'Anthropic subscription';
@@ -5881,7 +5881,7 @@ export default interface Resources {
         fileCount: '{{count}} files';
         fileCount_few: '{{count}} files';
         fileCount_many: '{{count}} files';
-        fileCount_one: '{{count}} files';
+        fileCount_one: '{{count}} file';
         fileCount_other: '{{count}} files';
         fileRowsHidden: '{{count}} file rows hidden';
         fileRowsHidden_few: '{{count}} file rows hidden';

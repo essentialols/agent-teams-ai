@@ -501,19 +501,24 @@ export class ReviewDecisionStore {
         ids.has(candidate.id) ||
         typeof candidate.createdAt !== 'string' ||
         candidate.createdAt.length === 0 ||
-        candidate.createdAt.length > 128
+        candidate.createdAt.length > 128 ||
+        (candidate.descriptor !== undefined && !this.isReviewActionDescriptor(candidate.descriptor))
       ) {
         return false;
       }
       ids.add(candidate.id);
       if (candidate.kind === 'hunk') {
-        return this.isHunkUndoAction(candidate.action);
+        return (
+          this.isHunkUndoAction(candidate.action) &&
+          this.isReviewActionDescriptorConsistent(candidate as ReviewUndoAction)
+        );
       }
       if (candidate.kind === 'disk') {
         diskSnapshotCount++;
         return (
           diskSnapshotCount <= MAX_STORED_DECISION_ENTRIES &&
-          this.isDiskUndoAction(candidate.action)
+          this.isDiskUndoAction(candidate.action) &&
+          this.isReviewActionDescriptorConsistent(candidate as ReviewUndoAction)
         );
       }
       if (candidate.kind === 'bulk') {
@@ -522,11 +527,87 @@ export class ReviewDecisionStore {
         return (
           diskSnapshotCount <= MAX_STORED_DECISION_ENTRIES &&
           this.isDecisionSnapshot(candidate.decisionSnapshot) &&
-          candidate.diskSnapshots.every((snapshot) => this.isDiskUndoSnapshot(snapshot))
+          candidate.diskSnapshots.every((snapshot) => this.isDiskUndoSnapshot(snapshot)) &&
+          this.isReviewActionDescriptorConsistent(candidate as ReviewUndoAction)
         );
       }
       return false;
     });
+  }
+
+  private isReviewActionDescriptor(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const candidate = value as {
+      intent?: unknown;
+      filePath?: unknown;
+      hunkIndex?: unknown;
+      fileCount?: unknown;
+    };
+    const hasSafeFilePath =
+      typeof candidate.filePath === 'string' &&
+      candidate.filePath.length > 0 &&
+      candidate.filePath.length <= MAX_STORED_KEY_LENGTH &&
+      !candidate.filePath.includes('\0');
+    const hasSafeHunkIndex =
+      Number.isSafeInteger(candidate.hunkIndex) && Number(candidate.hunkIndex) >= 0;
+    const hasSafeFileCount =
+      Number.isSafeInteger(candidate.fileCount) &&
+      Number(candidate.fileCount) > 0 &&
+      Number(candidate.fileCount) <= MAX_STORED_DECISION_ENTRIES;
+
+    switch (candidate.intent) {
+      case 'accept-hunk':
+      case 'reject-hunk':
+        return hasSafeFilePath && hasSafeHunkIndex && candidate.fileCount === undefined;
+      case 'accept-file':
+      case 'reject-file':
+      case 'restore-file':
+      case 'restore-rename':
+        return (
+          hasSafeFilePath && candidate.hunkIndex === undefined && candidate.fileCount === undefined
+        );
+      case 'accept-all':
+      case 'reject-all':
+        return (
+          candidate.filePath === undefined && candidate.hunkIndex === undefined && hasSafeFileCount
+        );
+      default:
+        return false;
+    }
+  }
+
+  private isReviewActionDescriptorConsistent(action: ReviewUndoAction): boolean {
+    const descriptor = action.descriptor;
+    if (!descriptor) return true;
+    if (action.kind === 'hunk') {
+      return (
+        (descriptor.intent === 'accept-hunk' || descriptor.intent === 'reject-hunk') &&
+        descriptor.filePath === action.action.filePath &&
+        descriptor.hunkIndex === action.action.originalIndex
+      );
+    }
+    if (action.kind === 'disk') {
+      const { snapshot, originalIndex } = action.action;
+      if (originalIndex !== undefined) {
+        return (
+          descriptor.intent === 'reject-hunk' &&
+          descriptor.filePath === snapshot.filePath &&
+          descriptor.hunkIndex === originalIndex
+        );
+      }
+      return (
+        (descriptor.intent === 'reject-file' ||
+          descriptor.intent === 'restore-file' ||
+          descriptor.intent === 'restore-rename') &&
+        descriptor.filePath === snapshot.filePath
+      );
+    }
+    if (action.diskSnapshots.length > 0) {
+      return (
+        descriptor.intent === 'reject-all' && descriptor.fileCount === action.diskSnapshots.length
+      );
+    }
+    return descriptor.intent === 'accept-all' || descriptor.intent === 'accept-file';
   }
 
   private isReviewRedoHistory(value: unknown): value is ReviewRedoAction[] {
@@ -611,6 +692,7 @@ export class ReviewDecisionStore {
       filePath?: unknown;
       beforeContent?: unknown;
       afterContent?: unknown;
+      authoritativeBeforeSha256?: unknown;
       file?: unknown;
       fileIndex?: unknown;
       restoreConflict?: unknown;
@@ -630,6 +712,10 @@ export class ReviewDecisionStore {
       candidate.filePath.length <= MAX_STORED_KEY_LENGTH &&
       typeof candidate.beforeContent === 'string' &&
       (typeof candidate.afterContent === 'string' || candidate.afterContent === null) &&
+      (candidate.authoritativeBeforeSha256 === undefined ||
+        candidate.authoritativeBeforeSha256 === null ||
+        (typeof candidate.authoritativeBeforeSha256 === 'string' &&
+          /^[a-f0-9]{64}$/.test(candidate.authoritativeBeforeSha256))) &&
       (candidate.file === undefined || this.isFileSummary(candidate.file)) &&
       (candidate.fileIndex === undefined ||
         (Number.isSafeInteger(candidate.fileIndex) && (candidate.fileIndex as number) >= 0)) &&
@@ -942,20 +1028,26 @@ export class ReviewDecisionStore {
         reviewRedoHistory: data.reviewRedoHistory ?? [],
       };
       if (data.expectedRevision !== undefined && data.expectedRevision !== currentRevision) {
-        if (
-          data.mutationId &&
-          current?.lastMutationId === data.mutationId &&
-          isDeepStrictEqual(
-            {
-              hunkDecisions: current.hunkDecisions,
-              fileDecisions: current.fileDecisions,
-              hunkContextHashesByFile: current.hunkContextHashesByFile,
-              reviewActionHistory: current.reviewActionHistory,
-              reviewRedoHistory: current.reviewRedoHistory,
-            },
-            targetSnapshot
-          )
-        ) {
+        const currentSnapshot = current && {
+          hunkDecisions: current.hunkDecisions,
+          fileDecisions: current.fileDecisions,
+          hunkContextHashesByFile: current.hunkContextHashesByFile,
+          reviewActionHistory: current.reviewActionHistory,
+          reviewRedoHistory: current.reviewRedoHistory,
+        };
+        const exactSnapshotMatches =
+          currentSnapshot !== null && isDeepStrictEqual(currentSnapshot, targetSnapshot);
+        const committedMutationRetry =
+          data.mutationId !== undefined && current?.lastMutationId === data.mutationId;
+        // Generic Accept/Reject and clear requests do not have a mutation id. A single
+        // revision advance with the exact full snapshot is the only safe evidence that
+        // this request committed and merely lost its IPC response. Larger gaps may hide
+        // intervening writers even if the scope later returned to equivalent state.
+        const committedGenericRetry =
+          data.mutationId === undefined &&
+          currentRevision === data.expectedRevision + 1 &&
+          exactSnapshotMatches;
+        if ((committedMutationRetry && exactSnapshotMatches) || committedGenericRetry) {
           return currentRevision;
         }
         throw new Error('Review decisions changed; refusing stale state overwrite');
@@ -1093,6 +1185,62 @@ export class ReviewDecisionStore {
         );
         throw error;
       }
+    }
+  }
+
+  async clearUnreadableExactScope(
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string
+  ): Promise<void> {
+    this.assertSafeScope(teamName, scopeKey, scopeToken);
+    const exactPath = this.getV2FilePath(teamName, scopeKey, scopeToken);
+    const legacyPath = this.getLegacyFilePath(teamName, scopeKey);
+    let exactUnreadable = false;
+    let legacyUnreadable = false;
+    let exact: InternalLoadedReviewDecisions | null = null;
+    let legacy: InternalLoadedReviewDecisions | null = null;
+
+    try {
+      exact = await this.loadFromPath(exactPath, scopeToken, scopeKey);
+    } catch (error) {
+      if (!(error instanceof InvalidReviewDecisionDataError)) throw error;
+      exactUnreadable = true;
+    }
+    if (exact) {
+      throw new Error(
+        'Saved review decisions became readable; refusing destructive recovery discard'
+      );
+    }
+
+    try {
+      legacy = await this.loadFromPath(legacyPath, scopeToken, scopeKey);
+    } catch (error) {
+      if (!(error instanceof InvalidReviewDecisionDataError)) throw error;
+      legacyUnreadable = true;
+    }
+    if (legacy) {
+      // A corrupt exact snapshot can hide a valid legacy fallback. Remove only the corrupt
+      // blocker and make the renderer hydrate the readable state instead of deleting it.
+      if (exactUnreadable) {
+        await unlinkPathDurably(exactPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+      }
+      throw new Error(
+        'Saved review decisions became readable; refusing destructive recovery discard'
+      );
+    }
+
+    if (exactUnreadable) {
+      await unlinkPathDurably(exactPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+    }
+    if (legacyUnreadable) {
+      await unlinkPathDurably(legacyPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
     }
   }
 }

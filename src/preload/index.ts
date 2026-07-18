@@ -1,3 +1,4 @@
+import { createAppCloseCoordinationBridge } from '@features/app-close-coordination/preload';
 import { createCodexAccountBridge } from '@features/codex-account/preload';
 import { createCodexRuntimeInstallerBridge } from '@features/codex-runtime-installer/preload';
 import { createMemberLogStreamBridge } from '@features/member-log-stream/preload';
@@ -97,7 +98,9 @@ import {
   REVIEW_REAPPLY_REJECTED_RENAME,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
+  REVIEW_RESTORE_HISTORY,
   REVIEW_RESTORE_REJECTED_RENAME,
+  REVIEW_RETRY_MUTATION_RECOVERY,
   REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
@@ -301,6 +304,7 @@ import type {
   CrossTeamSendResult,
   ElectronAPI,
   ExecuteReviewMutationRequest,
+  ExecuteReviewMutationResult,
   FileChangeWithContent,
   GlobalTask,
   HttpServerStatus,
@@ -319,7 +323,11 @@ import type {
   ProjectBranchChangeEvent,
   RejectResult,
   ReplaceMembersRequest,
+  RestoreReviewHistoryRequest,
+  RestoreReviewHistoryResult,
   RetryFailedOpenCodeSecondaryLanesResult,
+  RetryReviewMutationRecoveryRequest,
+  RetryReviewMutationRecoveryResult,
   ReviewFileScope,
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
@@ -564,6 +572,7 @@ ipcRenderer.on(
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 const electronAPI: ElectronAPI = {
+  appCloseCoordination: createAppCloseCoordinationBridge(ipcRenderer),
   ...createCodexAccountBridge({
     ipcRenderer,
   }),
@@ -1515,7 +1524,16 @@ const electronAPI: ElectronAPI = {
       return invokeIpcWithResult<ApplyReviewResult>(REVIEW_APPLY_DECISIONS, request);
     },
     executeMutation: async (request: ExecuteReviewMutationRequest) => {
-      return invokeIpcWithResult<{ decisionRevision: number }>(REVIEW_EXECUTE_MUTATION, request);
+      return invokeIpcWithResult<ExecuteReviewMutationResult>(REVIEW_EXECUTE_MUTATION, request);
+    },
+    retryMutationRecovery: async (request: RetryReviewMutationRecoveryRequest) => {
+      return invokeIpcWithResult<RetryReviewMutationRecoveryResult>(
+        REVIEW_RETRY_MUTATION_RECOVERY,
+        request
+      );
+    },
+    restoreHistory: async (request: RestoreReviewHistoryRequest) => {
+      return invokeIpcWithResult<RestoreReviewHistoryResult>(REVIEW_RESTORE_HISTORY, request);
     },
     // Phase 2
     checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {
@@ -1674,28 +1692,36 @@ const electronAPI: ElectronAPI = {
       teamName: string,
       scopeKey: string,
       scopeToken: string,
-      entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+      entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>,
+      expectedRevision: number,
+      expectedGeneration: string | null
     ) => {
       return invokeIpcWithResult<ReviewDraftHistoryEntry>(
         REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
         teamName,
         scopeKey,
         scopeToken,
-        entry
+        entry,
+        expectedRevision,
+        expectedGeneration
       );
     },
     clearDraftHistory: async (
       teamName: string,
       scopeKey: string,
       scopeToken: string,
-      filePath?: string
+      filePath?: string,
+      expectedRevision?: number,
+      expectedGeneration?: string | null
     ) => {
       return invokeIpcWithResult<void>(
         REVIEW_CLEAR_DRAFT_HISTORY,
         teamName,
         scopeKey,
         scopeToken,
-        filePath ?? null
+        filePath ?? null,
+        expectedRevision ?? null,
+        expectedGeneration ?? null
       );
     },
     onCmdN: (callback: () => void): (() => void) => {

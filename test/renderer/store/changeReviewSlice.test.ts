@@ -2582,6 +2582,57 @@ describe('changeReviewSlice task changes', () => {
     vi.mocked(console.error).mockClear();
   });
 
+  it('can retry the authoritative current snapshot after an immediate decision flush fails', async () => {
+    const store = createSliceStore();
+    hoisted.saveDecisions
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce({ revision: 1 });
+    const history = [
+      {
+        id: 'accepted-hunk',
+        createdAt: '2026-07-18T10:00:00.000Z',
+        kind: 'hunk' as const,
+        descriptor: {
+          intent: 'accept-hunk' as const,
+          filePath: '/repo/file.ts',
+          hunkIndex: 0,
+        },
+        action: { filePath: '/repo/file.ts', originalIndex: 0 },
+      },
+    ];
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+      reviewActionHistory: history,
+    });
+
+    store.getState().persistDecisions('team-a', 'agent-alice', 'retry-scope');
+    await expect(
+      store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'retry-scope')
+    ).resolves.toBe(false);
+
+    // Retry deliberately snapshots live state again because a failed queued write is
+    // discarded. This keeps the recovery source authoritative and avoids stale replay.
+    store.getState().persistDecisions('team-a', 'agent-alice', 'retry-scope');
+    await expect(
+      store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'retry-scope')
+    ).resolves.toBe(true);
+
+    expect(hoisted.saveDecisions).toHaveBeenCalledTimes(2);
+    expect(hoisted.saveDecisions).toHaveBeenLastCalledWith(
+      'team-a',
+      'agent-alice',
+      'retry-scope',
+      { '/repo/file.ts:0': 'accepted' },
+      {},
+      { '/repo/file.ts': {} },
+      history,
+      0,
+      []
+    );
+    vi.mocked(console.error).mockClear();
+  });
+
   it('serializes a close flush behind an older in-flight decision write', async () => {
     vi.useFakeTimers();
     try {
@@ -2658,6 +2709,37 @@ describe('changeReviewSlice task changes', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('retries a failed decision clear from the same acknowledged revision', async () => {
+    hoisted.clearDecisions
+      .mockRejectedValueOnce(new Error('transient clear failure'))
+      .mockResolvedValueOnce({ revision: 8 });
+    const store = createSliceStore();
+    store.getState().recordDecisionRevision('team-a', 'agent-alice', 'retry-clear', 7);
+
+    await expect(
+      store.getState().clearDecisionsFromDisk('team-a', 'agent-alice', 'retry-clear')
+    ).resolves.toBe(false);
+    vi.mocked(console.error).mockClear();
+    await expect(
+      store.getState().clearDecisionsFromDisk('team-a', 'agent-alice', 'retry-clear')
+    ).resolves.toBe(true);
+
+    expect(hoisted.clearDecisions).toHaveBeenNthCalledWith(
+      1,
+      'team-a',
+      'agent-alice',
+      'retry-clear',
+      7
+    );
+    expect(hoisted.clearDecisions).toHaveBeenNthCalledWith(
+      2,
+      'team-a',
+      'agent-alice',
+      'retry-clear',
+      7
+    );
   });
 
   it('accepts only pending hunks and preserves rejected disk decisions', () => {

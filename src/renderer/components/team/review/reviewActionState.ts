@@ -1,3 +1,7 @@
+import {
+  restoreReviewDecisionRecordsForFile,
+  restoreReviewDecisionRecordsForFiles,
+} from '@features/review-mutations';
 import { buildHunkDecisionKey, getFileReviewKey } from '@renderer/utils/reviewKey';
 import { normalizePathForComparison } from '@shared/utils/platformPath';
 
@@ -12,12 +16,15 @@ import type {
   FileChangeWithContent,
   HunkDecision,
   ReviewRenameRecoveryExpectation,
+  ReviewUndoAction,
 } from '@shared/types';
 
 export interface ReviewDecisionRecords {
   hunkDecisions: Record<string, HunkDecision>;
   fileDecisions: Record<string, HunkDecision>;
 }
+
+export { restoreReviewDecisionRecordsForFile, restoreReviewDecisionRecordsForFiles };
 
 export function isReviewActionLocked(state: {
   applying: boolean;
@@ -26,6 +33,12 @@ export function isReviewActionLocked(state: {
   closing: boolean;
 }): boolean {
   return state.applying || state.fileApplyCount > 0 || state.undoing || state.closing;
+}
+
+export type ReviewActionPersistenceStatus = 'saved' | 'saving' | 'error';
+
+export function isReviewActionPersistenceBlocking(status: ReviewActionPersistenceStatus): boolean {
+  return status !== 'saved';
 }
 
 export function appendOrderedReviewAction<T>(
@@ -42,6 +55,17 @@ export function popOrderedReviewAction<T>(
 ): { stack: T[]; popped: boolean } {
   if (stack.at(-1) !== expected) return { stack: [...stack], popped: false };
   return { stack: stack.slice(0, -1), popped: true };
+}
+
+export function replaceLatestReviewAction(
+  stack: readonly ReviewUndoAction[],
+  optimistic: ReviewUndoAction,
+  committed: ReviewUndoAction
+): { stack: ReviewUndoAction[]; replaced: boolean } {
+  if (optimistic.id !== committed.id || stack.at(-1)?.id !== optimistic.id) {
+    return { stack: [...stack], replaced: false };
+  }
+  return { stack: [...stack.slice(0, -1), committed], replaced: true };
 }
 
 /** True when a retried Undo finds that its guarded disk preimage was already restored. */
@@ -169,42 +193,6 @@ export function partitionReviewFilesByApplyErrors(
     ),
     failed: files.filter((file) => normalizedErrors.has(normalizePathForComparison(file.filePath))),
   };
-}
-
-export function restoreReviewDecisionRecordsForFile(
-  file: FileChangeSummary,
-  current: ReviewDecisionRecords,
-  snapshot: ReviewDecisionRecords
-): ReviewDecisionRecords {
-  const aliases = [getFileReviewKey(file), file.filePath];
-  const matchesHunkAlias = (key: string): boolean =>
-    aliases.some((alias) => key.startsWith(`${alias}:`));
-  const hunkDecisions = { ...current.hunkDecisions };
-  for (const key of Object.keys(hunkDecisions)) {
-    if (matchesHunkAlias(key)) delete hunkDecisions[key];
-  }
-  for (const [key, decision] of Object.entries(snapshot.hunkDecisions)) {
-    if (matchesHunkAlias(key)) hunkDecisions[key] = decision;
-  }
-
-  const fileDecisions = { ...current.fileDecisions };
-  for (const alias of aliases) delete fileDecisions[alias];
-  for (const alias of aliases) {
-    const decision = snapshot.fileDecisions[alias];
-    if (decision) fileDecisions[alias] = decision;
-  }
-  return { hunkDecisions, fileDecisions };
-}
-
-export function restoreReviewDecisionRecordsForFiles(
-  files: readonly FileChangeSummary[],
-  current: ReviewDecisionRecords,
-  snapshot: ReviewDecisionRecords
-): ReviewDecisionRecords {
-  return files.reduce(
-    (restored, file) => restoreReviewDecisionRecordsForFile(file, restored, snapshot),
-    current
-  );
 }
 
 export function reconcileReviewDecisionRecordsAfterApply(

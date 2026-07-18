@@ -120,21 +120,21 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
           const statusLabel = isQueued
             ? 'Queued'
             : isDelivered
-              ? 'Delivered'
+              ? t('activity.pendingReplies.awaitingReply')
               : showRuntimeAdvisory
                 ? advisoryLabel
                 : 'Delivering';
           const statusTitle = isQueued
             ? 'Queued - will be delivered after the team starts'
             : isDelivered
-              ? 'The member runtime has read this message'
+              ? t('activity.pendingReplies.messageSentAwaitingReply')
               : showRuntimeAdvisory
                 ? advisoryTitle
-                : 'Team is online - waiting for the member runtime to read this message';
+                : 'Team is online - waiting for the member runtime to accept this message';
           const statusColorClass = isQueued
             ? 'text-amber-300'
             : isDelivered
-              ? 'text-emerald-300'
+              ? 'text-cyan-300'
               : showRuntimeAdvisory
                 ? 'text-amber-300'
                 : 'text-cyan-300';
@@ -215,7 +215,11 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
                 {isQueued ? (
                   <Clock3 className="size-3 shrink-0 text-amber-400" />
                 ) : isDelivered ? (
-                  <Check className="size-3 shrink-0 text-emerald-400" />
+                  <Check
+                    aria-label={t('messages.delivery.fields.delivered')}
+                    className="size-3 shrink-0 text-emerald-400"
+                    role="img"
+                  />
                 ) : (
                   <Loader2
                     className={`size-3 shrink-0 animate-spin ${showRuntimeAdvisory ? 'text-amber-400' : 'text-cyan-400'}`}

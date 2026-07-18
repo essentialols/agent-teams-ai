@@ -40,7 +40,7 @@ import {
   type OpenCodeSecondaryRetryCandidate,
 } from './TeamProvisioningCollectFailedOpenCodeSecondaryRetryCandidatesUseCase';
 import {
-  buildDirectTmuxRestartCommand,
+  buildDirectTmuxRestartLauncher,
   isInteractiveShellCommand,
 } from './TeamProvisioningDirectRestart';
 import {
@@ -783,7 +783,7 @@ export class TeamProvisioningMemberLifecycleController {
         ...runtimeArgsPlan.runtimeTurnSettledHookArgs,
         ...runtimeArgsPlan.settingsArgs,
       ]);
-      const command = buildDirectTmuxRestartCommand({
+      const launcher = await buildDirectTmuxRestartLauncher({
         cwd,
         env: provisioningEnv.env,
         providerId,
@@ -791,38 +791,43 @@ export class TeamProvisioningMemberLifecycleController {
         args: runtimeArgs,
       });
 
-      this.assertRunStillCurrentAndAlive(input.run, input.teamName);
-      await this.updateDirectTmuxRestartMemberConfig({
-        teamName: input.teamName,
-        memberName: input.memberName,
-        member: memberSpec,
-        agentId,
-        color,
-        prompt,
-        paneId: input.paneId,
-        cwd,
-        providerId,
-        joinedAt: Date.now(),
-        bootstrapExpectedAfter,
-        assertStillCurrent: this.createRunStillCurrentGuard(input.run, input.teamName),
-      });
-      this.assertRunStillCurrentAndAlive(input.run, input.teamName);
-      this.enqueueDirectRestartPrompt({
-        teamName: input.teamName,
-        memberName: input.configuredMember.name,
-        leadName: input.leadName,
-        leadSessionId: parentSessionId,
-        prompt,
-        operation,
-      });
-      await sendKeysToTmuxPaneForCurrentPlatform(input.paneId, command);
-      this.appendMemberBootstrapDiagnostic(
-        input.run,
-        input.memberName,
-        `restart command delivered to tmux pane ${input.paneId}`
-      );
-      this.setMemberSpawnStatus(input.run, input.memberName, 'waiting');
-      directTmuxLaunchSucceeded = true;
+      try {
+        this.assertRunStillCurrentAndAlive(input.run, input.teamName);
+        await this.updateDirectTmuxRestartMemberConfig({
+          teamName: input.teamName,
+          memberName: input.memberName,
+          member: memberSpec,
+          agentId,
+          color,
+          prompt,
+          paneId: input.paneId,
+          cwd,
+          providerId,
+          joinedAt: Date.now(),
+          bootstrapExpectedAfter,
+          assertStillCurrent: this.createRunStillCurrentGuard(input.run, input.teamName),
+        });
+        this.assertRunStillCurrentAndAlive(input.run, input.teamName);
+        this.enqueueDirectRestartPrompt({
+          teamName: input.teamName,
+          memberName: input.configuredMember.name,
+          leadName: input.leadName,
+          leadSessionId: parentSessionId,
+          prompt,
+          operation,
+        });
+        await sendKeysToTmuxPaneForCurrentPlatform(input.paneId, launcher.command);
+        this.appendMemberBootstrapDiagnostic(
+          input.run,
+          input.memberName,
+          `restart command delivered to tmux pane ${input.paneId}`
+        );
+        this.setMemberSpawnStatus(input.run, input.memberName, 'waiting');
+        directTmuxLaunchSucceeded = true;
+      } catch (error) {
+        await launcher.cleanup();
+        throw error;
+      }
     } finally {
       if (!directTmuxLaunchSucceeded) {
         await cleanupPendingAnthropicApiKeyHelper(

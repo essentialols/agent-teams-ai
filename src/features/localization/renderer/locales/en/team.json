@@ -947,7 +947,7 @@
       "title": "Changes",
       "fileCount_few": "{{count}} files",
       "fileCount_many": "{{count}} files",
-      "fileCount_one": "{{count}} files",
+      "fileCount_one": "{{count}} file",
       "fileCount_other": "{{count}} files",
       "fileRowsHidden_few": "{{count}} file rows hidden",
       "fileRowsHidden_many": "{{count}} file rows hidden",

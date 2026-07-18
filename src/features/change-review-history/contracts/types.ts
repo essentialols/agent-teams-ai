@@ -23,6 +23,8 @@ export interface ReviewDraftHistoryEntry {
   codec: 'codemirror-history-v1';
   /** Monotonic per-file revision. Equal revisions are accepted only when idempotent. */
   revision: number;
+  /** Opaque durable generation token used to prevent revision ABA after Clear + recreate. */
+  generation: string;
   /** Exact disk content on which the current editor branch is based; null means absent. */
   diskBaseline: string | null;
   /** Full native editor state, including CodeMirror's done and undone history branches. */

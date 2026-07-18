@@ -155,20 +155,30 @@ const DashboardRateLimitChips = ({
   providerId,
   items,
   refreshCycle,
+  refreshing,
 }: {
   providerId: CliProviderId;
   items: DashboardRateLimitItem[];
   refreshCycle: number;
+  refreshing: boolean;
 }): React.JSX.Element => {
   const { t } = useAppTranslation('dashboard');
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div
+      className="flex flex-wrap items-center gap-2"
+      aria-busy={refreshing}
+      aria-label={refreshing ? t('cliStatus.labels.loadingRateLimits') : undefined}
+    >
       {items.map((item) => (
         <div
           key={`${providerId}-${item.label}-${refreshCycle}`}
           className={`w-fit max-w-full rounded-md border px-2 py-1.5 ${
-            refreshCycle > 0 ? 'dashboard-rate-limit-refreshed' : ''
+            refreshing
+              ? 'skeleton-shimmer'
+              : refreshCycle > 0
+                ? 'dashboard-rate-limit-refreshed'
+                : ''
           }`}
           style={{
             borderColor: 'rgba(74, 222, 128, 0.2)',
@@ -248,11 +258,13 @@ const DashboardRateLimitStatus = ({
   items,
   successfulRefreshKey,
   showInitialSkeleton,
+  refreshing,
 }: {
   providerId: CliProviderId;
   items: DashboardRateLimitItem[] | null;
   successfulRefreshKey: number | string | null;
   showInitialSkeleton: boolean;
+  refreshing: boolean;
 }): React.JSX.Element | null => {
   const [displayedItems, setDisplayedItems] = useState<DashboardRateLimitItem[] | null>(items);
   const [refreshCycle, setRefreshCycle] = useState(0);
@@ -284,6 +296,7 @@ const DashboardRateLimitStatus = ({
         providerId={providerId}
         items={displayedItems}
         refreshCycle={refreshCycle}
+        refreshing={refreshing}
       />
     );
   }
@@ -1165,6 +1178,7 @@ const InstalledBanner = ({
               (provider.providerId === 'anthropic' && anthropicRateLimitsRefreshing);
             const rateLimitsLoading =
               rateLimitsRefreshing || anthropicRateLimitsLoading || isSubscriptionRateLimitMode;
+            const rateLimitsUpdating = rateLimitsRefreshing || anthropicRateLimitsLoading;
             const showRateLimitSkeleton = shouldShowDashboardRateLimitSkeleton({
               provider,
               sourceProvider,
@@ -1477,6 +1491,7 @@ const InstalledBanner = ({
                             : null
                       }
                       showInitialSkeleton={showRateLimitSkeleton}
+                      refreshing={rateLimitsUpdating}
                     />
                   </div>
                 )}

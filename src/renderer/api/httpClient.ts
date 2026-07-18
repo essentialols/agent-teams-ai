@@ -1371,6 +1371,12 @@ export class HttpAPIClient implements ElectronAPI {
     executeMutation: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
+    retryMutationRecovery: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    restoreHistory: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
     // Phase 2 stubs
     checkConflict: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
@@ -1512,6 +1518,42 @@ export class HttpAPIClient implements ElectronAPI {
   };
 
   runtimeProviderManagement: RuntimeProviderManagementApi = {
+    listLocalProviders: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'config-invalid',
+        message: 'Local provider management is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
+    scanLocalProviders: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'endpoint-unreachable',
+        message: 'Local provider discovery is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
+    probeLocalProvider: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'endpoint-unreachable',
+        message: 'Local provider discovery is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
+    configureLocalProvider: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'write-failed',
+        message: 'Local provider configuration is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
     getCompanionStatus: async (input) => createBrowserCompanionStatus(input, 'status'),
     installAndConnectCompanion: async (input) => createBrowserCompanionStatus(input, 'install'),
     connectCompanion: async (input) => createBrowserCompanionStatus(input, 'connect'),

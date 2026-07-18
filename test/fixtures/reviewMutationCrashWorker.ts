@@ -11,7 +11,12 @@ import { setClaudeBasePathOverride } from '../../src/main/utils/pathDecoder';
 
 import type { ReviewMutationPhase } from '../../src/features/review-mutations/contracts';
 
-type CrashPoint = ReviewMutationPhase | 'after_disk_effect' | 'after_decision_effect' | 'none';
+type CrashPoint =
+  | ReviewMutationPhase
+  | 'after_disk_effect'
+  | 'after_disk_checkpoint'
+  | 'after_decision_effect'
+  | 'none';
 
 interface AuditState {
   diskAttempts: number;
@@ -32,7 +37,10 @@ if (
 
 const crashPoint = (crashPointValue ?? 'none') as CrashPoint;
 const operationShape =
-  operationShapeValue === 'decision-only-redo' || operationShapeValue === 'disk-redo'
+  operationShapeValue === 'decision-only-redo' ||
+  operationShapeValue === 'disk-redo' ||
+  operationShapeValue === 'disk-undo-after-redo' ||
+  operationShapeValue === 'history-restore'
     ? operationShapeValue
     : 'disk';
 const teamName = 'review-crash-test';
@@ -51,7 +59,7 @@ const diskRedoAction = {
     originalIndex: 0,
   },
 };
-const persistedState = {
+const forwardPersistedState = {
   hunkDecisions: {
     'fixture-change:0': operationShape === 'decision-only-redo' ? 'accepted' : 'rejected',
   } as const,
@@ -72,6 +80,25 @@ const persistedState = {
         : [],
   reviewRedoHistory: [],
 };
+const persistedState =
+  operationShape === 'disk-undo-after-redo'
+    ? {
+        hunkDecisions: {},
+        fileDecisions: {},
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+        reviewRedoHistory: [
+          {
+            action: diskRedoAction,
+            decisionSnapshot: {
+              hunkDecisions: forwardPersistedState.hunkDecisions,
+              fileDecisions: {},
+            },
+            hunkContextHashesByFile: {},
+          },
+        ],
+      }
+    : forwardPersistedState;
 
 setClaudeBasePathOverride(claudeBasePath);
 
@@ -111,37 +138,42 @@ async function applyDisk(
   if (!step && operationShape === 'decision-only-redo') return record;
   if (!step || step.type !== 'write') throw new Error('Crash fixture disk step is missing');
   if (step.status === 'applied') {
-    if ((await readFile(filePath, 'utf8')) !== afterContent) {
+    if ((await readFile(filePath, 'utf8')) !== step.content) {
       throw new Error('Crash fixture applied postimage drifted');
     }
     return record;
   }
   await updateAudit((current) => ({ ...current, diskAttempts: current.diskAttempts + 1 }));
   const currentContent = await readFile(filePath, 'utf8');
-  if (currentContent === beforeContent) {
-    await atomicWriteAsync(filePath, afterContent, {
+  if (currentContent === step.expectedContent) {
+    await atomicWriteAsync(filePath, step.content, {
       durability: 'strict',
       syncDirectory: true,
     });
     await updateAudit((current) => ({ ...current, diskWrites: current.diskWrites + 1 }));
-  } else if (currentContent !== afterContent) {
+  } else if (currentContent !== step.content) {
     throw new Error('Crash fixture file changed unexpectedly');
   }
   crashIf('after_disk_effect');
-  return journal.checkpoint({
+  const checkpointed = await journal.checkpoint({
     ...record,
     diskSteps: [{ ...step, status: 'applied' }],
   });
+  crashIf('after_disk_checkpoint');
+  return checkpointed;
 }
 
 async function commitDecisions(record: ReviewMutationJournalRecord): Promise<void> {
+  if (!record.persistedState) {
+    throw new Error('Crash fixture persisted state is missing');
+  }
   await updateAudit((current) => ({
     ...current,
     decisionAttempts: current.decisionAttempts + 1,
   }));
   await decisions.save(teamName, persistenceScope.scopeKey, {
     scopeToken: persistenceScope.scopeToken,
-    ...persistedState,
+    ...record.persistedState,
     expectedRevision: record.expectedDecisionRevision,
     mutationId: record.id,
   });
@@ -164,7 +196,7 @@ if (mode === 'run') {
         {
           action: diskRedoAction,
           decisionSnapshot: {
-            hunkDecisions: persistedState.hunkDecisions,
+            hunkDecisions: forwardPersistedState.hunkDecisions,
             fileDecisions: {},
           },
           hunkContextHashesByFile: {},
@@ -178,7 +210,12 @@ if (mode === 'run') {
       teamName,
       persistenceScope,
       reviewScope: { teamName, taskId: 'task-1' },
-      kind: operationShape === 'disk' ? 'undo' : 'redo',
+      kind:
+        operationShape === 'history-restore'
+          ? 'restore-history'
+          : operationShape === 'disk' || operationShape === 'disk-undo-after-redo'
+            ? 'undo'
+            : 'redo',
       decisions: [],
       fileContents: [],
       diskSteps:
@@ -189,13 +226,15 @@ if (mode === 'run') {
                 id: 'fixture-step',
                 type: 'write',
                 filePath,
-                expectedContent: beforeContent,
-                content: afterContent,
+                expectedContent:
+                  operationShape === 'disk-undo-after-redo' ? afterContent : beforeContent,
+                content: operationShape === 'disk-undo-after-redo' ? beforeContent : afterContent,
                 status: 'pending',
               },
             ],
       persistedState,
-      expectedDecisionRevision: operationShape === 'disk-redo' ? 1 : 0,
+      expectedDecisionRevision:
+        operationShape === 'disk-redo' ? 1 : operationShape === 'disk-undo-after-redo' ? 2 : 0,
     },
     { applyDisk, commitDecisions }
   );

@@ -6,35 +6,36 @@ Target branch: `dev`.
 
 Runtime gate:
 
-- Agent Teams runtime: `v0.0.67`.
+- Agent Teams runtime: `v0.0.68`.
 - Terminal Platform runtime: `v0.3.2`.
 
 Draft body source for GitHub release:
 
 <!-- RELEASE_BODY_START v2.9.0 -->
-Review changes are now safe to undo and redo across restarts, while larger teams are easier to navigate through a new organization overview and a flatter workspace. This release also strengthens runtime recovery, provider readiness, and OpenCode support on Windows.
+Review changes are now safe to undo and redo across restarts, local OpenAI-compatible providers can be connected directly in the app, and larger teams are easier to navigate through a new organization overview and flatter workspace. This release also strengthens runtime recovery, provider readiness, and OpenCode support on Windows.
 
 ### What's New
 
-- Keep an ordered Changes history with restart-safe undo and redo for applied hunks, file edits, renames, and deletions.
+- Keep an ordered Changes history with restart-safe undo and redo for applied hunks, file edits, renames, and deletions, including checkpoint previews and restore impact.
+- Connect and manage scoped local OpenAI-compatible providers and models through a guided setup flow.
 - Navigate large organizations through a responsive overview, multiscale hierarchy, semantic zoom, minimap, and focused graph controls.
 - Run deterministic teams with up to 30 teammates and see pending message delivery states before replies arrive.
 - Highlight newly arrived messages and show live relative task updates in the sidebar.
 
 ### Improvements
 
-- Flatten the team workspace, navigation, kanban board, roster editor, and message composer for faster everyday use.
+- Flatten the team workspace, navigation, kanban board, roster editor, task changes, loading states, and message composer for faster everyday use.
 - Make model selection clearer and surface connected-provider and model lifecycle status directly in setup flows.
-- Recover failed team runtimes more reliably, keep working OpenCode runtimes available during updates, and harden provisioning.
+- Recover failed team runtimes more reliably, keep working OpenCode runtimes available during updates, preserve Anthropic backend selection across restarts, and harden provisioning.
 - Notify task owners when users create work for their teams and keep participant identity colors consistent.
-- Update the bundled runtime with stronger provider verification, execution proof, credential handling, and persistent host lifecycle management.
+- Update the bundled runtime with stronger provider verification, AWS profile region resolution, execution proof, credential handling, and persistent host lifecycle management.
 
 ### Bug Fixes
 
 - Prevent deleted agents from rejoining teams and fix single-team project grouping.
 - Recover interrupted review mutations safely and prevent stale decisions, ambiguous writes, keyboard hunk rejection, renames, or file lifecycle changes from corrupting undo history.
 - Fix OpenCode launch and readiness on Windows, isolate tmux probes, and improve Kiro companion installation and verification.
-- Fix updater banner and dialog state, graph reset and layout fitting, terminal sheet dragging, and duplicate heartbeat cleanup listeners.
+- Fix updater banner and dialog state, rate-limit refresh feedback, graph reset and layout fitting, terminal sheet dragging, and duplicate heartbeat cleanup listeners.
 
 ### Downloads
 

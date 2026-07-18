@@ -8,11 +8,13 @@ import {
   hasReviewFileRejections,
   hasUnresolvedReviewExternalChange,
   isReviewActionLocked,
+  isReviewActionPersistenceBlocking,
   isReviewDiskPreimageRestored,
   isReviewFileFullyRejected,
   partitionReviewFilesByApplyErrors,
   popOrderedReviewAction,
   reconcileReviewDecisionRecordsAfterApply,
+  replaceLatestReviewAction,
   resolveDraftBaselineAfterSave,
   resolveReviewFileIsNew,
   restoreReviewDecisionRecordsForFile,
@@ -52,6 +54,12 @@ describe('ChangeReviewDialog interaction guards', () => {
         closing: false,
       })
     ).toBe(false);
+  });
+
+  it('blocks follow-up review actions until the latest accepted action is durably saved', () => {
+    expect(isReviewActionPersistenceBlocking('saving')).toBe(true);
+    expect(isReviewActionPersistenceBlocking('error')).toBe(true);
+    expect(isReviewActionPersistenceBlocking('saved')).toBe(false);
   });
 
   it('blocks close for drafts and in-flight actions instead of silently discarding state', () => {
@@ -408,6 +416,44 @@ describe('ChangeReviewDialog interaction guards', () => {
     let stack: string[] = [];
     for (const action of actions) stack = appendOrderedReviewAction(stack, action, 10);
     expect(stack).toEqual(actions);
+  });
+
+  it('replaces only the optimistic top action with main-bound durable metadata', () => {
+    const older = {
+      id: 'older',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: '/repo/older.ts', originalIndex: 0 },
+    };
+    const optimistic = {
+      id: 'latest',
+      createdAt: '2026-07-17T12:00:01.000Z',
+      kind: 'disk' as const,
+      action: {
+        originalIndex: 0,
+        snapshot: { filePath: '/repo/file.ts', beforeContent: 'before', afterContent: 'after' },
+      },
+    };
+    const committed = {
+      ...optimistic,
+      action: {
+        ...optimistic.action,
+        snapshot: {
+          ...optimistic.action.snapshot,
+          restoreMode: 'content' as const,
+          authoritativeBeforeSha256: 'authoritative',
+        },
+      },
+    };
+
+    expect(replaceLatestReviewAction([older, optimistic], optimistic, committed)).toEqual({
+      stack: [older, committed],
+      replaced: true,
+    });
+    expect(replaceLatestReviewAction([older, optimistic], older, committed)).toEqual({
+      stack: [older, optimistic],
+      replaced: false,
+    });
   });
 
   it('recognizes an already-restored disk preimage for crash-safe Undo retry', () => {

@@ -1,125 +1,76 @@
 import type {
   HunkDecision,
-  ReviewDirectDiskMutationStep,
+  RetryReviewMutationRecoveryResult,
   ReviewDiskUndoSnapshot,
+  ReviewMutationDiskPostimage,
+  ReviewPersistedStateSnapshot,
   ReviewRedoAction,
   ReviewUndoAction,
 } from '@shared/types';
 
-export function buildUndoDiskMutationSteps(
-  actionId: string,
-  snapshots: readonly ReviewDiskUndoSnapshot[]
-): ReviewDirectDiskMutationStep[] {
-  return snapshots.map((snapshot, index) => {
-    if (snapshot.restoreConflict) throw new Error(snapshot.restoreConflict);
-    const id = `${actionId}:${index}`;
-    const restoreMode =
-      snapshot.restoreMode ?? (snapshot.renameExpectation ? 'restore-rejected-rename' : 'content');
-    if (restoreMode === 'restore-rejected-rename' || restoreMode === 'reapply-rejected-rename') {
-      if (!snapshot.renameExpectation) {
-        throw new Error('Rename recovery metadata is unavailable; refusing an unsafe Undo.');
-      }
-      return {
-        id,
-        type: restoreMode,
-        filePath: snapshot.filePath,
-        expectation: snapshot.renameExpectation,
-      };
-    }
-    if (restoreMode === 'delete-file') {
-      if (snapshot.afterContent === null) {
-        throw new Error('Undo delete snapshot is missing the expected file content.');
-      }
-      return {
-        id,
-        type: 'delete',
-        filePath: snapshot.filePath,
-        expectedContent: snapshot.afterContent,
-      };
-    }
-    if (restoreMode === 'create-file') {
-      return {
-        id,
-        type: 'write',
-        filePath: snapshot.filePath,
-        expectedContent: null,
-        content: snapshot.beforeContent,
-      };
-    }
-    if (snapshot.afterContent === null) {
-      throw new Error('Undo snapshot is missing the expected disk postimage.');
-    }
-    return {
-      id,
-      type: 'write',
-      filePath: snapshot.filePath,
-      expectedContent: snapshot.afterContent,
-      content: snapshot.beforeContent,
-    };
-  });
+function toCanonicalReviewValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toCanonicalReviewValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, toCanonicalReviewValue(entry)])
+  );
 }
 
-export function buildRedoDiskMutationSteps(
-  actionId: string,
-  snapshots: readonly ReviewDiskUndoSnapshot[]
-): ReviewDirectDiskMutationStep[] {
-  return snapshots.map((snapshot, index) => {
-    if (snapshot.restoreConflict) throw new Error(snapshot.restoreConflict);
-    const id = `${actionId}:redo:${index}`;
-    const restoreMode =
-      snapshot.restoreMode ?? (snapshot.renameExpectation ? 'restore-rejected-rename' : 'content');
-    if (restoreMode === 'restore-rejected-rename' || restoreMode === 'reapply-rejected-rename') {
-      if (!snapshot.renameExpectation) {
-        throw new Error('Rename recovery metadata is unavailable; refusing an unsafe Redo.');
-      }
-      return {
-        id,
-        type:
-          restoreMode === 'restore-rejected-rename'
-            ? 'reapply-rejected-rename'
-            : 'restore-rejected-rename',
-        filePath: snapshot.filePath,
-        expectation: snapshot.renameExpectation,
-      };
-    }
-    if (restoreMode === 'create-file') {
-      return {
-        id,
-        type: 'delete',
-        filePath: snapshot.filePath,
-        expectedContent: snapshot.beforeContent,
-      };
-    }
-    if (restoreMode === 'delete-file') {
-      if (snapshot.afterContent === null) {
-        throw new Error('Redo create snapshot is missing the expected file content.');
-      }
-      return {
-        id,
-        type: 'write',
-        filePath: snapshot.filePath,
-        expectedContent: null,
-        content: snapshot.afterContent,
-      };
-    }
-    if (snapshot.afterContent === null) {
-      throw new Error('Redo snapshot is missing the expected disk postimage.');
-    }
-    return {
-      id,
-      type: 'write',
-      filePath: snapshot.filePath,
-      expectedContent: snapshot.beforeContent,
-      content: snapshot.afterContent,
-    };
-  });
+export function areReviewPersistedStatesEqual(
+  left: ReviewPersistedStateSnapshot,
+  right: ReviewPersistedStateSnapshot
+): boolean {
+  return (
+    JSON.stringify(toCanonicalReviewValue(left)) === JSON.stringify(toCanonicalReviewValue(right))
+  );
 }
 
-export function getReviewActionDiskSnapshots(action: ReviewUndoAction): ReviewDiskUndoSnapshot[] {
-  if (action.kind === 'bulk') return action.diskSnapshots;
-  if (action.kind === 'disk') return [action.action.snapshot];
-  return [];
+export type ReviewHistoryRecoveryDisposition =
+  | 'retry-restore'
+  | 'apply-selected-restore'
+  | 'different-mutation-pending'
+  | 'synchronize-latest';
+
+export function classifyReviewHistoryRecovery(
+  recovery: RetryReviewMutationRecoveryResult,
+  currentRevision: number,
+  plannedState: ReviewPersistedStateSnapshot
+): ReviewHistoryRecoveryDisposition {
+  if (recovery.differentMutationPending) return 'different-mutation-pending';
+  if (!recovery.recoveredMutation && recovery.decisionRevision === currentRevision) {
+    return 'retry-restore';
+  }
+  if (
+    recovery.expectedRestoreCompleted &&
+    recovery.persistedState &&
+    areReviewPersistedStatesEqual(recovery.persistedState, plannedState)
+  ) {
+    return 'apply-selected-restore';
+  }
+  return 'synchronize-latest';
 }
+
+export function markReviewMutationDiskPostimages(
+  postimages: readonly ReviewMutationDiskPostimage[] | undefined,
+  markExpectedWrite: (filePath: string, expectedContent: string | null) => void
+): void {
+  for (const postimage of postimages ?? []) {
+    markExpectedWrite(postimage.filePath, postimage.content);
+  }
+}
+
+export {
+  buildForwardDiskMutationSteps,
+  buildRedoDiskMutationSteps,
+  buildReviewHistoryRestoreDiskImpact,
+  buildReviewHistoryRestoreDiskSteps,
+  buildReviewHistoryRestorePlan,
+  buildUndoDiskMutationSteps,
+  getReviewActionDiskSnapshots,
+} from '@features/review-mutations';
 
 export function getReviewDiskMutationExpectedContent(
   snapshot: ReviewDiskUndoSnapshot,

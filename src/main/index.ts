@@ -25,6 +25,11 @@ import {
 } from './bootstrapUserDataMigration';
 import './sentry';
 
+import type {
+  AppCloseReadinessResult,
+  AppCloseReason,
+} from '@features/app-close-coordination/contracts';
+import { RendererCloseReadinessCoordinator } from '@features/app-close-coordination/main';
 import {
   type CodexAccountFeatureFacade,
   createCodexAccountFeature,
@@ -182,7 +187,7 @@ import { createLogger } from '@shared/utils/logger';
 import { isReviewPickupEscalationMessage } from '@shared/utils/teamAutomationMessages';
 import { isTeamInternalControlMessageEnvelope } from '@shared/utils/teamInternalControlMessages';
 import { createHash } from 'crypto';
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
@@ -191,6 +196,7 @@ import { initializeIpcHandlers, removeIpcHandlers } from './ipc/handlers';
 import { registerRendererLogHandlers } from './ipc/rendererLogs';
 import { setReviewMainWindow } from './ipc/review';
 import { setTmuxMainWindow } from './ipc/tmux';
+import { configureWindowLifecycleActions } from './ipc/window';
 import {
   ApiKeyService,
   createExtensionsRuntimeAdapter,
@@ -1085,6 +1091,10 @@ process.on('uncaughtException', (error) => {
 // =============================================================================
 
 let mainWindow: BrowserWindow | null = null;
+const rendererCloseReadinessCoordinator = new RendererCloseReadinessCoordinator(ipcMain);
+const authorizedWindowCloses = new WeakSet<BrowserWindow>();
+const windowCloseReadinessInFlight = new WeakSet<BrowserWindow>();
+let appQuitFlow: Promise<boolean> | null = null;
 
 // Service registry and global services
 let contextRegistry: ServiceContextRegistry;
@@ -1265,6 +1275,124 @@ function hasActiveTeamRuntimesForWindowClose(): boolean {
     );
     return false;
   }
+}
+
+function formatCloseReadinessBlockers(results: readonly AppCloseReadinessResult[]): string[] {
+  return results.flatMap((result) => result.blockers).slice(0, 10);
+}
+
+async function confirmUnsafeAppClose(
+  window: BrowserWindow,
+  blockers: readonly string[],
+  unsafeActionLabel: string
+): Promise<boolean> {
+  if (window.isDestroyed()) return false;
+  window.show();
+  window.focus();
+  const detail =
+    blockers.length > 0
+      ? blockers.map((blocker) => `- ${blocker}`).join('\n')
+      : 'Changes did not confirm that its latest state was saved.';
+  const choice = await dialog.showMessageBox(window, {
+    type: 'warning',
+    title: 'Changes is not ready to close',
+    message: 'Some Changes state may not be saved yet.',
+    detail,
+    buttons: ['Keep Open', unsafeActionLabel],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  return choice.response === 1;
+}
+
+async function requestWindowCloseReadiness(
+  window: BrowserWindow,
+  reason: AppCloseReason,
+  unsafeActionLabel: string
+): Promise<boolean> {
+  if (!rendererDidFinishLoad) return true;
+  const result = await rendererCloseReadinessCoordinator.request(window, reason);
+  if (result.ok) return true;
+  return confirmUnsafeAppClose(window, result.blockers, unsafeActionLabel);
+}
+
+async function requestAllWindowsCloseReadiness(
+  reason: AppCloseReason,
+  unsafeActionLabel: string
+): Promise<boolean> {
+  if (!rendererDidFinishLoad) return true;
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  if (windows.length === 0) return true;
+  const results = await Promise.all(
+    windows.map((window) => rendererCloseReadinessCoordinator.request(window, reason))
+  );
+  const failedResults = results.filter((result) => !result.ok);
+  if (failedResults.length === 0) return true;
+  return confirmUnsafeAppClose(
+    windows[0],
+    formatCloseReadinessBlockers(failedResults),
+    unsafeActionLabel
+  );
+}
+
+async function requestGuardedWindowClose(window: BrowserWindow): Promise<void> {
+  if (windowCloseReadinessInFlight.has(window) || window.isDestroyed()) return;
+  windowCloseReadinessInFlight.add(window);
+  try {
+    if (!(await requestWindowCloseReadiness(window, 'window-close', 'Close Anyway'))) return;
+    if (window.isDestroyed()) return;
+    authorizedWindowCloses.add(window);
+    window.close();
+  } catch (error) {
+    logger.error(
+      `Window close readiness failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    windowCloseReadinessInFlight.delete(window);
+  }
+}
+
+async function requestGuardedAppQuit(reason: 'app-quit' | 'relaunch'): Promise<boolean> {
+  if (shutdownComplete) {
+    if (reason === 'relaunch') app.relaunch();
+    app.quit();
+    return true;
+  }
+  if (appQuitFlow) return appQuitFlow;
+
+  const flow = (async (): Promise<boolean> => {
+    try {
+      const ready = await requestAllWindowsCloseReadiness(
+        reason,
+        reason === 'relaunch' ? 'Relaunch Anyway' : 'Quit Anyway'
+      );
+      if (!ready) return false;
+
+      if (reason === 'relaunch') app.relaunch();
+      notificationManager?.closeActiveNativeNotifications('app-before-quit');
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.hide();
+      }
+      try {
+        await shutdownServices();
+      } catch (error) {
+        logger.error(`Shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      shutdownComplete = true;
+      app.quit();
+      return true;
+    } catch (error) {
+      logger.error(
+        `App ${reason} readiness failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return false;
+    }
+  })();
+  appQuitFlow = flow;
+  const result = await flow;
+  if (!result && appQuitFlow === flow) appQuitFlow = null;
+  return result;
 }
 
 function scheduleStartupTask(action: () => void, delayMs: number): void {
@@ -1892,6 +2020,9 @@ async function initializeServices(): Promise<void> {
   // Initialize updater and CLI installer services
   updaterService = new UpdaterService();
   updaterService.setBeforeQuitAndInstall(async () => {
+    if (!(await requestAllWindowsCloseReadiness('update-install', 'Install Anyway'))) {
+      throw new Error('Update install canceled because Changes is not ready to close.');
+    }
     try {
       await shutdownServices();
     } catch (error) {
@@ -2761,6 +2892,14 @@ async function initializeServices(): Promise<void> {
   });
 
   teamHttpHandlerApis = bindTeamHttpHandlerApis(teamProvisioningService);
+  configureWindowLifecycleActions({
+    quit: async () => {
+      await requestGuardedAppQuit('app-quit');
+    },
+    relaunch: async () => {
+      await requestGuardedAppQuit('relaunch');
+    },
+  });
 
   // Initialize IPC handlers with registry
   initializeIpcHandlers(
@@ -3035,6 +3174,7 @@ async function shutdownServices(): Promise<void> {
     }
 
     await runShutdownStep('IPC handlers cleanup', () => {
+      rendererCloseReadinessCoordinator.dispose();
       removeIpcHandlers();
       removeCodexAccountIpc(ipcMain);
       removeRecentProjectsIpc(ipcMain);
@@ -3386,6 +3526,15 @@ function createWindow(): void {
     }
   });
 
+  const guardedWindow = mainWindow;
+  guardedWindow.on('close', (event) => {
+    if (shutdownComplete || isShutdownStarted() || authorizedWindowCloses.delete(guardedWindow)) {
+      return;
+    }
+    event.preventDefault();
+    void requestGuardedWindowClose(guardedWindow);
+  });
+
   mainWindow.on('closed', () => {
     if (rendererRecoveryTimer) {
       clearTimeout(rendererRecoveryTimer);
@@ -3558,21 +3707,5 @@ app.on('before-quit', (event) => {
   }
 
   event.preventDefault();
-
-  notificationManager.closeActiveNativeNotifications('app-before-quit');
-
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.hide();
-    }
-  }
-
-  void shutdownServices()
-    .catch((error) => {
-      logger.error(`Shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
-    })
-    .finally(() => {
-      shutdownComplete = true;
-      app.quit();
-    });
+  void requestGuardedAppQuit('app-quit');
 });

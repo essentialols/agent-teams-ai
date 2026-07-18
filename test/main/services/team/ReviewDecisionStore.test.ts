@@ -108,6 +108,45 @@ describe('ReviewDecisionStore', () => {
     await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('discards only unreadable exact decisions and preserves a readable replacement', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeToken = 'task:123:req:recovery-race:src:one';
+    const exactPath = path.join(
+      teamsBasePath,
+      'demo',
+      'review-decisions',
+      'v2',
+      'task-123',
+      `${createHash('sha256').update(scopeToken).digest('hex')}.json`
+    );
+    await mkdir(path.dirname(exactPath), { recursive: true });
+    await writeFile(exactPath, '{not-json', 'utf8');
+    await expect(
+      store.clearUnreadableExactScope('demo', 'task-123', scopeToken)
+    ).resolves.toBeUndefined();
+    await expect(readFile(exactPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await writeFile(exactPath, '{not-json-again', 'utf8');
+    await expect(store.load('demo', 'task-123', scopeToken)).rejects.toBeTruthy();
+    await store.clear('demo', 'task-123', scopeToken);
+    await store.save('demo', 'task-123', {
+      scopeToken,
+      hunkDecisions: { 'new-file:0': 'accepted' },
+      fileDecisions: {},
+    });
+
+    await expect(
+      store.clearUnreadableExactScope('demo', 'task-123', scopeToken)
+    ).rejects.toThrow(
+      'Saved review decisions became readable; refusing destructive recovery discard'
+    );
+    await expect(store.load('demo', 'task-123', scopeToken)).resolves.toMatchObject({
+      hunkDecisions: { 'new-file:0': 'accepted' },
+      revision: 1,
+    });
+  });
+
   it('rejects malformed decision values before persisting them', async () => {
     const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
     const store = new ReviewDecisionStore();
@@ -232,6 +271,68 @@ describe('ReviewDecisionStore', () => {
         hunkDecisions: { 'file:0': 'accepted' },
       })
     ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+  });
+
+  it('makes only an exact single-revision generic retry idempotent after response loss', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeToken = 'task:123:req:generic-response-loss:src:one';
+    const action = {
+      id: 'accept-hunk-response-loss',
+      createdAt: '2026-07-18T12:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: '/repo/file.ts', originalIndex: 0 },
+    };
+    const redoEntry = {
+      action: { ...action, id: 'redo-hunk-response-loss' },
+      decisionSnapshot: {
+        hunkDecisions: { 'file:1': 'rejected' as const },
+        fileDecisions: {},
+      },
+    };
+    const target = {
+      scopeToken,
+      hunkDecisions: { 'file:0': 'accepted' as const, 'file:1': 'rejected' as const },
+      fileDecisions: { file: 'accepted' as const },
+      hunkContextHashesByFile: { file: { 0: 'hash-0', 1: 'hash-1' } },
+      reviewActionHistory: [action],
+      reviewRedoHistory: [redoEntry],
+      expectedRevision: 0,
+    };
+
+    await expect(store.save('demo', 'task-123', target)).resolves.toBe(1);
+    await expect(
+      store.save('demo', 'task-123', {
+        ...target,
+        hunkDecisions: { 'file:1': 'rejected', 'file:0': 'accepted' },
+        hunkContextHashesByFile: { file: { 1: 'hash-1', 0: 'hash-0' } },
+      })
+    ).resolves.toBe(1);
+    await expect(store.load('demo', 'task-123', scopeToken)).resolves.toMatchObject({
+      revision: 1,
+      reviewActionHistory: [action],
+      reviewRedoHistory: [redoEntry],
+    });
+
+    await expect(
+      store.save('demo', 'task-123', {
+        ...target,
+        hunkContextHashesByFile: { file: { 0: 'different', 1: 'hash-1' } },
+      })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+    await expect(
+      store.save('demo', 'task-123', { ...target, reviewRedoHistory: [] })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+    await expect(
+      store.save('demo', 'task-123', { ...target, expectedRevision: 2 })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+
+    await expect(store.save('demo', 'task-123', { ...target, expectedRevision: 1 })).resolves.toBe(
+      2
+    );
+    await expect(store.save('demo', 'task-123', target)).rejects.toThrow(
+      'Review decisions changed; refusing stale state overwrite'
+    );
   });
 
   it('migrates a legacy revision zero snapshot through the first CAS write', async () => {
@@ -359,6 +460,46 @@ describe('ReviewDecisionStore', () => {
     const restored = await store.load('demo', 'task-123', 'task:123:req:many:src:one');
     expect(restored?.reviewActionHistory).toEqual(reviewActionHistory);
     expect(restored?.reviewActionHistory).toHaveLength(100);
+  });
+
+  it('round-trips exact action descriptors and rejects misleading history labels', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const describedAction = {
+      id: 'described-action',
+      createdAt: '2026-07-18T12:00:00.000Z',
+      kind: 'hunk' as const,
+      descriptor: {
+        intent: 'reject-hunk' as const,
+        filePath: '/repo/file.ts',
+        hunkIndex: 3,
+      },
+      action: { filePath: '/repo/file.ts', originalIndex: 3 },
+    };
+
+    await store.save('demo', 'task-123', {
+      scopeToken: 'task:123:req:described:src:one',
+      hunkDecisions: { 'file:3': 'rejected' },
+      fileDecisions: {},
+      reviewActionHistory: [describedAction],
+    });
+    await expect(
+      store.load('demo', 'task-123', 'task:123:req:described:src:one')
+    ).resolves.toMatchObject({ reviewActionHistory: [describedAction] });
+
+    await expect(
+      store.save('demo', 'task-123', {
+        scopeToken: 'task:123:req:misleading:src:one',
+        hunkDecisions: {},
+        fileDecisions: {},
+        reviewActionHistory: [
+          {
+            ...describedAction,
+            descriptor: { ...describedAction.descriptor, filePath: '/repo/other.ts' },
+          },
+        ],
+      })
+    ).rejects.toThrow('Invalid review decisions payload');
   });
 
   it('deduplicates history contents and garbage-collects unreachable v6 blobs', async () => {

@@ -24,9 +24,14 @@ import type {
   ChangeStats,
   ConflictCheckResult,
   ExecuteReviewMutationRequest,
+  ExecuteReviewMutationResult,
   FileChangeWithContent,
   HunkDecision,
   RejectResult,
+  RestoreReviewHistoryRequest,
+  RestoreReviewHistoryResult,
+  RetryReviewMutationRecoveryRequest,
+  RetryReviewMutationRecoveryResult,
   ReviewFileScope,
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
@@ -108,6 +113,7 @@ import type {
 import type { TerminalAPI } from './terminal';
 import type { TmuxAPI } from './tmux';
 import type { WaterfallData } from './visualization';
+import type { AppCloseCoordinationElectronApi } from '@features/app-close-coordination/contracts';
 import type {
   ReviewDraftHistoryEntry,
   ReviewDraftHistorySnapshot,
@@ -762,7 +768,11 @@ export interface ReviewAPI {
     snippets?: SnippetDiff[]
   ) => Promise<FileChangeWithContent>;
   applyDecisions: (request: ApplyReviewRequest) => Promise<ApplyReviewResult>;
-  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<{ decisionRevision: number }>;
+  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<ExecuteReviewMutationResult>;
+  retryMutationRecovery: (
+    request: RetryReviewMutationRecoveryRequest
+  ) => Promise<RetryReviewMutationRecoveryResult>;
+  restoreHistory: (request: RestoreReviewHistoryRequest) => Promise<RestoreReviewHistoryResult>;
   // Phase 2
   checkConflict: (
     scope: ReviewFileScope,
@@ -850,13 +860,17 @@ export interface ReviewAPI {
     teamName: string,
     scopeKey: string,
     scopeToken: string,
-    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>,
+    expectedRevision: number,
+    expectedGeneration: string | null
   ) => Promise<ReviewDraftHistoryEntry>;
   clearDraftHistory: (
     teamName: string,
     scopeKey: string,
     scopeToken: string,
-    filePath?: string
+    filePath?: string,
+    expectedRevision?: number,
+    expectedGeneration?: string | null
   ) => Promise<void>;
   onCmdN?: (callback: () => void) => (() => void) | undefined;
   // Phase 4
@@ -897,6 +911,7 @@ export interface WindowsElevationStatus {
 export interface ElectronAPI
   extends RecentProjectsElectronApi, CodexAccountElectronApi, TokenUsageElectronApi {
   startup?: AppStartupAPI;
+  appCloseCoordination?: AppCloseCoordinationElectronApi;
   telemetry: TelemetryAPI;
   getAppVersion: () => Promise<string>;
   getWindowsElevationStatus: () => Promise<WindowsElevationStatus>;

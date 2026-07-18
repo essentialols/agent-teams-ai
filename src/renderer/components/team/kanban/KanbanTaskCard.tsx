@@ -460,6 +460,7 @@ interface TaskActionIconButtonProps {
   className: string;
   variant?: 'outline' | 'ghost' | 'destructive';
   disabled?: boolean;
+  tooltipSide?: React.ComponentProps<typeof TooltipContent>['side'];
 }
 
 const TaskActionIconButton = ({
@@ -469,18 +470,23 @@ const TaskActionIconButton = ({
   className,
   variant = 'outline',
   disabled = false,
+  tooltipSide = 'top',
 }: TaskActionIconButtonProps): React.JSX.Element => (
-  <Button
-    variant={variant}
-    size="icon"
-    className={`size-6 shrink-0 rounded-full shadow-sm ${className}`}
-    aria-label={label}
-    title={label}
-    onClick={onClick}
-    disabled={disabled}
-  >
-    {icon}
-  </Button>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <Button
+        variant={variant}
+        size="icon"
+        className={`size-6 shrink-0 rounded-full shadow-sm ${className}`}
+        aria-label={label}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {icon}
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent side={tooltipSide}>{label}</TooltipContent>
+  </Tooltip>
 );
 
 interface TaskMetaActionsProps {
@@ -491,6 +497,7 @@ interface TaskMetaActionsProps {
   showComments: boolean;
   canOpenChanges: boolean;
   changesNeedAttention: boolean;
+  toolbarMode: boolean;
   onViewChanges?: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
 }
@@ -503,6 +510,7 @@ const TaskMetaActions = memo(function TaskMetaActions({
   showComments,
   canOpenChanges,
   changesNeedAttention,
+  toolbarMode,
   onViewChanges,
   onDeleteTask,
 }: TaskMetaActionsProps): React.JSX.Element {
@@ -518,6 +526,7 @@ const TaskMetaActions = memo(function TaskMetaActions({
               : t('kanban.taskCard.changes')
           }
           icon={<FileCode className="size-2.5" />}
+          tooltipSide={toolbarMode ? 'left' : 'top'}
           variant="ghost"
           className={
             changesNeedAttention
@@ -541,6 +550,7 @@ const TaskMetaActions = memo(function TaskMetaActions({
         <TaskActionIconButton
           label={t('kanban.taskCard.deleteTask')}
           icon={<Trash2 size={11} />}
+          tooltipSide={toolbarMode ? 'left' : 'top'}
           variant="ghost"
           className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
           onClick={(e) => {
@@ -595,6 +605,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.start')}
             icon={<Play size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -604,6 +615,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.complete')}
             icon={<CheckCircle2 size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -618,6 +630,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.complete')}
             icon={<CheckCircle2 size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -638,6 +651,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.approve')}
             icon={<CheckCircle2 size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -647,6 +661,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.requestReview')}
             icon={<Eye size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-violet-500/40 text-violet-400 hover:bg-violet-500/10 hover:text-violet-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -671,6 +686,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
             <TaskActionIconButton
               label={t('kanban.taskCard.approve')}
               icon={<CheckCircle2 size={11} />}
+              tooltipSide={toolbarMode ? 'left' : 'top'}
               className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
               onClick={(e) => {
                 e.stopPropagation();
@@ -680,6 +696,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
             <TaskActionIconButton
               label={t('kanban.taskCard.requestChanges')}
               icon={<FilePenLine size={11} />}
+              tooltipSide={toolbarMode ? 'left' : 'top'}
               variant={toolbarMode ? 'ghost' : 'destructive'}
               className={
                 toolbarMode
@@ -699,6 +716,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
         <TaskActionIconButton
           label="Disapprove"
           icon={<RotateCcw size={11} />}
+          tooltipSide={toolbarMode ? 'left' : 'top'}
           className="border-amber-500/40 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
           onClick={(e) => {
             e.stopPropagation();
@@ -817,6 +835,7 @@ export const KanbanTaskCard = memo(
             showComments={!toolbarMode}
             canOpenChanges={canOpenChanges}
             changesNeedAttention={changesNeedAttention}
+            toolbarMode={toolbarMode}
             onViewChanges={onViewChanges}
             onDeleteTask={onDeleteTask}
           />

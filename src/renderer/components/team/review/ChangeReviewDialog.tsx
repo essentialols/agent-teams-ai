@@ -46,6 +46,7 @@ import { FileEditTimeline } from './FileEditTimeline';
 import { buildInitialReviewFileScrollKey } from './initialReviewFileScroll';
 import { KeyboardShortcutsHelp } from './KeyboardShortcutsHelp';
 import { buildPathChangeLabels } from './pathChangeLabels';
+import { getReviewActionFilePath } from './reviewActionPresentation';
 import {
   appendOrderedReviewAction,
   getReviewCloseBlockReason,
@@ -1380,6 +1381,26 @@ export const ChangeReviewDialog = ({
       setActiveFilePath(filePath);
     },
     [scrollToFile]
+  );
+
+  const handleHistoryActionNavigation = useCallback(
+    (action: ReviewUndoAction) => {
+      const actionFilePath = getReviewActionFilePath(action);
+      if (!actionFilePath) return;
+      const targetFile = sortedFiles.find(
+        (file) =>
+          normalizePathForComparison(file.filePath) ===
+          normalizePathForComparison(actionFilePath)
+      );
+      if (!targetFile) {
+        useStore.setState({
+          applyError: 'The file from this review action is no longer in the current change set.',
+        });
+        return;
+      }
+      handleTreeFileClick(targetFile.filePath);
+    },
+    [handleTreeFileClick, sortedFiles]
   );
 
   // Accept/Reject all across all files
@@ -3679,6 +3700,7 @@ export const ChangeReviewDialog = ({
               reviewMutationBusy ? 'saving' : reviewActionPersistenceStatus
             }
             onRetryHistoryPersistence={() => void persistLatestAcceptedReviewAction()}
+            onNavigateToHistoryAction={handleHistoryActionNavigation}
             undoDisabledReason={
               editedCount > 0 ? 'Save or discard manual edits before undoing a review action.' : undefined
             }

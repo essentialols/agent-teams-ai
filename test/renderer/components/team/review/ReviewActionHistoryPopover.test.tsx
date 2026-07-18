@@ -67,4 +67,27 @@ describe('ReviewActionHistoryPopover', () => {
     expect(container.querySelector('button[aria-label*="older undo"]')).toBeNull();
     act(() => root.unmount());
   });
+
+  it('navigates from a file-scoped history row', () => {
+    const root = createRoot(container);
+    const onNavigateToAction = vi.fn();
+    const action = makeAction(3);
+    act(() => {
+      root.render(
+        <ReviewActionHistoryPopover
+          undoHistory={[action]}
+          redoHistory={[]}
+          onNavigateToAction={onNavigateToAction}
+        />
+      );
+    });
+
+    const actionButton = container.querySelector<HTMLButtonElement>(
+      '[data-review-history-action="action-3"]'
+    );
+    expect(actionButton?.disabled).toBe(false);
+    act(() => actionButton?.click());
+    expect(onNavigateToAction).toHaveBeenCalledWith(action);
+    act(() => root.unmount());
+  });
 });

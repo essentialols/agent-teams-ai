@@ -1,5 +1,6 @@
 import {
   describeReviewAction,
+  getReviewActionFilePath,
   takeRecentReviewActions,
 } from '@renderer/components/team/review/reviewActionPresentation';
 import { describe, expect, it } from 'vitest';
@@ -99,6 +100,33 @@ describe('review action presentation', () => {
 
     expect(describeReviewAction(left, resolveLabel).detail).toBe('src/a/index.ts · hunk 1');
     expect(describeReviewAction(right, resolveLabel).detail).toBe('src/b/index.ts · hunk 1');
+  });
+
+  it('resolves a navigable file for current and legacy actions without guessing bulk targets', () => {
+    expect(
+      getReviewActionFilePath({
+        ...hunkAction('described', 2),
+        descriptor: {
+          intent: 'accept-hunk',
+          filePath: '/repo/described.ts',
+          hunkIndex: 2,
+        },
+      })
+    ).toBe('/repo/described.ts');
+    expect(getReviewActionFilePath(hunkAction('legacy', 0))).toBe('/repo/src/file.ts');
+    expect(
+      getReviewActionFilePath({
+        id: 'bulk',
+        createdAt: '2026-07-18T12:00:00.000Z',
+        kind: 'bulk',
+        descriptor: { intent: 'reject-all', fileCount: 2 },
+        decisionSnapshot: { hunkDecisions: {}, fileDecisions: {} },
+        diskSnapshots: [
+          { filePath: '/repo/a.ts', beforeContent: 'a', afterContent: 'A' },
+          { filePath: '/repo/b.ts', beforeContent: 'b', afterContent: 'B' },
+        ],
+      })
+    ).toBeNull();
   });
 
   it('returns the stack top first without cloning an unbounded history', () => {

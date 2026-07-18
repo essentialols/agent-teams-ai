@@ -40,6 +40,7 @@ interface ReviewToolbarProps {
   redoDisabledReason?: string;
   historyPersistenceStatus?: ReviewActionPersistenceStatus;
   onRetryHistoryPersistence?: () => void;
+  onNavigateToHistoryAction?: (action: ReviewUndoAction) => void;
 }
 
 export const ReviewToolbar = ({
@@ -69,6 +70,7 @@ export const ReviewToolbar = ({
   redoDisabledReason,
   historyPersistenceStatus = 'saved',
   onRetryHistoryPersistence,
+  onNavigateToHistoryAction,
 }: ReviewToolbarProps): React.ReactElement => {
   const { t } = useAppTranslation('team');
   const hasRejected = stats.rejected > 0;
@@ -196,6 +198,7 @@ export const ReviewToolbar = ({
         resolveFileLabel={resolveFileLabel}
         persistenceStatus={historyPersistenceStatus}
         onRetryPersistence={onRetryHistoryPersistence}
+        onNavigateToAction={onNavigateToHistoryAction}
       />
 
       {canUndo && onUndo && (

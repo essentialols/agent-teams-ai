@@ -5,7 +5,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui
 import { cn } from '@renderer/lib/utils';
 import { AlertTriangle, Check, CircleDot, History, Loader2, RotateCcw, X } from 'lucide-react';
 
-import { describeReviewAction, takeRecentReviewActions } from './reviewActionPresentation';
+import {
+  describeReviewAction,
+  getReviewActionFilePath,
+  takeRecentReviewActions,
+} from './reviewActionPresentation';
 
 import type { ReviewActionTone, ReviewFileLabelResolver } from './reviewActionPresentation';
 import type { ReviewActionPersistenceStatus } from './reviewActionState';
@@ -20,6 +24,7 @@ interface ReviewActionHistoryPopoverProps {
   resolveFileLabel?: ReviewFileLabelResolver;
   persistenceStatus?: ReviewActionPersistenceStatus;
   onRetryPersistence?: () => void;
+  onNavigateToAction?: (action: ReviewUndoAction) => void;
 }
 
 interface ReviewHistorySectionProps {
@@ -31,6 +36,7 @@ interface ReviewHistorySectionProps {
   nextLabel: string;
   resolveFileLabel?: ReviewFileLabelResolver;
   onShowOlder: () => void;
+  onNavigateToAction?: (action: ReviewUndoAction) => void;
 }
 
 function formatActionTime(createdAt: string): string | null {
@@ -55,6 +61,7 @@ const ReviewHistorySection = ({
   nextLabel,
   resolveFileLabel,
   onShowOlder,
+  onNavigateToAction,
 }: ReviewHistorySectionProps): React.ReactElement => {
   const hiddenCount = Math.max(0, totalCount - actions.length);
   const revealCount = Math.min(hiddenCount, HISTORY_REVEAL_BATCH);
@@ -71,12 +78,17 @@ const ReviewHistorySection = ({
           {actions.map((action, index) => {
             const presentation = describeReviewAction(action, resolveFileLabel);
             const timestamp = formatActionTime(action.createdAt);
+            const canNavigate = Boolean(onNavigateToAction && getReviewActionFilePath(action));
             return (
-              <div
+              <button
                 key={action.id}
+                type="button"
                 data-review-history-action={action.id}
+                disabled={!canNavigate}
+                onClick={() => onNavigateToAction?.(action)}
                 className={cn(
-                  'flex min-w-0 items-start gap-2 rounded px-2 py-1.5',
+                  'flex w-full min-w-0 items-start gap-2 rounded px-2 py-1.5 text-left',
+                  canNavigate && 'hover:bg-surface-raised/70',
                   index === 0 && 'bg-surface-raised'
                 )}
               >
@@ -104,7 +116,7 @@ const ReviewHistorySection = ({
                     </div>
                   )}
                 </div>
-              </div>
+              </button>
             );
           })}
           {hiddenCount > 0 && (
@@ -132,6 +144,7 @@ export const ReviewActionHistoryPopover = ({
   resolveFileLabel,
   persistenceStatus = 'saved',
   onRetryPersistence,
+  onNavigateToAction,
 }: ReviewActionHistoryPopoverProps): React.ReactElement | null => {
   const [open, setOpen] = useState(false);
   const [undoVisibleLimit, setUndoVisibleLimit] = useState(HISTORY_INITIAL_LIMIT);
@@ -225,6 +238,14 @@ export const ReviewActionHistoryPopover = ({
           totalCount={undoHistory.length}
           nextLabel="Next undo"
           resolveFileLabel={resolveFileLabel}
+          onNavigateToAction={
+            onNavigateToAction
+              ? (action) => {
+                  setOpen(false);
+                  onNavigateToAction(action);
+                }
+              : undefined
+          }
           onShowOlder={() => {
             setUndoVisibleLimit((current) =>
               Math.min(undoHistory.length, current + HISTORY_REVEAL_BATCH)
@@ -240,6 +261,14 @@ export const ReviewActionHistoryPopover = ({
           totalCount={redoHistory.length}
           nextLabel="Next redo"
           resolveFileLabel={resolveFileLabel}
+          onNavigateToAction={
+            onNavigateToAction
+              ? (action) => {
+                  setOpen(false);
+                  onNavigateToAction(action);
+                }
+              : undefined
+          }
           onShowOlder={() => {
             setRedoVisibleLimit((current) =>
               Math.min(redoHistory.length, current + HISTORY_REVEAL_BATCH)

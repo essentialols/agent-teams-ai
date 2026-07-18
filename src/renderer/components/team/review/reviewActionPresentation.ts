@@ -84,6 +84,15 @@ export function describeReviewAction(
   return { ...presentation, detail };
 }
 
+export function getReviewActionFilePath(action: ReviewUndoAction): string | null {
+  if (action.descriptor && 'filePath' in action.descriptor) {
+    return action.descriptor.filePath;
+  }
+  if (action.kind === 'hunk') return action.action.filePath;
+  if (action.kind === 'disk') return action.action.snapshot.filePath;
+  return action.diskSnapshots.length === 1 ? action.diskSnapshots[0]?.filePath ?? null : null;
+}
+
 /** Returns the stack top first without cloning an unbounded durable history. */
 export function takeRecentReviewActions(
   actions: readonly ReviewUndoAction[],
@@ -92,7 +101,7 @@ export function takeRecentReviewActions(
   const recent: ReviewUndoAction[] = [];
   const safeLimit = Math.max(0, Math.floor(limit));
   for (let index = actions.length - 1; index >= 0 && recent.length < safeLimit; index--) {
-    recent.push(actions[index]!);
+    recent.push(actions[index]);
   }
   return recent;
 }

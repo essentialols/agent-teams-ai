@@ -1,5 +1,6 @@
 import {
   RUNTIME_LOCAL_PROVIDER_CONFIGURE,
+  RUNTIME_LOCAL_PROVIDER_LIST,
   RUNTIME_LOCAL_PROVIDER_PROBE,
   RUNTIME_LOCAL_PROVIDER_SCAN,
   RUNTIME_PROVIDER_COMPANION_CONNECT,
@@ -25,6 +26,8 @@ import {
 import type {
   RuntimeLocalProviderConfigureInput,
   RuntimeLocalProviderConfigureResponse,
+  RuntimeLocalProviderListInput,
+  RuntimeLocalProviderListResponse,
   RuntimeLocalProviderProbeInput,
   RuntimeLocalProviderProbeResponse,
   RuntimeLocalProviderScanInput,
@@ -59,6 +62,10 @@ export function createRuntimeProviderManagementBridge(
   ipcRenderer: IpcRenderer
 ): RuntimeProviderManagementApi {
   return {
+    listLocalProviders: (
+      input: RuntimeLocalProviderListInput
+    ): Promise<RuntimeLocalProviderListResponse> =>
+      ipcRenderer.invoke(RUNTIME_LOCAL_PROVIDER_LIST, input),
     scanLocalProviders: (
       input: RuntimeLocalProviderScanInput
     ): Promise<RuntimeLocalProviderScanResponse> =>

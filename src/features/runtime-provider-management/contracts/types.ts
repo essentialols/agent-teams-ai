@@ -596,6 +596,39 @@ export interface RuntimeLocalProviderScanResponse {
   error?: RuntimeLocalProviderErrorDto;
 }
 
+export const RUNTIME_LOCAL_PROVIDER_SCOPES = ['global', 'project'] as const;
+
+export type RuntimeLocalProviderScopeDto = (typeof RUNTIME_LOCAL_PROVIDER_SCOPES)[number];
+
+export interface RuntimeLocalProviderListInput {
+  runtimeId: RuntimeProviderManagementRuntimeId;
+  scope: RuntimeLocalProviderScopeDto;
+  projectPath?: string | null;
+}
+
+export interface RuntimeLocalProviderListEntryDto {
+  preset: RuntimeLocalProviderPresetDto;
+  providerId: string;
+  baseUrl: string;
+  configuredModelIds: readonly string[];
+  defaultModelId: string | null;
+  isDefault: boolean;
+  state: RuntimeLocalProviderProbeStateDto;
+  liveModels: readonly RuntimeLocalProviderModelDto[];
+  latencyMs: number | null;
+  message: string;
+}
+
+export interface RuntimeLocalProviderListResponse {
+  schemaVersion: 1;
+  runtimeId: RuntimeProviderManagementRuntimeId;
+  scope?: RuntimeLocalProviderScopeDto;
+  projectPath?: string;
+  configPath?: string;
+  providers?: readonly RuntimeLocalProviderListEntryDto[];
+  error?: RuntimeLocalProviderErrorDto;
+}
+
 export interface RuntimeLocalProviderProbeInput {
   runtimeId: RuntimeProviderManagementRuntimeId;
   presetId: RuntimeLocalProviderPresetIdDto;
@@ -612,12 +645,13 @@ export interface RuntimeLocalProviderProbeResponse {
 
 export interface RuntimeLocalProviderConfigureInput {
   runtimeId: RuntimeProviderManagementRuntimeId;
-  projectPath: string;
+  scope: RuntimeLocalProviderScopeDto;
+  projectPath?: string | null;
   presetId: RuntimeLocalProviderPresetIdDto;
   baseUrl?: string | null;
   providerId?: string | null;
   defaultModelId: string;
-  setAsProjectDefault: boolean;
+  setAsDefault: boolean;
 }
 
 export interface RuntimeLocalProviderConfigurationDto {
@@ -627,7 +661,8 @@ export interface RuntimeLocalProviderConfigurationDto {
   defaultModelId: string;
   modelRoute: string;
   configPath: string;
-  setAsProjectDefault: boolean;
+  scope: RuntimeLocalProviderScopeDto;
+  setAsDefault: boolean;
 }
 
 export interface RuntimeLocalProviderConfigureResponse {

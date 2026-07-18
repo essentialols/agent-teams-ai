@@ -6,6 +6,7 @@ export type RuntimeProviderManagementPort = Omit<
   | 'installAndConnectCompanion'
   | 'connectCompanion'
   | 'onCompanionProgress'
+  | 'listLocalProviders'
   | 'scanLocalProviders'
   | 'probeLocalProvider'
   | 'configureLocalProvider'
@@ -13,5 +14,5 @@ export type RuntimeProviderManagementPort = Omit<
 
 export type RuntimeLocalProviderConnectorPort = Pick<
   RuntimeProviderManagementApi,
-  'scanLocalProviders' | 'probeLocalProvider' | 'configureLocalProvider'
+  'listLocalProviders' | 'scanLocalProviders' | 'probeLocalProvider' | 'configureLocalProvider'
 >;

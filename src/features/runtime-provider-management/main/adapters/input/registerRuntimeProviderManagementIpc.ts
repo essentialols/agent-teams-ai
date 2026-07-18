@@ -1,9 +1,11 @@
 import {
   isRuntimeProviderCompanionId,
   RUNTIME_LOCAL_PROVIDER_CONFIGURE,
+  RUNTIME_LOCAL_PROVIDER_LIST,
   RUNTIME_LOCAL_PROVIDER_PRESET_IDS,
   RUNTIME_LOCAL_PROVIDER_PROBE,
   RUNTIME_LOCAL_PROVIDER_SCAN,
+  RUNTIME_LOCAL_PROVIDER_SCOPES,
   RUNTIME_PROVIDER_COMPANION_CONNECT,
   RUNTIME_PROVIDER_COMPANION_INSTALL,
   RUNTIME_PROVIDER_COMPANION_STATUS,
@@ -27,6 +29,8 @@ import type {
   RuntimeLocalProviderConfigureInput,
   RuntimeLocalProviderConfigureResponse,
   RuntimeLocalProviderErrorCodeDto,
+  RuntimeLocalProviderListInput,
+  RuntimeLocalProviderListResponse,
   RuntimeLocalProviderPresetIdDto,
   RuntimeLocalProviderProbeInput,
   RuntimeLocalProviderProbeResponse,
@@ -60,6 +64,7 @@ import type { IpcMain } from 'electron';
 
 const logger = createLogger('Feature:RuntimeProviderManagement:IPC');
 const LOCAL_PROVIDER_PRESET_ID_SET = new Set<string>(RUNTIME_LOCAL_PROVIDER_PRESET_IDS);
+const LOCAL_PROVIDER_SCOPE_SET = new Set<string>(RUNTIME_LOCAL_PROVIDER_SCOPES);
 const RUNTIME_PROVIDER_IPC_ERROR_DETAIL_LIMIT = 1_600;
 const ESCAPE_CHARACTER = String.fromCharCode(27);
 const BELL_CHARACTER = String.fromCharCode(7);
@@ -146,6 +151,7 @@ export function registerRuntimeProviderManagementIpc(
 ): void {
   const localProviderError = <
     T extends
+      | RuntimeLocalProviderListResponse
       | RuntimeLocalProviderScanResponse
       | RuntimeLocalProviderProbeResponse
       | RuntimeLocalProviderConfigureResponse,
@@ -160,8 +166,35 @@ export function registerRuntimeProviderManagementIpc(
     }) as T;
   const isPresetId = (value: unknown): value is RuntimeLocalProviderPresetIdDto =>
     typeof value === 'string' && LOCAL_PROVIDER_PRESET_ID_SET.has(value);
+  const isLocalProviderScope = (value: unknown): boolean =>
+    typeof value === 'string' && LOCAL_PROVIDER_SCOPE_SET.has(value);
   const validOptionalString = (value: unknown): boolean =>
     value === undefined || value === null || typeof value === 'string';
+
+  ipcMain.handle(
+    RUNTIME_LOCAL_PROVIDER_LIST,
+    async (
+      _event,
+      input: RuntimeLocalProviderListInput
+    ): Promise<RuntimeLocalProviderListResponse> => {
+      if (
+        input?.runtimeId !== 'opencode' ||
+        !isLocalProviderScope(input.scope) ||
+        !validOptionalString(input.projectPath) ||
+        (typeof input.projectPath === 'string' && input.projectPath.length > 4_096) ||
+        (input.scope === 'project' && typeof input.projectPath !== 'string')
+      ) {
+        return localProviderError('invalid-input', 'Local provider list request is invalid.');
+      }
+      try {
+        return await feature.listLocalProviders(input);
+      } catch (error) {
+        const message = getRuntimeProviderIpcErrorMessage(error, 'Failed to load local providers');
+        logger.error('Failed to load local providers', message);
+        return localProviderError('config-invalid', message);
+      }
+    }
+  );
 
   ipcMain.handle(
     RUNTIME_LOCAL_PROVIDER_SCAN,
@@ -215,13 +248,15 @@ export function registerRuntimeProviderManagementIpc(
       if (
         input?.runtimeId !== 'opencode' ||
         !isPresetId(input.presetId) ||
-        typeof input.projectPath !== 'string' ||
-        input.projectPath.length > 4_096 ||
+        !isLocalProviderScope(input.scope) ||
+        !validOptionalString(input.projectPath) ||
+        (typeof input.projectPath === 'string' && input.projectPath.length > 4_096) ||
+        (input.scope === 'project' && typeof input.projectPath !== 'string') ||
         !validOptionalString(input.baseUrl) ||
         !validOptionalString(input.providerId) ||
         typeof input.defaultModelId !== 'string' ||
         input.defaultModelId.length > 256 ||
-        typeof input.setAsProjectDefault !== 'boolean'
+        typeof input.setAsDefault !== 'boolean'
       ) {
         return localProviderError('invalid-input', 'Local provider configuration is invalid.');
       }

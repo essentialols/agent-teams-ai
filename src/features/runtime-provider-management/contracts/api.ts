@@ -1,6 +1,8 @@
 import type {
   RuntimeLocalProviderConfigureInput,
   RuntimeLocalProviderConfigureResponse,
+  RuntimeLocalProviderListInput,
+  RuntimeLocalProviderListResponse,
   RuntimeLocalProviderProbeInput,
   RuntimeLocalProviderProbeResponse,
   RuntimeLocalProviderScanInput,
@@ -31,6 +33,9 @@ import type {
 } from './types';
 
 export interface RuntimeProviderManagementApi {
+  listLocalProviders(
+    input: RuntimeLocalProviderListInput
+  ): Promise<RuntimeLocalProviderListResponse>;
   scanLocalProviders(
     input: RuntimeLocalProviderScanInput
   ): Promise<RuntimeLocalProviderScanResponse>;

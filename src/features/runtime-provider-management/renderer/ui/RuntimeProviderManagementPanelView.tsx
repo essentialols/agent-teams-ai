@@ -43,7 +43,6 @@ import {
   EyeOff,
   KeyRound,
   Loader2,
-  Plus,
   RefreshCcw,
   Search,
   Star,
@@ -86,7 +85,6 @@ interface RuntimeProviderManagementPanelViewProps {
   readonly projectContextLoading?: boolean;
   readonly projectContextError?: string | null;
   readonly onProjectContextChange?: (projectPath: string | null) => void;
-  readonly onAddLocalProvider?: () => void;
 }
 
 interface ProviderActionsProps {
@@ -2779,7 +2777,6 @@ export function RuntimeProviderManagementPanelView({
   projectContextLoading = false,
   projectContextError = null,
   onProjectContextChange,
-  onAddLocalProvider,
 }: RuntimeProviderManagementPanelViewProps): JSX.Element {
   const { t } = useAppTranslation('settings');
   const [selectedSection, setSelectedSection] = useState<OpenCodeSettingsSection | null>(null);
@@ -3011,16 +3008,6 @@ export function RuntimeProviderManagementPanelView({
               </div>
             ) : null}
             <div className="flex justify-end gap-1.5">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={disabled || blockingCredentialWrite}
-                onClick={onAddLocalProvider}
-              >
-                <Plus className="mr-1 size-3.5" />
-                Add local model
-              </Button>
               {state.directorySupported ? (
                 <Button
                   type="button"

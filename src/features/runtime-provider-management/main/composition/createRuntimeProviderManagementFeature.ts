@@ -18,6 +18,8 @@ import type { RuntimeProviderCompanionRegistry } from '../infrastructure/cli-com
 import type {
   RuntimeLocalProviderConfigureInput,
   RuntimeLocalProviderConfigureResponse,
+  RuntimeLocalProviderListInput,
+  RuntimeLocalProviderListResponse,
   RuntimeLocalProviderProbeInput,
   RuntimeLocalProviderProbeResponse,
   RuntimeLocalProviderScanInput,
@@ -79,6 +81,10 @@ export function createRuntimeProviderManagementFeature(
   const companionCoordinator = new RuntimeProviderCompanionCoordinator(port, companionRegistry);
 
   return {
+    listLocalProviders: (
+      input: RuntimeLocalProviderListInput
+    ): Promise<RuntimeLocalProviderListResponse> =>
+      localProviderConnector.listLocalProviders(input),
     scanLocalProviders: (
       input: RuntimeLocalProviderScanInput
     ): Promise<RuntimeLocalProviderScanResponse> =>

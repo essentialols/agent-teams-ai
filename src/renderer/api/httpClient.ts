@@ -1512,6 +1512,15 @@ export class HttpAPIClient implements ElectronAPI {
   };
 
   runtimeProviderManagement: RuntimeProviderManagementApi = {
+    listLocalProviders: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'config-invalid',
+        message: 'Local provider management is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
     scanLocalProviders: async (input) => ({
       schemaVersion: 1,
       runtimeId: input.runtimeId,

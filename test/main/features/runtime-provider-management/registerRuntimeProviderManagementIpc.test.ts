@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   RUNTIME_LOCAL_PROVIDER_CONFIGURE,
+  RUNTIME_LOCAL_PROVIDER_LIST,
   RUNTIME_LOCAL_PROVIDER_PROBE,
   RUNTIME_LOCAL_PROVIDER_SCAN,
   RUNTIME_PROVIDER_COMPANION_CONNECT,
@@ -32,6 +33,7 @@ import type { IpcMain } from 'electron';
 function createCompanionFeatureStubs(): Pick<
   RuntimeProviderManagementFeatureFacade,
   | 'scanLocalProviders'
+  | 'listLocalProviders'
   | 'probeLocalProvider'
   | 'configureLocalProvider'
   | 'getCompanionStatus'
@@ -40,6 +42,7 @@ function createCompanionFeatureStubs(): Pick<
   | 'onCompanionProgress'
 > {
   return {
+    listLocalProviders: vi.fn(() => Promise.reject(new Error('Not used by this test'))),
     scanLocalProviders: vi.fn(() => Promise.reject(new Error('Not used by this test'))),
     probeLocalProvider: vi.fn(() => Promise.reject(new Error('Not used by this test'))),
     configureLocalProvider: vi.fn(() => Promise.reject(new Error('Not used by this test'))),
@@ -51,7 +54,7 @@ function createCompanionFeatureStubs(): Pick<
 }
 
 describe('registerRuntimeProviderManagementIpc', () => {
-  it('validates and routes local provider scan, probe, and configuration requests', async () => {
+  it('validates and routes local provider list, scan, probe, and configuration requests', async () => {
     const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
     const ipcMain = {
       handle: vi.fn((channel: string, handler: (...args: unknown[]) => Promise<unknown>) => {
@@ -63,6 +66,13 @@ describe('registerRuntimeProviderManagementIpc', () => {
       schemaVersion: 1 as const,
       runtimeId: 'opencode' as const,
       probes: [],
+    };
+    const listResponse = {
+      schemaVersion: 1 as const,
+      runtimeId: 'opencode' as const,
+      projectPath: '/tmp/sandbox',
+      configPath: '/tmp/sandbox/opencode.json',
+      providers: [],
     };
     const probeResponse = {
       schemaVersion: 1 as const,
@@ -94,11 +104,13 @@ describe('registerRuntimeProviderManagementIpc', () => {
         defaultModelId: 'qwen3:8b',
         modelRoute: 'ollama/qwen3:8b',
         configPath: '/tmp/sandbox/opencode.json',
-        setAsProjectDefault: true,
+        scope: 'project' as const,
+        setAsDefault: true,
       },
     };
     const feature = {
       ...createCompanionFeatureStubs(),
+      listLocalProviders: vi.fn(async () => listResponse),
       scanLocalProviders: vi.fn(async () => scanResponse),
       probeLocalProvider: vi.fn(async () => probeResponse),
       configureLocalProvider: vi.fn(async () => configureResponse),
@@ -106,6 +118,17 @@ describe('registerRuntimeProviderManagementIpc', () => {
 
     registerRuntimeProviderManagementIpc(ipcMain, feature);
 
+    await expect(
+      handlers.get(RUNTIME_LOCAL_PROVIDER_LIST)?.(
+        {},
+        { runtimeId: 'opencode', scope: 'project', projectPath: '/tmp/sandbox' }
+      )
+    ).resolves.toEqual(listResponse);
+    expect(feature.listLocalProviders).toHaveBeenCalledWith({
+      runtimeId: 'opencode',
+      scope: 'project',
+      projectPath: '/tmp/sandbox',
+    });
     await expect(
       handlers.get(RUNTIME_LOCAL_PROVIDER_SCAN)?.({}, { runtimeId: 'opencode' })
     ).resolves.toEqual(scanResponse);
@@ -124,33 +147,58 @@ describe('registerRuntimeProviderManagementIpc', () => {
         {},
         {
           runtimeId: 'opencode',
+          scope: 'project',
           projectPath: '/tmp/sandbox',
           presetId: 'ollama',
           defaultModelId: 'qwen3:8b',
-          setAsProjectDefault: true,
+          setAsDefault: true,
         }
       )
     ).resolves.toEqual(configureResponse);
     expect(feature.configureLocalProvider).toHaveBeenCalledWith({
       runtimeId: 'opencode',
+      scope: 'project',
       projectPath: '/tmp/sandbox',
       presetId: 'ollama',
       defaultModelId: 'qwen3:8b',
-      setAsProjectDefault: true,
+      setAsDefault: true,
+    });
+    await expect(
+      handlers.get(RUNTIME_LOCAL_PROVIDER_LIST)?.({}, { runtimeId: 'opencode', scope: 'global' })
+    ).resolves.toEqual(listResponse);
+    await expect(
+      handlers.get(RUNTIME_LOCAL_PROVIDER_CONFIGURE)?.(
+        {},
+        {
+          runtimeId: 'opencode',
+          scope: 'global',
+          presetId: 'ollama',
+          defaultModelId: 'qwen3:8b',
+          setAsDefault: true,
+        }
+      )
+    ).resolves.toEqual(configureResponse);
+    expect(feature.configureLocalProvider).toHaveBeenLastCalledWith({
+      runtimeId: 'opencode',
+      scope: 'global',
+      presetId: 'ollama',
+      defaultModelId: 'qwen3:8b',
+      setAsDefault: true,
     });
 
     const invalid = await handlers.get(RUNTIME_LOCAL_PROVIDER_CONFIGURE)?.(
       {},
       {
         runtimeId: 'opencode',
+        scope: 'project',
         projectPath: '/tmp/sandbox',
         presetId: 'unknown',
         defaultModelId: 'qwen3:8b',
-        setAsProjectDefault: true,
+        setAsDefault: true,
       }
     );
     expect(invalid).toMatchObject({ error: { code: 'invalid-input' } });
-    expect(feature.configureLocalProvider).toHaveBeenCalledTimes(1);
+    expect(feature.configureLocalProvider).toHaveBeenCalledTimes(2);
   });
 
   it('accepts every registered companion id and rejects unknown transport input', async () => {

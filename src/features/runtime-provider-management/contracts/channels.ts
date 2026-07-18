@@ -1,4 +1,5 @@
 export const RUNTIME_PROVIDER_MANAGEMENT_VIEW = 'runtimeProviderManagement:view';
+export const RUNTIME_LOCAL_PROVIDER_LIST = 'runtimeProviderManagement:localProviderList';
 export const RUNTIME_LOCAL_PROVIDER_SCAN = 'runtimeProviderManagement:localProviderScan';
 export const RUNTIME_LOCAL_PROVIDER_PROBE = 'runtimeProviderManagement:localProviderProbe';
 export const RUNTIME_LOCAL_PROVIDER_CONFIGURE = 'runtimeProviderManagement:localProviderConfigure';

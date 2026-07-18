@@ -1,8 +1,17 @@
 import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { atomicWriteAsync } from '@main/utils/atomicWrite';
-import { applyEdits, type FormattingOptions, modify, parse, type ParseError } from 'jsonc-parser';
+import {
+  applyEdits,
+  findNodeAtLocation,
+  type FormattingOptions,
+  modify,
+  type Node as JsoncNode,
+  type ParseError,
+  parseTree,
+} from 'jsonc-parser';
 
 import {
   buildRuntimeLocalProviderModelRoute,
@@ -16,12 +25,16 @@ import type {
   RuntimeLocalProviderConfigureInput,
   RuntimeLocalProviderConfigureResponse,
   RuntimeLocalProviderErrorCodeDto,
+  RuntimeLocalProviderListEntryDto,
+  RuntimeLocalProviderListInput,
+  RuntimeLocalProviderListResponse,
   RuntimeLocalProviderModelDto,
   RuntimeLocalProviderProbeDto,
   RuntimeLocalProviderProbeInput,
   RuntimeLocalProviderProbeResponse,
   RuntimeLocalProviderScanInput,
   RuntimeLocalProviderScanResponse,
+  RuntimeLocalProviderScopeDto,
 } from '../../contracts';
 import type { RuntimeLocalProviderConnectorPort } from '../../core/application';
 
@@ -35,6 +48,7 @@ const CONFIG_CANDIDATES = [
   '.opencode/opencode.json',
   '.opencode/opencode.jsonc',
 ] as const;
+const GLOBAL_CONFIG_FILENAMES = ['opencode.json', 'opencode.jsonc'] as const;
 const JSON_FORMATTING: FormattingOptions = {
   insertSpaces: true,
   tabSize: 2,
@@ -43,7 +57,16 @@ const JSON_FORMATTING: FormattingOptions = {
 
 interface OpenCodeLocalProviderConnectorOptions {
   readonly fetchImpl?: typeof fetch;
+  readonly homePath?: string;
   readonly now?: () => number;
+}
+
+interface OpenCodeConfigTarget {
+  readonly scope: RuntimeLocalProviderScopeDto;
+  readonly projectPath?: string;
+  readonly configPath: string;
+  readonly raw: string | null;
+  readonly mode?: number;
 }
 
 interface ModelProbeOutcome {
@@ -66,11 +89,146 @@ class LocalProviderOperationError extends Error {
 
 export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConnectorPort {
   private readonly fetchImpl: typeof fetch;
+  private readonly homePath: string;
   private readonly now: () => number;
 
   constructor(options: OpenCodeLocalProviderConnectorOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.homePath = path.resolve(options.homePath ?? os.homedir());
     this.now = options.now ?? Date.now;
+  }
+
+  async listLocalProviders(
+    input: RuntimeLocalProviderListInput
+  ): Promise<RuntimeLocalProviderListResponse> {
+    if (
+      input?.runtimeId !== 'opencode' ||
+      (input.scope !== 'global' && input.scope !== 'project')
+    ) {
+      return this.listError('invalid-input', 'Only the OpenCode runtime supports local providers.');
+    }
+    try {
+      const configTarget = await this.readConfigTarget(input.scope, input.projectPath);
+      if (!configTarget.raw) {
+        return {
+          schemaVersion: 1,
+          runtimeId: 'opencode',
+          scope: configTarget.scope,
+          projectPath: configTarget.projectPath,
+          configPath: configTarget.configPath,
+          providers: [],
+        };
+      }
+
+      const configTree = parseConfigTree(configTarget.raw);
+      const providerRootNode = findNodeAtLocation(configTree, ['provider']);
+      if (providerRootNode && providerRootNode.type !== 'object') {
+        throw new LocalProviderOperationError(
+          'config-invalid',
+          'The existing OpenCode provider configuration must be an object.'
+        );
+      }
+      const configuredDefaultModel = readStringNode(findNodeAtLocation(configTree, ['model']));
+      const configuredProviders = providerRootNode
+        ? readObjectEntries(providerRootNode)
+            .map(({ key: providerId, value: providerNode }) => {
+              if (providerNode.type !== 'object') return null;
+              const npm = readStringNode(
+                findNodeAtLocation(configTree, ['provider', providerId, 'npm'])
+              );
+              const rawBaseUrl = readStringNode(
+                findNodeAtLocation(configTree, ['provider', providerId, 'options', 'baseURL'])
+              );
+              if (npm !== '@ai-sdk/openai-compatible' || !rawBaseUrl) return null;
+
+              let target: ReturnType<typeof normalizeRuntimeLocalProviderTarget>;
+              try {
+                target = normalizeRuntimeLocalProviderTarget({
+                  presetId: 'custom',
+                  providerId,
+                  baseUrl: rawBaseUrl,
+                });
+              } catch {
+                return null;
+              }
+              const preset =
+                RUNTIME_LOCAL_PROVIDER_PRESETS.find(
+                  (candidate) => candidate.providerId === providerId
+                ) ?? RUNTIME_LOCAL_PROVIDER_PRESETS.find((candidate) => candidate.id === 'custom');
+              if (!preset) return null;
+
+              const modelsNode = findNodeAtLocation(configTree, ['provider', providerId, 'models']);
+              const configuredModelIds =
+                modelsNode?.type === 'object'
+                  ? readObjectEntries(modelsNode)
+                      .map(({ key }) => normalizeRuntimeLocalProviderModelId(key))
+                      .filter((modelId): modelId is string => Boolean(modelId))
+                  : [];
+              const routePrefix = `${providerId}/`;
+              const isDefault = configuredDefaultModel?.startsWith(routePrefix) ?? false;
+              const configuredDefaultModelId = isDefault
+                ? configuredDefaultModel?.slice(routePrefix.length) || null
+                : (configuredModelIds[0] ?? null);
+              return {
+                preset,
+                providerId: target.providerId,
+                baseUrl: target.baseUrl,
+                configuredModelIds,
+                configuredDefaultModelId,
+                isDefault,
+              };
+            })
+            .filter((provider): provider is NonNullable<typeof provider> => provider !== null)
+        : [];
+
+      const providers = await Promise.all(
+        configuredProviders.map(async (configured): Promise<RuntimeLocalProviderListEntryDto> => {
+          const probe = await this.probeTarget(
+            {
+              preset: configured.preset,
+              providerId: configured.providerId,
+              baseUrl: configured.baseUrl,
+            },
+            SCAN_TIMEOUT_MS
+          );
+          const liveDefaultStillAvailable = probe.models.some(
+            (model) => model.id === configured.configuredDefaultModelId
+          );
+          return {
+            preset: configured.preset,
+            providerId: configured.providerId,
+            baseUrl: configured.baseUrl,
+            configuredModelIds: configured.configuredModelIds,
+            defaultModelId: liveDefaultStillAvailable
+              ? configured.configuredDefaultModelId
+              : (configured.configuredDefaultModelId ?? probe.models[0]?.id ?? null),
+            isDefault: configured.isDefault,
+            state: probe.state,
+            liveModels: probe.models,
+            latencyMs: probe.latencyMs,
+            message: probe.message,
+          };
+        })
+      );
+      providers.sort(
+        (left, right) =>
+          Number(right.isDefault) - Number(left.isDefault) ||
+          left.preset.displayName.localeCompare(right.preset.displayName)
+      );
+      return {
+        schemaVersion: 1,
+        runtimeId: 'opencode',
+        scope: configTarget.scope,
+        projectPath: configTarget.projectPath,
+        configPath: configTarget.configPath,
+        providers,
+      };
+    } catch (error) {
+      if (error instanceof LocalProviderOperationError) {
+        return this.listError(error.code, error.message, error.recoverable);
+      }
+      return this.listError('config-invalid', 'Could not read the OpenCode config.');
+    }
   }
 
   async scanLocalProviders(
@@ -119,10 +277,13 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
   async configureLocalProvider(
     input: RuntimeLocalProviderConfigureInput
   ): Promise<RuntimeLocalProviderConfigureResponse> {
-    if (input?.runtimeId !== 'opencode') {
+    if (
+      input?.runtimeId !== 'opencode' ||
+      (input.scope !== 'global' && input.scope !== 'project')
+    ) {
       return this.configureError(
         'invalid-input',
-        'Only the OpenCode runtime supports local providers.'
+        'The local provider configuration scope is invalid.'
       );
     }
     try {
@@ -131,10 +292,10 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
       if (!defaultModelId) {
         throw new LocalProviderOperationError('invalid-input', 'Choose a valid local model.');
       }
-      if (typeof input.setAsProjectDefault !== 'boolean') {
+      if (typeof input.setAsDefault !== 'boolean') {
         throw new LocalProviderOperationError(
           'invalid-input',
-          'Project default selection is invalid.'
+          'Default model selection is invalid.'
         );
       }
 
@@ -150,13 +311,14 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
         );
       }
 
-      const configPath = await this.writeProjectConfig({
+      const configPath = await this.writeConfig({
+        scope: input.scope,
         projectPath: input.projectPath,
         providerId: target.providerId,
         baseUrl: target.baseUrl,
         modelIds,
         defaultModelId,
-        setAsProjectDefault: input.setAsProjectDefault,
+        setAsDefault: input.setAsDefault,
       });
       return {
         schemaVersion: 1,
@@ -168,7 +330,8 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
           defaultModelId,
           modelRoute: buildRuntimeLocalProviderModelRoute(target.providerId, defaultModelId),
           configPath,
-          setAsProjectDefault: input.setAsProjectDefault,
+          scope: input.scope,
+          setAsDefault: input.setAsDefault,
         },
       };
     } catch (error) {
@@ -178,7 +341,7 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
       if (error instanceof LocalProviderOperationError) {
         return this.configureError(error.code, error.message, error.recoverable);
       }
-      return this.configureError('write-failed', 'Could not update the OpenCode project config.');
+      return this.configureError('write-failed', 'Could not update the OpenCode config.');
     }
   }
 
@@ -228,8 +391,8 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
           message: 'Local server returned a model list that is too large.',
         };
       }
-      const raw = await response.text();
-      if (Buffer.byteLength(raw, 'utf8') > MAX_RESPONSE_BYTES) {
+      const raw = await readResponseTextWithLimit(response, MAX_RESPONSE_BYTES);
+      if (raw === null) {
         return {
           available: false,
           models: [],
@@ -273,28 +436,226 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
     }
   }
 
-  private async writeProjectConfig(input: {
-    projectPath: string;
+  private async writeConfig(input: {
+    scope: RuntimeLocalProviderScopeDto;
+    projectPath?: string | null;
     providerId: string;
     baseUrl: string;
     modelIds: readonly string[];
     defaultModelId: string;
-    setAsProjectDefault: boolean;
+    setAsDefault: boolean;
   }): Promise<string> {
-    const projectPath = input.projectPath?.trim();
-    if (!projectPath) {
+    const configTarget = await this.readConfigTarget(input.scope, input.projectPath, true);
+    const configPath = configTarget.configPath;
+    const raw = configTarget.raw ?? '{}\n';
+    const isNewConfig = configTarget.raw === null;
+    const parseErrors: ParseError[] = [];
+    const configTree = parseTree(raw, parseErrors, {
+      allowTrailingComma: true,
+      disallowComments: false,
+    });
+    if (parseErrors.length > 0 || !configTree || configTree.type !== 'object') {
       throw new LocalProviderOperationError(
-        'project-required',
-        'Select a project before configuring a local provider.'
+        'config-invalid',
+        'The existing OpenCode config contains invalid JSON or JSONC.'
+      );
+    }
+    if (hasDuplicateObjectProperties(configTree)) {
+      throw new LocalProviderOperationError(
+        'config-invalid',
+        'The existing OpenCode config contains duplicate object keys and must be fixed manually.'
       );
     }
 
+    const providerRootNode = findNodeAtLocation(configTree, ['provider']);
+    if (providerRootNode && providerRootNode.type !== 'object') {
+      throw new LocalProviderOperationError(
+        'config-invalid',
+        'The existing OpenCode provider configuration must be an object.'
+      );
+    }
+
+    let nextRaw = raw;
+    if (isNewConfig) {
+      nextRaw = setJsoncValue(nextRaw, ['$schema'], 'https://opencode.ai/config.json');
+    }
+    const providerNode = findNodeAtLocation(configTree, ['provider', input.providerId]);
+    if (!providerNode || providerNode.type !== 'object') {
+      nextRaw = setJsoncValue(nextRaw, ['provider', input.providerId], {
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL: input.baseUrl },
+        models: createModelRecord(input.modelIds),
+      });
+    } else {
+      nextRaw = setJsoncValue(
+        nextRaw,
+        ['provider', input.providerId, 'npm'],
+        '@ai-sdk/openai-compatible'
+      );
+      const optionsNode = findNodeAtLocation(configTree, ['provider', input.providerId, 'options']);
+      nextRaw =
+        optionsNode && optionsNode.type !== 'object'
+          ? setJsoncValue(nextRaw, ['provider', input.providerId, 'options'], {
+              baseURL: input.baseUrl,
+            })
+          : setJsoncValue(
+              nextRaw,
+              ['provider', input.providerId, 'options', 'baseURL'],
+              input.baseUrl
+            );
+
+      const modelsNode = findNodeAtLocation(configTree, ['provider', input.providerId, 'models']);
+      if (modelsNode && modelsNode.type === 'object') {
+        for (const modelId of input.modelIds) {
+          if (!findNodeAtLocation(configTree, ['provider', input.providerId, 'models', modelId])) {
+            nextRaw = setJsoncValue(nextRaw, ['provider', input.providerId, 'models', modelId], {});
+          }
+        }
+      } else {
+        nextRaw = setJsoncValue(
+          nextRaw,
+          ['provider', input.providerId, 'models'],
+          createModelRecord(input.modelIds)
+        );
+      }
+    }
+    if (input.setAsDefault) {
+      const modelRoute = buildRuntimeLocalProviderModelRoute(
+        input.providerId,
+        input.defaultModelId
+      );
+      nextRaw = setJsoncValue(nextRaw, ['model'], modelRoute);
+      nextRaw = setJsoncValue(nextRaw, ['small_model'], modelRoute);
+    }
+    await atomicWriteAsync(configPath, `${nextRaw.trimEnd()}\n`, {
+      // OpenCode configs can contain provider credentials. Preserve an existing
+      // file's access mode and keep newly-created configs private.
+      mode: configTarget.mode ?? 0o600,
+    });
+    return configPath;
+  }
+
+  private readConfigTarget(
+    scope: RuntimeLocalProviderScopeDto,
+    projectPath: string | null | undefined,
+    ensureGlobalDirectory = false
+  ): Promise<OpenCodeConfigTarget> {
+    return scope === 'global'
+      ? this.readGlobalConfig(ensureGlobalDirectory)
+      : this.readProjectConfig(projectPath);
+  }
+
+  private async readGlobalConfig(ensureDirectory: boolean): Promise<OpenCodeConfigTarget> {
+    let realHomePath: string;
+    try {
+      const homeStat = await fs.stat(this.homePath);
+      if (!homeStat.isDirectory()) throw new Error('not-directory');
+      realHomePath = await fs.realpath(this.homePath);
+    } catch {
+      throw new LocalProviderOperationError(
+        'config-invalid',
+        'The user home directory is not available for the global OpenCode config.'
+      );
+    }
+
+    let configDirectory = realHomePath;
+    for (const segment of ['.config', 'opencode']) {
+      configDirectory = path.join(configDirectory, segment);
+      try {
+        const stat = await fs.lstat(configDirectory);
+        if (stat.isSymbolicLink()) {
+          throw new LocalProviderOperationError(
+            'config-conflict',
+            'The global OpenCode config directory is a symbolic link and must be updated manually.'
+          );
+        }
+        if (!stat.isDirectory()) {
+          throw new LocalProviderOperationError(
+            'config-conflict',
+            'The global OpenCode config path is not a directory.'
+          );
+        }
+      } catch (error) {
+        if (error instanceof LocalProviderOperationError) throw error;
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw new LocalProviderOperationError(
+            'config-invalid',
+            'Could not inspect the global OpenCode config directory.'
+          );
+        }
+        if (!ensureDirectory) {
+          return {
+            scope: 'global',
+            configPath: path.join(realHomePath, '.config', 'opencode', 'opencode.json'),
+            raw: null,
+          };
+        }
+        await fs.mkdir(configDirectory, { mode: 0o700 });
+      }
+    }
+
+    const realConfigDirectory = await fs.realpath(configDirectory);
+    if (!isPathInside(realHomePath, realConfigDirectory)) {
+      throw new LocalProviderOperationError(
+        'config-conflict',
+        'The global OpenCode config resolves outside the user home directory.'
+      );
+    }
+
+    const existingConfigs: Array<{ path: string; mode: number }> = [];
+    for (const filename of GLOBAL_CONFIG_FILENAMES) {
+      const candidate = path.join(realConfigDirectory, filename);
+      try {
+        const stat = await fs.lstat(candidate);
+        if (stat.isSymbolicLink()) {
+          throw new LocalProviderOperationError(
+            'config-conflict',
+            'The global OpenCode config is a symbolic link and must be updated manually.'
+          );
+        }
+        if (stat.isFile()) {
+          existingConfigs.push({ path: candidate, mode: stat.mode & 0o777 });
+        }
+      } catch (error) {
+        if (error instanceof LocalProviderOperationError) throw error;
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw new LocalProviderOperationError(
+            'config-invalid',
+            'Could not inspect the global OpenCode config.'
+          );
+        }
+      }
+    }
+    if (existingConfigs.length > 1) {
+      throw new LocalProviderOperationError(
+        'config-conflict',
+        'Both global opencode.json and opencode.jsonc were found. Keep one config file and retry.'
+      );
+    }
+    const existingConfig = existingConfigs[0];
+    const configPath = existingConfig?.path ?? path.join(realConfigDirectory, 'opencode.json');
+    return {
+      scope: 'global',
+      configPath,
+      raw: existingConfig ? await fs.readFile(configPath, 'utf8') : null,
+      mode: existingConfig?.mode,
+    };
+  }
+
+  private async readProjectConfig(
+    projectPathInput: string | null | undefined
+  ): Promise<OpenCodeConfigTarget> {
+    const projectPath = projectPathInput?.trim();
+    if (!projectPath) {
+      throw new LocalProviderOperationError(
+        'project-required',
+        'Select a project before loading local providers.'
+      );
+    }
     let realProjectPath: string;
     try {
       const stat = await fs.stat(projectPath);
-      if (!stat.isDirectory()) {
-        throw new Error('not-directory');
-      }
+      if (!stat.isDirectory()) throw new Error('not-directory');
       realProjectPath = await fs.realpath(projectPath);
     } catch {
       throw new LocalProviderOperationError(
@@ -303,7 +664,7 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
       );
     }
 
-    const existingConfigPaths: string[] = [];
+    const existingConfigs: Array<{ path: string; mode: number }> = [];
     for (const relativePath of CONFIG_CANDIDATES) {
       const candidate = path.join(realProjectPath, relativePath);
       try {
@@ -322,78 +683,41 @@ export class OpenCodeLocalProviderConnector implements RuntimeLocalProviderConne
               'The OpenCode config resolves outside the selected project and must be updated manually.'
             );
           }
-          existingConfigPaths.push(candidate);
+          existingConfigs.push({ path: candidate, mode: stat.mode & 0o777 });
         }
       } catch (error) {
-        if (error instanceof LocalProviderOperationError) {
-          throw error;
-        }
+        if (error instanceof LocalProviderOperationError) throw error;
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           throw new LocalProviderOperationError(
-            'write-failed',
+            'config-invalid',
             'Could not inspect the OpenCode project config.'
           );
         }
       }
     }
-    if (existingConfigPaths.length > 1) {
+    if (existingConfigs.length > 1) {
       throw new LocalProviderOperationError(
         'config-conflict',
         'Multiple OpenCode project configs were found. Keep one config file and retry.'
       );
     }
-
-    const configPath = existingConfigPaths[0] ?? path.join(realProjectPath, 'opencode.json');
-    let raw = '{}\n';
-    let isNewConfig = true;
-    if (existingConfigPaths.length === 1) {
-      isNewConfig = false;
-      raw = await fs.readFile(configPath, 'utf8');
-    }
-    const parseErrors: ParseError[] = [];
-    const parsed = parse(raw, parseErrors, {
-      allowTrailingComma: true,
-      disallowComments: false,
-    });
-    if (parseErrors.length > 0 || !isRecord(parsed)) {
-      throw new LocalProviderOperationError(
-        'config-invalid',
-        'The existing OpenCode config contains invalid JSON or JSONC.'
-      );
-    }
-
-    const providerRecord = asRecord(asRecord(parsed.provider)?.[input.providerId]);
-    const existingOptions = asRecord(providerRecord?.options) ?? {};
-    const existingModels = asRecord(providerRecord?.models) ?? {};
-    const nextModels = { ...existingModels };
-    for (const modelId of input.modelIds) {
-      nextModels[modelId] = asRecord(existingModels[modelId]) ?? {};
-    }
-    const nextProvider = {
-      ...(providerRecord ?? {}),
-      npm: '@ai-sdk/openai-compatible',
-      options: {
-        ...existingOptions,
-        baseURL: input.baseUrl,
-      },
-      models: nextModels,
+    const existingConfig = existingConfigs[0];
+    const configPath = existingConfig?.path ?? path.join(realProjectPath, 'opencode.json');
+    return {
+      scope: 'project',
+      projectPath: realProjectPath,
+      configPath,
+      raw: existingConfig ? await fs.readFile(configPath, 'utf8') : null,
+      mode: existingConfig?.mode,
     };
+  }
 
-    let nextRaw = raw;
-    if (isNewConfig) {
-      nextRaw = setJsoncValue(nextRaw, ['$schema'], 'https://opencode.ai/config.json');
-    }
-    nextRaw = setJsoncValue(nextRaw, ['provider', input.providerId], nextProvider);
-    if (input.setAsProjectDefault) {
-      const modelRoute = buildRuntimeLocalProviderModelRoute(
-        input.providerId,
-        input.defaultModelId
-      );
-      nextRaw = setJsoncValue(nextRaw, ['model'], modelRoute);
-      nextRaw = setJsoncValue(nextRaw, ['small_model'], modelRoute);
-    }
-    await atomicWriteAsync(configPath, `${nextRaw.trimEnd()}\n`);
-    return configPath;
+  private listError(
+    code: RuntimeLocalProviderErrorCodeDto,
+    message: string,
+    recoverable = true
+  ): RuntimeLocalProviderListResponse {
+    return { schemaVersion: 1, runtimeId: 'opencode', error: { code, message, recoverable } };
   }
 
   private scanError(
@@ -443,8 +767,107 @@ function readOpenAiModels(raw: string): RuntimeLocalProviderModelDto[] {
   return [...models.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function parseConfigTree(raw: string): JsoncNode {
+  const parseErrors: ParseError[] = [];
+  const configTree = parseTree(raw, parseErrors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+  if (parseErrors.length > 0 || !configTree || configTree.type !== 'object') {
+    throw new LocalProviderOperationError(
+      'config-invalid',
+      'The existing OpenCode config contains invalid JSON or JSONC.'
+    );
+  }
+  if (hasDuplicateObjectProperties(configTree)) {
+    throw new LocalProviderOperationError(
+      'config-invalid',
+      'The existing OpenCode config contains duplicate object keys and must be fixed manually.'
+    );
+  }
+  return configTree;
+}
+
+function readStringNode(node: JsoncNode | undefined): string | null {
+  return node?.type === 'string' && typeof node.value === 'string' ? node.value : null;
+}
+
+function readObjectEntries(node: JsoncNode): Array<{ key: string; value: JsoncNode }> {
+  if (node.type !== 'object') return [];
+  return (node.children ?? []).flatMap((property) => {
+    const keyNode = property.children?.[0];
+    const valueNode = property.children?.[1];
+    return keyNode?.type === 'string' && typeof keyNode.value === 'string' && valueNode
+      ? [{ key: keyNode.value, value: valueNode }]
+      : [];
+  });
+}
+
+async function readResponseTextWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const raw = await response.text();
+    return Buffer.byteLength(raw, 'utf8') <= maxBytes ? raw : null;
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        return Buffer.concat(chunks, totalBytes).toString('utf8');
+      }
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(Buffer.from(chunk.value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function setJsoncValue(raw: string, pathSegments: (string | number)[], value: unknown): string {
   return applyEdits(raw, modify(raw, pathSegments, value, { formattingOptions: JSON_FORMATTING }));
+}
+
+function createModelRecord(modelIds: readonly string[]): Record<string, unknown> {
+  const models = Object.create(null) as Record<string, unknown>;
+  for (const modelId of modelIds) {
+    models[modelId] = {};
+  }
+  return models;
+}
+
+function hasDuplicateObjectProperties(node: JsoncNode): boolean {
+  if (node.type === 'array') {
+    return node.children?.some(hasDuplicateObjectProperties) ?? false;
+  }
+  if (node.type !== 'object') {
+    return false;
+  }
+
+  const propertyNames = new Set<string>();
+  for (const property of node.children ?? []) {
+    const propertyName = property.children?.[0]?.value;
+    if (typeof propertyName === 'string') {
+      if (propertyNames.has(propertyName)) {
+        return true;
+      }
+      propertyNames.add(propertyName);
+    }
+    const propertyValue = property.children?.[1];
+    if (propertyValue && hasDuplicateObjectProperties(propertyValue)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

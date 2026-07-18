@@ -21,6 +21,17 @@ const fixtureRoot = path.resolve(
 const devMcpMode = process.argv.includes('--dev-mcp');
 const keepFixture = process.env.AGENT_TEAMS_CHANGES_E2E_KEEP === '1';
 const skipBuild = process.env.AGENT_TEAMS_CHANGES_E2E_SKIP_BUILD === '1';
+const selectTeamButton = `Array.from(document.querySelectorAll('button'))
+  .find((button) => button.textContent?.trim() === 'Select Team')`;
+const sandboxTeamCard = `Array.from(document.querySelectorAll('[role="button"]'))
+  .find((element) => element.querySelector('h3')?.textContent?.trim() === 'changes-e2e')`;
+const sandboxKanbanTaskCard = `document.querySelector(
+  '.kanban-task-card[data-task-id="changes-history-e2e"]'
+)`;
+const sandboxKanbanTaskTitle = `Array.from((${sandboxKanbanTaskCard})?.querySelectorAll('h5') ?? [])
+  .find((heading) => heading.textContent?.trim() === 'Verify durable Changes history')`;
+const kanbanTabButton = `Array.from(document.querySelectorAll('button'))
+  .find((button) => button.textContent?.trim() === 'Kanban')`;
 const appLogTail = [];
 let appProcess = null;
 let client = null;
@@ -111,7 +122,8 @@ async function startApp(port, fixture) {
       AGENT_TEAMS_DISABLE_SOURCEMAPS: '1',
       AGENT_TEAMS_ELECTRON_CLAUDE_ROOT: fixture.claudeRoot,
       AGENT_TEAMS_ELECTRON_USER_DATA_DIR: fixture.userDataRoot,
-      // Node is a deterministic, fast-failing runtime stand-in. The E2E never launches agents.
+      // Node keeps runtime discovery deterministic. The E2E never launches agents.
+      NODE_BINARY: process.execPath,
       CLAUDE_AGENT_TEAMS_ORCHESTRATOR_CLI_PATH: process.execPath,
     },
   });
@@ -121,21 +133,23 @@ async function startApp(port, fixture) {
   client = await CdpClient.connect(webSocketUrl);
   await client.send('Runtime.enable');
   await client.send('Page.enable');
+  await client.send('Page.bringToFront');
   await client.waitFor(
-    `document.querySelector('[title="Verify durable Changes history"]') ||
-      Array.from(document.querySelectorAll('button')).some((button) =>
-        Array.from(button.querySelectorAll('span'))
-          .some((span) => span.textContent?.trim() === 'workspace'))`,
-    'sandbox task project'
+    `(${sandboxKanbanTaskCard}) || (${selectTeamButton})`,
+    'sandbox team navigation'
   );
-  if (!(await client.evaluate(`Boolean(document.querySelector('[title="Verify durable Changes history"]'))`))) {
-    await client.click(`Array.from(document.querySelectorAll('button')).find((button) =>
-      Array.from(button.querySelectorAll('span'))
-        .some((span) => span.textContent?.trim() === 'workspace'))`);
+  if (!(await client.evaluate(`Boolean(${sandboxKanbanTaskCard})`))) {
+    await client.evaluate(`(${selectTeamButton})?.click()`);
+    await client.waitFor(sandboxTeamCard, 'sandbox team card');
+    await client.evaluate(`(${sandboxTeamCard})?.click()`);
     await client.waitFor(
-      `document.querySelector('[title="Verify durable Changes history"]')`,
-      'expanded sandbox task card'
+      `(${sandboxKanbanTaskCard}) || (${kanbanTabButton})`,
+      'sandbox team task board'
     );
+    if (!(await client.evaluate(`Boolean(${sandboxKanbanTaskCard})`))) {
+      await client.evaluate(`(${kanbanTabButton})?.click()`);
+      await client.waitFor(sandboxKanbanTaskCard, 'sandbox Kanban task');
+    }
   }
 }
 
@@ -285,6 +299,31 @@ class CdpClient {
     });
   }
 
+  async domClick(expression) {
+    const clicked = await this.evaluate(`(() => {
+      const element = (${expression});
+      if (!(element instanceof HTMLElement)) return false;
+      element.click();
+      return true;
+    })()`);
+    assert.equal(clicked, true, `Element not clickable: ${expression}`);
+  }
+
+  async domMouseDown(expression) {
+    const dispatched = await this.evaluate(`(() => {
+      const element = (${expression});
+      if (!(element instanceof HTMLElement)) return false;
+      element.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        view: window,
+      }));
+      return true;
+    })()`);
+    assert.equal(dispatched, true, `Element cannot receive mouse down: ${expression}`);
+  }
+
   async screenshot(filePath) {
     const result = await this.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
     await writeFile(filePath, Buffer.from(result.data, 'base64'));
@@ -305,21 +344,30 @@ const visibleExactText = (text) => `Array.from(document.querySelectorAll('button
 const buttonWithText = (text) => `Array.from(document.querySelectorAll('button'))
   .find((element) => element.textContent?.trim() === ${JSON.stringify(text)} &&
     element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0)`;
+const enabledButtonWithText = (text) => `(() => {
+  const button = ${buttonWithText(text)};
+  return button && !button.disabled ? button : null;
+})()`;
 
 async function openReview() {
-  await client.click(visibleExactText('Verify durable Changes history'));
-  await client.waitFor(`document.querySelector('[role="dialog"]')`, 'task dialog');
-  const fileRow = `document.querySelector('[role="button"][title="src/review-history.ts"]')`;
-  const expandChanges = `Array.from(document.querySelectorAll('section'))
+  await client.evaluate(`(${sandboxKanbanTaskTitle})?.click()`);
+  const taskDialog = `Array.from(document.querySelectorAll('[role="dialog"]'))
+    .find((dialog) => Array.from(dialog.querySelectorAll('h2'))
+      .some((heading) => heading.textContent?.trim() === 'Verify durable Changes history'))`;
+  await client.waitFor(taskDialog, 'task dialog');
+  const fileRow = `(${taskDialog})?.querySelector(
+    '[role="button"][title="src/review-history.ts"]'
+  )`;
+  const expandChanges = `Array.from((${taskDialog})?.querySelectorAll('section') ?? [])
     .find((section) => Array.from(section.querySelectorAll('span'))
       .some((span) => span.textContent?.trim() === 'Changes'))
     ?.querySelector('button[aria-label="Expand section"]')`;
   await client.waitFor(`(${fileRow}) || (${expandChanges})`, 'Changes section readiness');
   if (!(await client.evaluate(`Boolean(${fileRow})`))) {
-    await client.click(expandChanges);
+    await client.domClick(expandChanges);
     await client.waitFor(fileRow, 'task file change');
   }
-  await client.click(fileRow);
+  await client.domClick(fileRow);
   await client.waitFor(
     `document.body?.innerText.includes('12 pending') || document.body?.innerText.includes('11 pending')`,
     'hunk review dialog',
@@ -380,6 +428,7 @@ async function main() {
   const fixture = seedFixture();
   await mkdir(fixtureRoot, { recursive: true });
   const port = await findAvailablePort(Number(process.env.AGENT_TEAMS_CHANGES_E2E_PORT) || 9410);
+  const historyScreenshot = path.join(fixtureRoot, 'durable-history.png');
   const conflictScreenshot = path.join(fixtureRoot, 'external-conflict.png');
   const finalScreenshot = path.join(fixtureRoot, 'final.png');
 
@@ -396,27 +445,53 @@ async function main() {
 
   await client.moveTo(`document.querySelector('.cm-changedLine, .cm-insertedLine')`);
   await client.waitFor(`document.querySelector('button[title^="Reject change"]')`, 'hunk Reject');
-  await client.click(`document.querySelector('button[title^="Reject change"]')`);
+  await client.domMouseDown(`document.querySelector('button[title^="Reject change"]')`);
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'one rejected hunk');
   await waitForDiskLines(fixture.changedFile, 'before-0', 'after-1');
 
-  await client.click(buttonWithText('Undo'));
+  await client.waitFor(enabledButtonWithText('Undo'), 'enabled Undo after Reject');
+  await client.domClick(enabledButtonWithText('Undo'));
   await client.waitFor(`document.body?.innerText.includes('12 pending')`, 'Undo result');
   await waitForDiskLines(fixture.changedFile, 'after-0', 'after-1');
-  await client.waitFor(buttonWithText('Redo'), 'Redo after Undo');
+  await client.waitFor(enabledButtonWithText('Redo'), 'enabled Redo after Undo');
 
-  await client.click(buttonWithText('Redo'));
+  await client.domClick(enabledButtonWithText('Redo'));
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'Redo result');
   await waitForDiskLines(fixture.changedFile, 'before-0', 'after-1');
 
   await stopApp();
   await startApp(port, fixture);
   await openReview();
-  await client.waitFor(buttonWithText('Undo'), 'durable Undo after restart');
+  await client.waitFor(visibleExactText('#E2E-101'), 'stable task display id before history');
+  await client.waitFor(enabledButtonWithText('Undo'), 'enabled durable Undo after restart');
   await assertDiskLines(fixture.changedFile, 'before-0', 'after-1');
+  const historyButton = `document.querySelector('button[aria-label^="Review history:"]')`;
+  await client.waitFor(historyButton, 'durable review history trigger');
+  await client.domClick(historyButton);
+  await client.waitFor(
+    `document.body?.innerText.includes('Review action history') &&
+      document.body?.innerText.includes('Reject hunk') &&
+      document.body?.innerText.includes('src/review-history.ts · hunk 1') &&
+      document.body?.textContent.includes('Next undo')`,
+    'exact durable action preview after restart'
+  );
+  await client.waitFor(
+    `Array.from(document.querySelectorAll('[data-radix-popper-content-wrapper]'))
+      .some((wrapper) => wrapper.textContent?.includes('Review action history') &&
+        Number.parseFloat(getComputedStyle(wrapper.firstElementChild ?? wrapper).opacity) >= 0.99)`,
+    'settled review history animation'
+  );
+  await client.screenshot(historyScreenshot);
+  await client.evaluate(`(${historyButton})?.focus()`);
+  await client.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' });
+  await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape' });
+  await client.waitFor(
+    `!document.body?.innerText.includes('Review action history')`,
+    'closed review history'
+  );
 
-  await client.click(buttonWithText('Undo'));
-  await client.waitFor(buttonWithText('Redo'), 'durable Redo after restart Undo');
+  await client.domClick(enabledButtonWithText('Undo'));
+  await client.waitFor(enabledButtonWithText('Redo'), 'enabled durable Redo after restart Undo');
   await waitForDiskLines(fixture.changedFile, 'after-0', 'after-1');
 
   const externallyEdited = (await readFile(fixture.changedFile, 'utf8')).replace(
@@ -433,9 +508,10 @@ async function main() {
   await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
   await client.screenshot(conflictScreenshot);
 
-  await client.click(buttonWithText('Reload from disk'));
+  await client.domClick(buttonWithText('Reload from disk'));
   await client.waitFor(
-    `!document.body?.innerText.includes('Changed on disk') && !(${buttonWithText('Redo')})`,
+    `!document.body?.innerText.includes('Changed on disk') &&
+      !(${buttonWithText('Redo')}) && !(${historyButton})`,
     'resolved external change conflict'
   );
   await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
@@ -448,17 +524,13 @@ async function main() {
   assert.equal(await client.evaluate(`document.body?.innerText.includes('Changed on disk')`), false);
   await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
   await assertViewportFits();
-  await client.waitFor(
-    `Array.from(document.querySelectorAll('h2'))
-      .some((heading) => heading.textContent?.includes('#E2E-101'))`,
-    'stable task display id after restart'
-  );
+  await client.waitFor(visibleExactText('#E2E-101'), 'stable task display id after restart');
   await client.screenshot(finalScreenshot);
 
   process.stdout.write(
     `Changes desktop E2E passed (${devMcpMode ? 'dev:mcp' : 'preview'}): ` +
-      `Reject -> Undo -> Redo -> restart -> external conflict -> Reload -> restart\n` +
-      `Artifacts: ${conflictScreenshot}, ${finalScreenshot}\n`
+      `Reject -> Undo -> Redo -> restart -> exact history -> external conflict -> Reload -> restart\n` +
+      `Artifacts: ${historyScreenshot}, ${conflictScreenshot}, ${finalScreenshot}\n`
   );
 }
 

@@ -465,11 +465,42 @@ describe('review IPC path confinement', () => {
       'safe-team',
       'agent-worker',
       'scope-token-a',
-      entry
+      entry,
+      0,
+      null
     );
     expect(saved).toMatchObject({
       success: true,
-      data: { ...entry, updatedAt: expect.any(String) },
+      data: { ...entry, generation: expect.any(String), updatedAt: expect.any(String) },
+    });
+    const generation = (saved as { data: { generation: string } }).data.generation;
+    await expect(
+      ipcMain.invoke(
+        REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
+        'safe-team',
+        'agent-worker',
+        'scope-token-a',
+        entry,
+        0,
+        null
+      )
+    ).resolves.toMatchObject({
+      success: true,
+      data: { ...entry, generation, updatedAt: expect.any(String) },
+    });
+    await expect(
+      ipcMain.invoke(
+        REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
+        'safe-team',
+        'agent-worker',
+        'scope-token-a',
+        { ...entry, revision: 2, editorState: { ...entry.editorState, doc: 'stale writer\n' } },
+        0,
+        null
+      )
+    ).resolves.toEqual({
+      success: false,
+      error: 'Review draft history changed; refusing stale state overwrite',
     });
 
     const loaded = await ipcMain.invoke(
@@ -495,7 +526,7 @@ describe('review IPC path confinement', () => {
       'safe-team',
       'agent-worker',
       'scope-token-a',
-      ''
+      projectFile
     );
     expect(invalidClear.success).toBe(false);
     await expect(
@@ -507,9 +538,24 @@ describe('review IPC path confinement', () => {
       'safe-team',
       'agent-worker',
       'scope-token-a',
-      projectFile
+      projectFile,
+      0,
+      null
     );
-    expect(cleared).toEqual({ success: true, data: undefined });
+    expect(cleared).toEqual({
+      success: false,
+      error: 'Review draft history changed; refusing stale state overwrite',
+    });
+    const exactClear = await ipcMain.invoke(
+      REVIEW_CLEAR_DRAFT_HISTORY,
+      'safe-team',
+      'agent-worker',
+      'scope-token-a',
+      projectFile,
+      1,
+      generation
+    );
+    expect(exactClear).toEqual({ success: true, data: undefined });
     await expect(
       ipcMain.invoke(REVIEW_LOAD_DRAFT_HISTORY, 'safe-team', 'agent-worker', 'scope-token-a')
     ).resolves.toEqual({ success: true, data: null });

@@ -3971,12 +3971,18 @@ async function handleSaveDraftHistoryEntry(
   teamName: string,
   scopeKey: string,
   scopeToken: string,
-  entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+  entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>,
+  expectedRevision: number,
+  expectedGeneration: string | null
 ): Promise<IpcResult<ReviewDraftHistoryEntry>> {
   return wrapReviewHandler('saveDraftHistoryEntry', async () => {
     const persistenceScope = { scopeKey, scopeToken };
     return withReviewDecisionPersistenceLock(teamName, persistenceScope, () =>
-      reviewDraftHistoryStore.saveEntry(teamName, scopeKey, scopeToken, entry)
+      reviewDraftHistoryStore.saveEntry(teamName, scopeKey, scopeToken, {
+        ...entry,
+        expectedRevision,
+        expectedGeneration,
+      })
     );
   });
 }
@@ -3986,13 +3992,25 @@ async function handleClearDraftHistory(
   teamName: string,
   scopeKey: string,
   scopeToken: string,
-  filePath: string | null = null
+  filePath: string | null = null,
+  expectedRevision: number | null = null,
+  expectedGeneration: string | null = null
 ): Promise<IpcResult<void>> {
   return wrapReviewHandler('clearDraftHistory', async () => {
     const persistenceScope = { scopeKey, scopeToken };
     await withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
       if (filePath !== null) {
-        await reviewDraftHistoryStore.clearEntry(teamName, scopeKey, scopeToken, filePath);
+        if (expectedRevision === null) {
+          throw new Error('Clearing review draft history requires an exact revision');
+        }
+        await reviewDraftHistoryStore.clearEntry(
+          teamName,
+          scopeKey,
+          scopeToken,
+          filePath,
+          expectedRevision,
+          expectedGeneration
+        );
       } else {
         await reviewDraftHistoryStore.clearScope(teamName, scopeKey, scopeToken);
       }

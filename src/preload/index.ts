@@ -1692,28 +1692,36 @@ const electronAPI: ElectronAPI = {
       teamName: string,
       scopeKey: string,
       scopeToken: string,
-      entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+      entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>,
+      expectedRevision: number,
+      expectedGeneration: string | null
     ) => {
       return invokeIpcWithResult<ReviewDraftHistoryEntry>(
         REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
         teamName,
         scopeKey,
         scopeToken,
-        entry
+        entry,
+        expectedRevision,
+        expectedGeneration
       );
     },
     clearDraftHistory: async (
       teamName: string,
       scopeKey: string,
       scopeToken: string,
-      filePath?: string
+      filePath?: string,
+      expectedRevision?: number,
+      expectedGeneration?: string | null
     ) => {
       return invokeIpcWithResult<void>(
         REVIEW_CLEAR_DRAFT_HISTORY,
         teamName,
         scopeKey,
         scopeToken,
-        filePath ?? null
+        filePath ?? null,
+        expectedRevision ?? null,
+        expectedGeneration ?? null
       );
     },
     onCmdN: (callback: () => void): (() => void) => {

@@ -57,6 +57,8 @@ describe('ReviewDraftHistoryStore', () => {
     await first.saveEntry('demo', 'task-123', 'scope-a', {
       filePath: '/repo/a.ts',
       codec: 'codemirror-history-v1' as const,
+      expectedRevision: 0,
+      expectedGeneration: null,
       revision: 1,
       diskBaseline: 'A',
       editorState: editorState('ABC', ['B', 'C']),
@@ -64,6 +66,8 @@ describe('ReviewDraftHistoryStore', () => {
     await first.saveEntry('demo', 'task-123', 'scope-a', {
       filePath: '/repo/b.ts',
       codec: 'codemirror-history-v1' as const,
+      expectedRevision: 0,
+      expectedGeneration: null,
       revision: 1,
       diskBaseline: 'one',
       editorState: editorState('two', ['replace']),
@@ -98,6 +102,8 @@ describe('ReviewDraftHistoryStore', () => {
     await new ReviewDraftHistoryStore().saveEntry('demo', 'task-123', 'scope-real', {
       filePath: '/repo/real.ts',
       codec: 'codemirror-history-v1',
+      expectedRevision: 0,
+      expectedGeneration: null,
       revision: 1,
       // A successful Save advances only the disk baseline. The native branch remains so
       // Undo after restart turns this clean buffer into a draft without touching disk.
@@ -132,37 +138,144 @@ describe('ReviewDraftHistoryStore', () => {
     expect(restored.doc.toString()).toBe('A');
   });
 
-  it('keeps the newest revision and accepts only an idempotent equal revision', async () => {
+  it('upgrades a legacy entry with a stable generation before its next write', async () => {
+    const { ReviewDraftHistoryStore } = await import(
+      '@features/change-review-history/main'
+    );
+    const scopeToken = 'scope-legacy';
+    const target = storedPath('demo', 'task-123', scopeToken);
+    await mkdir(path.dirname(target), { recursive: true });
+    const legacyEntry = {
+      filePath: '/repo/a.ts',
+      codec: 'codemirror-history-v1' as const,
+      revision: 1,
+      diskBaseline: 'A',
+      editorState: editorState('AB', ['B']),
+      updatedAt: '2026-07-18T12:00:00.000Z',
+    };
+    await writeFile(
+      target,
+      JSON.stringify({
+        version: 1,
+        scopeKey: 'task-123',
+        scopeTokenHash: createHash('sha256').update(scopeToken).digest('hex'),
+        entries: { [legacyEntry.filePath]: legacyEntry },
+        updatedAt: legacyEntry.updatedAt,
+      }),
+      'utf8'
+    );
+
+    const store = new ReviewDraftHistoryStore();
+    const loaded = await store.load('demo', 'task-123', scopeToken);
+    const generation = loaded?.entries[legacyEntry.filePath]?.generation;
+    expect(generation).toMatch(/^legacy-[a-f0-9]{64}$/);
+    if (!generation) throw new Error('Expected a migrated generation');
+    await expect(
+      store.saveEntry('demo', 'task-123', scopeToken, {
+        filePath: legacyEntry.filePath,
+        codec: legacyEntry.codec,
+        expectedRevision: 1,
+        expectedGeneration: generation,
+        revision: 2,
+        diskBaseline: 'A',
+        editorState: editorState('ABC', ['B', 'C']),
+      })
+    ).resolves.toMatchObject({ revision: 2, generation: expect.any(String) });
+  });
+
+  it('rejects stale writers and revision jumps while accepting response-loss retries', async () => {
     const { ReviewDraftHistoryStore } = await import(
       '@features/change-review-history/main'
     );
     const store = new ReviewDraftHistoryStore();
-    const latest = {
+    const first = {
       filePath: '/repo/a.ts',
       codec: 'codemirror-history-v1' as const,
-      revision: 2,
+      expectedRevision: 0,
+      expectedGeneration: null,
+      revision: 1,
       diskBaseline: 'A',
-      editorState: editorState('ABC', ['B', 'C']),
+      editorState: editorState('AB', ['B']),
     };
-    await store.saveEntry('demo', 'task-123', 'scope-a', latest);
-    await expect(store.saveEntry('demo', 'task-123', 'scope-a', latest)).resolves.toMatchObject(
-      latest
-    );
+    const savedFirst = await store.saveEntry('demo', 'task-123', 'scope-a', first);
+    await expect(store.saveEntry('demo', 'task-123', 'scope-a', first)).resolves.toMatchObject({
+      filePath: first.filePath,
+      revision: first.revision,
+      diskBaseline: first.diskBaseline,
+      editorState: first.editorState,
+    });
     await expect(
       store.saveEntry('demo', 'task-123', 'scope-a', {
-        ...latest,
-        revision: 1,
-        editorState: editorState('AB', ['B']),
-      })
-    ).rejects.toThrow('Stale review draft history revision');
-    await expect(
-      store.saveEntry('demo', 'task-123', 'scope-a', {
-        ...latest,
+        ...first,
         editorState: editorState('different', ['different']),
       })
-    ).rejects.toThrow('Conflicting review draft history revision');
+    ).rejects.toThrow('Review draft history changed; refusing stale state overwrite');
+    await expect(
+      store.saveEntry('demo', 'task-123', 'scope-a', {
+        ...first,
+        revision: 2,
+        editorState: editorState('ABC', ['B', 'C']),
+      })
+    ).rejects.toThrow('Review draft history changed; refusing stale state overwrite');
+
+    const second = {
+      ...first,
+      expectedRevision: 1,
+      expectedGeneration: savedFirst.generation,
+      revision: 2,
+      editorState: editorState('ABC', ['B', 'C']),
+    };
+    const savedSecond = await store.saveEntry('demo', 'task-123', 'scope-a', second);
+    expect(savedSecond).toMatchObject({
+      filePath: second.filePath,
+      revision: second.revision,
+      diskBaseline: second.diskBaseline,
+      editorState: second.editorState,
+    });
+    await expect(
+      store.saveEntry('demo', 'task-123', 'scope-a', {
+        ...first,
+        revision: 1,
+        expectedRevision: 2,
+        expectedGeneration: savedSecond.generation,
+      })
+    ).rejects.toThrow('Invalid review draft history entry');
     await expect(store.load('demo', 'task-123', 'scope-a')).resolves.toMatchObject({
       entries: { '/repo/a.ts': { editorState: { doc: 'ABC' }, revision: 2 } },
+    });
+  });
+
+  it('rejects an ABA clear after the same file is cleared and recreated at revision one', async () => {
+    const { ReviewDraftHistoryStore } = await import(
+      '@features/change-review-history/main'
+    );
+    const store = new ReviewDraftHistoryStore();
+    const original = await store.saveEntry('demo', 'task-123', 'scope-a', {
+      filePath: '/repo/a.ts',
+      codec: 'codemirror-history-v1',
+      expectedRevision: 0,
+      expectedGeneration: null,
+      revision: 1,
+      diskBaseline: 'A',
+      editorState: editorState('AB', ['B']),
+    });
+    await store.clearEntry('demo', 'task-123', 'scope-a', '/repo/a.ts', 1, original.generation);
+    const recreated = await store.saveEntry('demo', 'task-123', 'scope-a', {
+      filePath: '/repo/a.ts',
+      codec: 'codemirror-history-v1',
+      expectedRevision: 0,
+      expectedGeneration: null,
+      revision: 1,
+      diskBaseline: 'A',
+      editorState: editorState('AC', ['C']),
+    });
+    expect(recreated.generation).not.toBe(original.generation);
+
+    await expect(
+      store.clearEntry('demo', 'task-123', 'scope-a', '/repo/a.ts', 1, original.generation)
+    ).rejects.toThrow('Review draft history changed; refusing stale state overwrite');
+    await expect(store.load('demo', 'task-123', 'scope-a')).resolves.toMatchObject({
+      entries: { '/repo/a.ts': { generation: recreated.generation, editorState: { doc: 'AC' } } },
     });
   });
 
@@ -171,24 +284,35 @@ describe('ReviewDraftHistoryStore', () => {
       '@features/change-review-history/main'
     );
     const store = new ReviewDraftHistoryStore();
+    let scopeAGeneration = '';
     for (const scopeToken of ['scope-a', 'scope-b']) {
-      await store.saveEntry('demo', 'task-123', scopeToken, {
+      const saved = await store.saveEntry('demo', 'task-123', scopeToken, {
         filePath: '/repo/a.ts',
         codec: 'codemirror-history-v1' as const,
+        expectedRevision: 0,
+        expectedGeneration: null,
         revision: 1,
         diskBaseline: 'A',
         editorState: editorState('AB', ['B']),
       });
+      if (scopeToken === 'scope-a') scopeAGeneration = saved.generation;
     }
     await store.saveEntry('demo', 'task-123', 'scope-a', {
       filePath: '/repo/b.ts',
       codec: 'codemirror-history-v1' as const,
+      expectedRevision: 0,
+      expectedGeneration: null,
       revision: 1,
       diskBaseline: 'B',
       editorState: editorState('BC', ['C']),
     });
 
-    await store.clearEntry('demo', 'task-123', 'scope-a', '/repo/a.ts');
+    await expect(
+      store.clearEntry('demo', 'task-123', 'scope-a', '/repo/a.ts', 0, null)
+    ).rejects.toThrow('Review draft history changed; refusing stale state overwrite');
+    expect((await store.load('demo', 'task-123', 'scope-a'))?.entries['/repo/a.ts']).toBeTruthy();
+
+    await store.clearEntry('demo', 'task-123', 'scope-a', '/repo/a.ts', 1, scopeAGeneration);
     expect(Object.keys((await store.load('demo', 'task-123', 'scope-a'))?.entries ?? {})).toEqual([
       '/repo/b.ts',
     ]);
@@ -242,6 +366,8 @@ describe('ReviewDraftHistoryStore', () => {
       store.saveEntry('demo', 'task-123', 'scope-a', {
         filePath: '/repo/a.ts',
         codec: 'codemirror-history-v1' as const,
+        expectedRevision: 0,
+        expectedGeneration: null,
         revision: 1,
         diskBaseline: 'A',
         editorState: { doc: 'AB' } as never,

@@ -860,13 +860,17 @@ export interface ReviewAPI {
     teamName: string,
     scopeKey: string,
     scopeToken: string,
-    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>,
+    expectedRevision: number,
+    expectedGeneration: string | null
   ) => Promise<ReviewDraftHistoryEntry>;
   clearDraftHistory: (
     teamName: string,
     scopeKey: string,
     scopeToken: string,
-    filePath?: string
+    filePath?: string,
+    expectedRevision?: number,
+    expectedGeneration?: string | null
   ) => Promise<void>;
   onCmdN?: (callback: () => void) => (() => void) | undefined;
   // Phase 4

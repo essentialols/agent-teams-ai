@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { redoDepth, undoDepth } from '@codemirror/commands';
 import { Transaction } from '@codemirror/state';
+import { registerAppCloseParticipant } from '@features/app-close-coordination/renderer';
 import { serializeReviewDraftEditorState } from '@features/change-review-history/renderer';
 import { useAppTranslation } from '@features/localization/renderer';
 import {
@@ -132,6 +133,11 @@ interface PendingDraftHistoryWrite {
   scopeKey: string;
   scopeToken: string;
   entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>;
+}
+
+interface ReviewCloseFlushResult {
+  ok: boolean;
+  blocker?: string;
 }
 
 interface ReviewPersistenceSnapshotIdentity {
@@ -3004,7 +3010,7 @@ export const ChangeReviewDialog = ({
     return () => observer.disconnect();
   }, [hasData]);
 
-  const requestClose = useCallback(async (): Promise<void> => {
+  const flushReviewStateForClose = useCallback(async (): Promise<ReviewCloseFlushResult> => {
     const state = useStore.getState();
     if (decisionHydrationKey) {
       const matchesCurrentHydration = state.decisionHydrationScopeKey === decisionHydrationKey;
@@ -3013,9 +3019,8 @@ export const ChangeReviewDialog = ({
         (matchesCurrentHydration && state.decisionHydrationStatus === 'error') ||
         (matchesDraftHydration && draftHistoryHydration.status === 'error')
       ) {
-        // The persisted state is unknown. Close without overwriting or clearing its last good copy.
-        onOpenChange(false);
-        return;
+        // The persisted state is unknown. Preserve its last good copy without overwriting it.
+        return { ok: true };
       }
       if (
         !matchesCurrentHydration ||
@@ -3023,85 +3028,92 @@ export const ChangeReviewDialog = ({
         !matchesDraftHydration ||
         draftHistoryHydration.status !== 'loaded'
       ) {
-        useStore.setState({
-          applyError: 'Wait for saved review state to finish loading before closing Changes.',
-        });
-        return;
-      }
-    }
-    for (const [filePath, view] of editorViewMapRef.current.entries()) {
-      if (filePath in state.editedContents || draftHistoryEntriesRef.current[filePath]) {
-        handleSerializedStateChanged(filePath, serializeReviewDraftEditorState(view.state));
-      }
-    }
-    for (const filePath of Object.keys(state.editedContents)) {
-      if (!draftHistoryEntriesRef.current[filePath]) {
-        useStore.setState({
-          applyError: `Manual edits for ${filePath} are not durable yet. Keep Changes open and retry.`,
-        });
-        return;
+        const blocker = 'Wait for saved review state to finish loading before closing Changes.';
+        useStore.setState({ applyError: blocker });
+        return { ok: false, blocker };
       }
     }
     const blockReason = getReviewCloseBlockReason({
-      busy: hasReviewActionInFlight(),
+      busy: isReviewActionLocked({
+        applying: state.applying,
+        fileApplyCount: fileApplyInFlightRef.current.size,
+        undoing: undoInFlightRef.current,
+        closing: closingRef.current,
+      }),
       draftCount: 0,
     });
     if (blockReason) {
       useStore.setState({ applyError: blockReason });
-      return;
+      return { ok: false, blocker: blockReason };
     }
 
     closingRef.current = true;
     setClosing(true);
     try {
+      for (const [filePath, view] of editorViewMapRef.current.entries()) {
+        if (filePath in state.editedContents || draftHistoryEntriesRef.current[filePath]) {
+          handleSerializedStateChanged(filePath, serializeReviewDraftEditorState(view.state));
+        }
+      }
+      const currentState = useStore.getState();
+      for (const filePath of Object.keys(currentState.editedContents)) {
+        if (!draftHistoryEntriesRef.current[filePath]) {
+          const blocker = `Manual edits for ${filePath} are not durable yet. Keep Changes open and retry.`;
+          useStore.setState({ applyError: blocker });
+          return { ok: false, blocker };
+        }
+      }
       if (!(await flushDraftHistoryWrites())) {
-        useStore.setState({
-          applyError: 'Unable to save manual edit history. Changes remains open.',
-        });
-        return;
+        const blocker = 'Unable to save manual edit history. Changes remains open.';
+        useStore.setState({ applyError: blocker });
+        return { ok: false, blocker };
       }
       if (decisionScopeToken) {
+        const latestState = useStore.getState();
         const hasCurrentReviewState =
-          Object.keys(state.hunkDecisions).length > 0 ||
-          Object.keys(state.fileDecisions).length > 0 ||
-          state.reviewActionHistory.length > 0 ||
-          state.reviewRedoHistory.length > 0;
+          Object.keys(latestState.hunkDecisions).length > 0 ||
+          Object.keys(latestState.fileDecisions).length > 0 ||
+          latestState.reviewActionHistory.length > 0 ||
+          latestState.reviewRedoHistory.length > 0;
         let flushed: boolean;
         if (hasCurrentReviewState) {
-          // React's persistence effect may not have run after the final click yet.
-          // Schedule from the authoritative current store snapshot before flushing.
-          persistDecisions(teamName, decisionScopeKey, decisionScopeToken);
-          flushed = await flushDecisionsToDisk(teamName, decisionScopeKey, decisionScopeToken);
+          flushed = await persistLatestAcceptedReviewAction();
         } else {
           flushed = await clearDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
         }
         if (!flushed) {
-          useStore.setState({
-            applyError: 'Unable to save review decisions. Changes remains open.',
-          });
-          return;
+          const blocker = 'Unable to save review decisions. Changes remains open.';
+          useStore.setState({ applyError: blocker });
+          return { ok: false, blocker };
         }
       }
-      onOpenChange(false);
+      return { ok: true };
     } finally {
       closingRef.current = false;
       setClosing(false);
     }
   }, [
+    clearDecisionsFromDisk,
     decisionScopeKey,
-    decisionScopeToken,
     decisionHydrationKey,
+    decisionScopeToken,
     draftHistoryHydration.key,
     draftHistoryHydration.status,
-    flushDecisionsToDisk,
     flushDraftHistoryWrites,
-    hasReviewActionInFlight,
     handleSerializedStateChanged,
-    onOpenChange,
-    persistDecisions,
-    clearDecisionsFromDisk,
+    persistLatestAcceptedReviewAction,
     teamName,
   ]);
+
+  const requestClose = useCallback(async (): Promise<void> => {
+    if ((await flushReviewStateForClose()).ok) onOpenChange(false);
+  }, [flushReviewStateForClose, onOpenChange]);
+
+  useEffect(() => {
+    if (!open) return;
+    const participantId = `changes:${teamName}:${decisionHydrationKey ?? scopeKey}`;
+    return registerAppCloseParticipant(participantId, async () => flushReviewStateForClose());
+  }, [decisionHydrationKey, flushReviewStateForClose, open, scopeKey, teamName]);
 
   const handleDiscardSavedDecisionState = useCallback(async (): Promise<void> => {
     if (!decisionScopeToken || !decisionHydrationKey || reviewMutationBusy) return;

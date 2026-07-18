@@ -109,6 +109,7 @@ import type {
 import type { TerminalAPI } from './terminal';
 import type { TmuxAPI } from './tmux';
 import type { WaterfallData } from './visualization';
+import type { AppCloseCoordinationElectronApi } from '@features/app-close-coordination/contracts';
 import type {
   ReviewDraftHistoryEntry,
   ReviewDraftHistorySnapshot,
@@ -898,6 +899,7 @@ export interface WindowsElevationStatus {
 export interface ElectronAPI
   extends RecentProjectsElectronApi, CodexAccountElectronApi, TokenUsageElectronApi {
   startup?: AppStartupAPI;
+  appCloseCoordination?: AppCloseCoordinationElectronApi;
   telemetry: TelemetryAPI;
   getAppVersion: () => Promise<string>;
   getWindowsElevationStatus: () => Promise<WindowsElevationStatus>;

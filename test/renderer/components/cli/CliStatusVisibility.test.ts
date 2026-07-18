@@ -2150,6 +2150,13 @@ describe('CLI status visibility during completed install state', () => {
     vi.useFakeTimers();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     storeState.cliInstallerState = 'idle';
+    let finishRefresh: ((refreshed: boolean) => void) | null = null;
+    storeState.fetchCliProviderStatus = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishRefresh = resolve;
+        })
+    );
     storeState.appConfig.providerConnections = {
       anthropic: {
         authMode: 'oauth',
@@ -2186,6 +2193,18 @@ describe('CLI status visibility during completed install state', () => {
             apiKeySource: null,
             apiKeySourceLabel: null,
           },
+          subscriptionRateLimits: {
+            primary: {
+              usedPercent: 12,
+              windowDurationMins: 300,
+              resetsAt: 1_762_547_200,
+            },
+            secondary: {
+              usedPercent: 37,
+              windowDurationMins: 10_080,
+              resetsAt: 1_762_891_200,
+            },
+          },
         },
       ],
     });
@@ -2210,6 +2229,18 @@ describe('CLI status visibility during completed install state', () => {
       expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('anthropic', {
         silent: true,
       });
+      expect(host.textContent).toContain('88%');
+      expect(host.textContent).toContain('63%');
+      expect(host.querySelectorAll('.skeleton-shimmer')).toHaveLength(2);
+
+      await act(async () => {
+        finishRefresh?.(true);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(host.querySelectorAll('.skeleton-shimmer')).toHaveLength(0);
+      expect(host.querySelectorAll('.dashboard-rate-limit-refreshed')).toHaveLength(2);
     } finally {
       await act(async () => {
         root.unmount();
@@ -3135,7 +3166,10 @@ describe('CLI status visibility during completed install state', () => {
 
     expect(host.textContent).toContain('95%');
     expect(host.textContent).toContain('59%');
-    expect(host.querySelectorAll('.skeleton-shimmer')).toHaveLength(0);
+    expect(host.querySelectorAll('.skeleton-shimmer')).toHaveLength(2);
+    expect(host.querySelector('[aria-busy="true"]')?.getAttribute('aria-label')).toBe(
+      'Rate limits loading'
+    );
 
     codexAccountHookState.rateLimitsLoading = false;
     await act(async () => {
@@ -3145,6 +3179,7 @@ describe('CLI status visibility during completed install state', () => {
 
     expect(host.textContent).toContain('95%');
     expect(host.textContent).toContain('59%');
+    expect(host.querySelectorAll('.skeleton-shimmer')).toHaveLength(0);
     expect(host.querySelectorAll('.dashboard-rate-limit-refreshed')).toHaveLength(0);
 
     codexAccountHookState.snapshot = {

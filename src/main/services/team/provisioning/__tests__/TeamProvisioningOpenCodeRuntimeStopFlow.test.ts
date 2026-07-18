@@ -541,4 +541,37 @@ describe('OpenCode runtime stop flow', () => {
       detail: 'stopped',
     });
   });
+
+  it('does not wipe a newer run registered during the stop await (ownership-fenced cleanup)', async () => {
+    let capturedPorts: ReturnType<typeof makePorts>;
+    // While the primary run's adapter.stop is awaiting, a concurrent (lockless)
+    // relaunch registers a NEWER run (run-B) for the same team. The stop's
+    // post-await cleanup must not delete run-B's tracking by teamName.
+    const stop = vi.fn(async (input) => {
+      capturedPorts.runtimeAdapterRunByTeam.set('team-a', {
+        runId: 'run-B',
+        providerId: 'opencode',
+        cwd: '/runtime-cwd-b',
+      });
+      capturedPorts.provisioningRunByTeam.set('team-a', 'run-B');
+      capturedPorts.aliveRunByTeam.set('team-a', 'run-B');
+      return {
+        runId: input.runId,
+        teamName: input.teamName,
+        stopped: true,
+        members: {},
+        warnings: [],
+        diagnostics: [],
+      };
+    });
+    const ports = makePorts({ adapter: makeAdapter(stop), previousLaunchState: snapshot() });
+    capturedPorts = ports;
+
+    await stopOpenCodeRuntimeAdapterTeam('team-a', 'run-primary', ports);
+
+    // run-B's tracking survives; the stop of run-primary did not orphan it.
+    expect(ports.runtimeAdapterRunByTeam.get('team-a')?.runId).toBe('run-B');
+    expect(ports.provisioningRunByTeam.get('team-a')).toBe('run-B');
+    expect(ports.aliveRunByTeam.get('team-a')).toBe('run-B');
+  });
 });

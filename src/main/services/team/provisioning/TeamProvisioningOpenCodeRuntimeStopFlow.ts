@@ -227,9 +227,16 @@ export async function stopOpenCodeRuntimeAdapterTeam(
         laneId: 'primary',
       })
       .catch(() => undefined);
-    ports.runtimeAdapterRunByTeam.delete(teamName);
-    ports.deleteAliveRunId(teamName);
-    ports.provisioningRunByTeam.delete(teamName);
+    // Gate the no-adapter cleanup on exact ownership too: this also runs after an
+    // await (clearOpenCodeRuntimeLaneStorage), so a newer run registered in the
+    // meantime must not have its tracking wiped by teamName.
+    if (ports.runtimeAdapterRunByTeam.get(teamName)?.runId === runId) {
+      ports.runtimeAdapterRunByTeam.delete(teamName);
+      ports.deleteAliveRunId(teamName);
+    }
+    if (ports.provisioningRunByTeam.get(teamName) === runId) {
+      ports.provisioningRunByTeam.delete(teamName);
+    }
     ports.invalidateRuntimeSnapshotCaches(teamName);
     return;
   }
@@ -315,9 +322,19 @@ export async function stopOpenCodeRuntimeAdapterTeam(
         laneId: 'primary',
       })
       .catch(() => undefined);
-    ports.runtimeAdapterRunByTeam.delete(teamName);
-    ports.deleteAliveRunId(teamName);
-    ports.provisioningRunByTeam.delete(teamName);
+    // Only wipe tracking if THIS run still owns it. This runs AFTER the long
+    // `await adapter.stop`, during which a concurrent (lockless) stop/relaunch
+    // can register a NEWER run for the team; deleting by teamName unconditionally
+    // would orphan that newer run's tracking (its OpenCode sessions stay alive
+    // while the UI shows not-launched -> ghost-alive, and the next launch
+    // double-spawns).
+    if (ports.runtimeAdapterRunByTeam.get(teamName)?.runId === runId) {
+      ports.runtimeAdapterRunByTeam.delete(teamName);
+      ports.deleteAliveRunId(teamName);
+    }
+    if (ports.provisioningRunByTeam.get(teamName) === runId) {
+      ports.provisioningRunByTeam.delete(teamName);
+    }
     ports.emitTeamChange({
       type: 'process',
       teamName,

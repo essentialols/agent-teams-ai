@@ -15,6 +15,8 @@ Start here:
 
 For hosted-web work, begin at [START_HERE.md](docs/hosted-web-phases/START_HERE.md) and follow the
 phase that [EXECUTION_INDEX.json](docs/hosted-web-phases/EXECUTION_INDEX.json) marks as current.
+The built code is mapped in [CONTEXT.md](docs/hosted-web-phases/CONTEXT.md); expected-red
+architecture tests are explained in [KNOWN_RED.md](docs/hosted-web-phases/KNOWN_RED.md).
 The monolithic plans ([hosted-web-e2e-completion-plan.md](docs/hosted-web-e2e-completion-plan.md),
 [hosted-web-phase-0-execution-packet.md](docs/hosted-web-phase-0-execution-packet.md)) are reference
 material; the execution index is the single source of truth for phase status.

@@ -15,6 +15,8 @@
   later accepted commits on the branch supersede them without a new router revision. The full-SHA
   stop rule below applies to the attempt-bound binding contract, not to a plain difference between
   the documents' authoring-time SHAs and the current branch head.
+- **Code map**: what is already built and where it lives — [CONTEXT.md](CONTEXT.md). Read it
+  before grepping the hosted stack.
 - **Known red tests** on this branch are tracked in [KNOWN_RED.md](KNOWN_RED.md) with causes and
   resolution steps — expect them, do not rediscover them.
 - **There is no `phase-03/` packet yet.** After the sync merge lands, the next phase packet must be

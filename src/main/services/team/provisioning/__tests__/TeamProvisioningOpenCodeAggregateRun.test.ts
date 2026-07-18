@@ -555,6 +555,37 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
     expect(calls).toContain('cleanupRun');
     expect(calls).not.toContain('setAliveRun');
   });
+
+  it('does not register alive when the run was superseded/stopped during the launch tail', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    let superseded = false;
+
+    await runOpenCodeWorktreeRootAggregateLaunch(
+      {
+        adapter: {} as TeamLaunchRuntimeAdapter,
+        request: request([alice]),
+        members: [alice],
+        lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...baseAggregatePorts(calls),
+        // A concurrent lockless stop takes over the team while the snapshot
+        // persists (the last await before the success-tail registration).
+        persistLaunchStateSnapshot: async () => {
+          superseded = true;
+          return null;
+        },
+        getProvisioningRun: () => (superseded ? 'run-superseded-by-stop' : 'run-open-code'),
+      }
+    );
+
+    // The success tail must bail out (cleanupRun) instead of resurrecting the run.
+    expect(calls).toContain('cleanupRun');
+    expect(calls).not.toContain('setAliveRun');
+  });
 });
 
 function baseAggregatePorts(calls: string[]): OpenCodeWorktreeRootAggregateLaunchPorts {

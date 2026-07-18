@@ -392,6 +392,19 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
       ports.syncRunMemberSpawnStatusesFromSnapshot(run, snapshot);
     }
 
+    // A concurrent (lockless) stop or a superseding run may have taken over the
+    // team while the lanes launched and the snapshot persisted. Re-check exact
+    // ownership before registering this run alive; otherwise the success tail
+    // resurrects a run the stop just tore down (state drift). Mirrors the
+    // non-aggregate primary launch path and this function's own catch branch.
+    if (
+      ports.consumeCancelledRuntimeAdapterRunId(runId) ||
+      ports.getProvisioningRun(teamName) !== runId
+    ) {
+      ports.cleanupRun(run);
+      return { runId };
+    }
+
     const success = launchState === 'clean_success';
     const pending = launchState === 'partial_pending';
     const laneDiagnostics = run.mixedSecondaryLanes.flatMap((lane) => lane.diagnostics);

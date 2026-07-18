@@ -198,6 +198,34 @@ async function stopApp() {
   appProcess = null;
 }
 
+async function killAppImmediately() {
+  await client?.close().catch(() => undefined);
+  client = null;
+  if (!appProcess || appProcess.exitCode !== null) {
+    appProcess = null;
+    return;
+  }
+  const child = appProcess;
+  const exited = new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 2_000);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+  } else {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  }
+  assert.equal(await exited, true, 'Electron did not exit after SIGKILL');
+  appProcess = null;
+}
+
 class CdpClient {
   constructor(socket) {
     this.socket = socket;
@@ -429,6 +457,7 @@ async function main() {
   await mkdir(fixtureRoot, { recursive: true });
   const port = await findAvailablePort(Number(process.env.AGENT_TEAMS_CHANGES_E2E_PORT) || 9410);
   const historyScreenshot = path.join(fixtureRoot, 'durable-history.png');
+  const acceptedHistoryScreenshot = path.join(fixtureRoot, 'accepted-history.png');
   const conflictScreenshot = path.join(fixtureRoot, 'external-conflict.png');
   const finalScreenshot = path.join(fixtureRoot, 'final.png');
 
@@ -477,8 +506,13 @@ async function main() {
   );
   await client.waitFor(
     `Array.from(document.querySelectorAll('[data-radix-popper-content-wrapper]'))
-      .some((wrapper) => wrapper.textContent?.includes('Review action history') &&
-        Number.parseFloat(getComputedStyle(wrapper.firstElementChild ?? wrapper).opacity) >= 0.99)`,
+      .some((wrapper) => {
+        const rect = wrapper.getBoundingClientRect();
+        return wrapper.textContent?.includes('Review action history') &&
+          rect.width > 0 && rect.height > 0 &&
+          wrapper.getAnimations({ subtree: true }).every((animation) =>
+            animation.playState === 'finished' || animation.playState === 'idle');
+      })`,
     'settled review history animation'
   );
   await client.screenshot(historyScreenshot);
@@ -527,10 +561,47 @@ async function main() {
   await client.waitFor(visibleExactText('#E2E-101'), 'stable task display id after restart');
   await client.screenshot(finalScreenshot);
 
+  await client.moveTo(`document.querySelector('.cm-changedLine, .cm-insertedLine')`);
+  await client.waitFor(`document.querySelector('button[title^="Accept change"]')`, 'hunk Accept');
+  await client.domMouseDown(`document.querySelector('button[title^="Accept change"]')`);
+  await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'one accepted hunk');
+  await client.waitFor(
+    `document.querySelector('button[aria-label^="Review history:"][aria-label$="; saved"]')`,
+    'immediately durable accepted action'
+  );
+  await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
+
+  await killAppImmediately();
+  await startApp(port, fixture);
+  await openReview();
+  await client.waitFor(enabledButtonWithText('Undo'), 'durable accepted Undo after forced restart');
+  await client.waitFor(historyButton, 'accepted review history after forced restart');
+  await client.domClick(historyButton);
+  await client.waitFor(
+    `document.body?.innerText.includes('Accept hunk') &&
+      document.body?.innerText.includes('src/review-history.ts · hunk 1') &&
+      document.querySelector('[data-review-history-persistence="saved"]')`,
+    'exact accepted action after forced restart'
+  );
+  await client.screenshot(acceptedHistoryScreenshot);
+  // Escape propagation is already verified above. Toggle the controlled trigger here so
+  // this crash-recovery leg stays focused on persistence rather than window focus state.
+  await client.domClick(historyButton);
+  await client.waitFor(
+    `!document.body?.innerText.includes('Review action history')`,
+    'closed accepted review history'
+  );
+  await client.domClick(enabledButtonWithText('Undo'));
+  await client.waitFor(`document.body?.innerText.includes('12 pending')`, 'accepted Undo result');
+  await client.waitFor(enabledButtonWithText('Redo'), 'accepted Redo after forced restart Undo');
+  await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
+
   process.stdout.write(
     `Changes desktop E2E passed (${devMcpMode ? 'dev:mcp' : 'preview'}): ` +
-      `Reject -> Undo -> Redo -> restart -> exact history -> external conflict -> Reload -> restart\n` +
-      `Artifacts: ${historyScreenshot}, ${conflictScreenshot}, ${finalScreenshot}\n`
+      `Reject -> Undo -> Redo -> restart -> exact history -> external conflict -> Reload -> ` +
+      `restart -> Accept -> durable ack -> SIGKILL -> restart -> exact Undo\n` +
+      `Artifacts: ${historyScreenshot}, ${conflictScreenshot}, ${finalScreenshot}, ` +
+      `${acceptedHistoryScreenshot}\n`
   );
 }
 

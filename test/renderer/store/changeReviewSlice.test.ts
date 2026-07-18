@@ -2711,6 +2711,37 @@ describe('changeReviewSlice task changes', () => {
     }
   });
 
+  it('retries a failed decision clear from the same acknowledged revision', async () => {
+    hoisted.clearDecisions
+      .mockRejectedValueOnce(new Error('transient clear failure'))
+      .mockResolvedValueOnce({ revision: 8 });
+    const store = createSliceStore();
+    store.getState().recordDecisionRevision('team-a', 'agent-alice', 'retry-clear', 7);
+
+    await expect(
+      store.getState().clearDecisionsFromDisk('team-a', 'agent-alice', 'retry-clear')
+    ).resolves.toBe(false);
+    vi.mocked(console.error).mockClear();
+    await expect(
+      store.getState().clearDecisionsFromDisk('team-a', 'agent-alice', 'retry-clear')
+    ).resolves.toBe(true);
+
+    expect(hoisted.clearDecisions).toHaveBeenNthCalledWith(
+      1,
+      'team-a',
+      'agent-alice',
+      'retry-clear',
+      7
+    );
+    expect(hoisted.clearDecisions).toHaveBeenNthCalledWith(
+      2,
+      'team-a',
+      'agent-alice',
+      'retry-clear',
+      7
+    );
+  });
+
   it('accepts only pending hunks and preserves rejected disk decisions', () => {
     const store = createSliceStore();
     store.setState({

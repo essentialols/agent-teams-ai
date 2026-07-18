@@ -488,6 +488,7 @@ export const ChangeReviewDialog = ({
   const fileApplyInFlightRef = useRef(new Set<string>());
   const undoInFlightRef = useRef(false);
   const closingRef = useRef(false);
+  const pendingApplyCleanupKeyRef = useRef<string | null>(null);
   const reviewActionPersistenceStatusRef = useRef<ReviewActionPersistenceStatus>('saved');
   const reviewActionPersistenceGenerationRef = useRef(0);
   const immediatelyPersistedReviewSnapshotRef = useRef<ReviewPersistenceSnapshotIdentity | null>(
@@ -543,6 +544,9 @@ export const ChangeReviewDialog = ({
   useEffect(() => {
     reviewActionPersistenceGenerationRef.current += 1;
     immediatelyPersistedReviewSnapshotRef.current = null;
+    if (pendingApplyCleanupKeyRef.current !== decisionHydrationKey) {
+      pendingApplyCleanupKeyRef.current = null;
+    }
     publishReviewActionPersistenceStatus('saved');
   }, [decisionHydrationKey, publishReviewActionPersistenceStatus]);
 
@@ -4008,13 +4012,43 @@ export const ChangeReviewDialog = ({
 
   const handleApply = useCallback(async () => {
     if (hasReviewActionInFlight() || blockReviewMutationForExternalChange()) return;
-    const result = await applyReview(teamName, taskId, memberName);
-    markCommittedReviewPostimages(result?.diskPostimages);
-    // Only cleanup if apply succeeded (no error in store)
-    const state = useStore.getState();
-    if (!state.applyError) {
-      void clearDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken ?? undefined);
-      resetAllReviewState();
+    if (!decisionScopeToken || !decisionHydrationKey) {
+      useStore.setState({
+        applyError: 'Durable review scope is unavailable. Reload Changes before applying.',
+      });
+      return;
+    }
+
+    if (pendingApplyCleanupKeyRef.current !== decisionHydrationKey) {
+      const result = await applyReview(teamName, taskId, memberName);
+      markCommittedReviewPostimages(result?.diskPostimages);
+      if (useStore.getState().applyError) return;
+      if (expectedDraftHistoryKeyRef.current !== decisionHydrationKey) return;
+      pendingApplyCleanupKeyRef.current = decisionHydrationKey;
+    }
+
+    closingRef.current = true;
+    setClosing(true);
+    try {
+      const cleared = await clearDecisionsFromDisk(
+        teamName,
+        decisionScopeKey,
+        decisionScopeToken
+      );
+      if (!cleared) {
+        useStore.setState({
+          applyError:
+            'Review was applied, but its saved state could not be cleared. Changes remains open; retry Apply to finish cleanup.',
+        });
+        return;
+      }
+      pendingApplyCleanupKeyRef.current = null;
+      if (expectedDraftHistoryKeyRef.current === decisionHydrationKey) {
+        resetAllReviewState();
+      }
+    } finally {
+      closingRef.current = false;
+      setClosing(false);
     }
   }, [
     applyReview,
@@ -4024,6 +4058,7 @@ export const ChangeReviewDialog = ({
     memberName,
     markCommittedReviewPostimages,
     clearDecisionsFromDisk,
+    decisionHydrationKey,
     decisionScopeKey,
     decisionScopeToken,
     resetAllReviewState,

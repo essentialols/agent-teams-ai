@@ -30,6 +30,7 @@ import type {
   WorkspaceSnapshotter,
 } from "../ports/safe-execution-ports";
 import { continuationJobFor } from "./continuation-job";
+import { startActiveAttemptControlMonitor } from "./active-attempt-control-monitor";
 import { DefaultContinuationPacketBuilder } from "./default-continuation-packet-builder";
 import {
   completeAttemptRecord,
@@ -390,6 +391,22 @@ export class SafeExecutionRunner {
           startedAt,
           abortController: attemptAbort.controller,
         });
+        const activeAttemptControlMonitor = this.options.controlInterruptSource
+          ? startActiveAttemptControlMonitor({
+              source: this.options.controlInterruptSource,
+              target: attemptTarget,
+              attemptAbortController: attemptAbort.controller,
+              interruptDeliveryAttemptId:
+                `${input.taskId}:attempt-${attemptNumber}:interrupt`,
+              ...(this.options.controlInterruptPollIntervalMs === undefined
+                ? {}
+                : {
+                    pollIntervalMs:
+                      this.options.controlInterruptPollIntervalMs,
+                  }),
+              now: () => this.clock.now(),
+            })
+          : undefined;
 
         try {
           const result = await input.pool.run(job, {
@@ -459,6 +476,13 @@ export class SafeExecutionRunner {
           const runtimeInterrupt = runtimeInterruptClassification(
             attemptAbort.controller.signal.reason,
           );
+          const runtimeInterruptControlBatch = runtimeInterrupt
+            ? await activeAttemptControlMonitor?.deliverForContinuation({
+                deliveryAttemptId:
+                  `${input.taskId}:attempt-${attemptNumber + 1}`,
+                now: this.clock.now(),
+              })
+            : undefined;
           // A runtime-owned interrupt_then_continue is a control-plane handoff,
           // not a provider/account failure. Preserve its journal record and
           // internal attempt number, but grant the queued continuation the
@@ -554,6 +578,9 @@ export class SafeExecutionRunner {
             ...(input.controlTarget === undefined
               ? {}
               : { controlTarget: input.controlTarget }),
+            ...(runtimeInterruptControlBatch === undefined
+              ? {}
+              : { controlBatch: runtimeInterruptControlBatch }),
           });
           const continuationJob = continuationJobFor({
             factory: input.continuationJobFactory,
@@ -588,6 +615,7 @@ export class SafeExecutionRunner {
           }
           job = continuationJob;
         } finally {
+          await activeAttemptControlMonitor?.stop();
           activeAttempt?.release();
           attemptAbort.dispose();
         }

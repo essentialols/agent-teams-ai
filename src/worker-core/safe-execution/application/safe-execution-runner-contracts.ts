@@ -2,6 +2,7 @@ import type {
   ActiveAttemptRegistry,
   WorkerControlContinuationBatch,
   WorkerControlContinuationSource,
+  WorkerControlInterruptSource,
   WorkerControlTarget,
 } from "../../control";
 import type {
@@ -98,6 +99,8 @@ export type SafeExecutionRunnerOptions = {
   readonly runtime?: SafeExecutionRuntime;
   readonly continuationPacketBuilder?: ContinuationPacketBuilder;
   readonly controlInbox?: WorkerControlContinuationSource;
+  readonly controlInterruptSource?: WorkerControlInterruptSource;
+  readonly controlInterruptPollIntervalMs?: number;
   readonly activeAttemptRegistry?: ActiveAttemptRegistry;
   readonly ownerId?: string;
   readonly ownerPid?: number;

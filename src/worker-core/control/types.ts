@@ -290,3 +290,24 @@ export interface WorkerControlContinuationSource {
     input: ConsumeWorkerControlContinuationInput,
   ): Promise<WorkerControlContinuationBatch>;
 }
+
+export type ClaimedWorkerControlInterrupt = {
+  readonly signal: WorkerControlSignal;
+  readonly claimDeliveryAttemptId: string;
+};
+
+export interface WorkerControlInterruptSource {
+  claimPendingInterrupt(input: {
+    readonly target: WorkerControlTarget;
+    readonly deliveryAttemptId: string;
+    readonly now?: Date;
+  }): Promise<ClaimedWorkerControlInterrupt | null>;
+  deliverClaimedInterrupt(input: {
+    readonly claim: ClaimedWorkerControlInterrupt;
+    readonly deliveryAttemptId: string;
+    readonly now?: Date;
+  }): Promise<WorkerControlContinuationBatch>;
+  releaseClaimedInterrupt(input: {
+    readonly claim: ClaimedWorkerControlInterrupt;
+  }): Promise<boolean>;
+}

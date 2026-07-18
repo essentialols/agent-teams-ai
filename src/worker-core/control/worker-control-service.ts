@@ -4,6 +4,7 @@ import type {
   ConsumeWorkerControlContinuationInput,
   EnqueueWorkerControlSignalInput,
   ListWorkerControlSignalsQuery,
+  ClaimedWorkerControlInterrupt,
   SupersedeWorkerControlSignalInput,
   WorkerControlActor,
   WorkerControlCapability,
@@ -186,6 +187,96 @@ export class WorkerControlService {
       recordOnlySignals,
       warnings,
     };
+  }
+
+  async claimPendingInterrupt(input: {
+    readonly target: WorkerControlTarget;
+    readonly deliveryAttemptId: string;
+    readonly now?: Date;
+  }): Promise<ClaimedWorkerControlInterrupt | null> {
+    const target = normalizeTarget(input.target);
+    const now = input.now ?? this.clock.now();
+    const views = await this.signalViews({
+      target,
+      capabilities: {
+        ...defaultCapabilities,
+        supportsInterruptThenContinue: true,
+      },
+      now,
+    });
+    const pending = views.filter((view) =>
+      view.state === "pending" &&
+      view.deliverable &&
+      view.signal.deliveryMode === "interrupt_then_continue"
+    );
+    for (const view of pending) {
+      const claimed = await this.tryClaimDelivery({
+        target: view.signal.target,
+        signalId: view.signal.signalId,
+        state: "accepted",
+        createdAt: now,
+        deliveryAttemptId: input.deliveryAttemptId,
+      });
+      if (claimed) {
+        return {
+          signal: view.signal,
+          claimDeliveryAttemptId: input.deliveryAttemptId,
+        };
+      }
+    }
+    return null;
+  }
+
+  async deliverClaimedInterrupt(input: {
+    readonly claim: ClaimedWorkerControlInterrupt;
+    readonly deliveryAttemptId: string;
+    readonly now?: Date;
+  }): Promise<WorkerControlContinuationBatch> {
+    const now = input.now ?? this.clock.now();
+    const signal = input.claim.signal;
+    const view = await this.signalViewFor({
+      signal,
+      target: signal.target,
+      capabilities: defaultCapabilities,
+      now,
+    });
+    if (
+      view.latestReceipt?.state !== "accepted" ||
+      view.latestReceipt.deliveryAttemptId !==
+        input.claim.claimDeliveryAttemptId
+    ) {
+      throw new Error("worker_control_interrupt_claim_not_owned");
+    }
+    await this.appendReceipt({
+      target: signal.target,
+      signalId: signal.signalId,
+      state: "delivered",
+      createdAt: now,
+      deliveryAttemptId: input.deliveryAttemptId,
+      deliveredAt: now,
+      metadata: {
+        interruptClaimDeliveryAttemptId:
+          input.claim.claimDeliveryAttemptId,
+      },
+    });
+    const message = compileWorkerControlSignalsForContinuation([signal]);
+    return {
+      target: signal.target,
+      deliveryAttemptId: input.deliveryAttemptId,
+      signals: [signal],
+      signalIds: [signal.signalId],
+      ...(message === undefined ? {} : { message }),
+    };
+  }
+
+  async releaseClaimedInterrupt(input: {
+    readonly claim: ClaimedWorkerControlInterrupt;
+  }): Promise<boolean> {
+    return (await this.options.store.releaseDeliveryClaim?.({
+      target: input.claim.signal.target,
+      signalId: input.claim.signal.signalId,
+      deliveryAttemptId: input.claim.claimDeliveryAttemptId,
+    })) ?? false;
   }
 
   async reconcile(

@@ -28,6 +28,7 @@ import {
   type WorkerAccountCapacityStore,
   type WorkerControlContinuationBatch,
   type WorkerControlContinuationSource,
+  type WorkerControlInterruptSource,
   type WorkerControlTarget,
   type WorkerPoolHealth,
   type WorkerPoolSlotSnapshot,
@@ -72,6 +73,7 @@ export type FileBackendCodexSafeExecutorOptions = {
   readonly accountCapacityStore?: WorkerAccountCapacityStore;
   readonly observability?: ObservabilityPort;
   readonly controlInbox?: WorkerControlContinuationSource;
+  readonly controlInterruptSource?: WorkerControlInterruptSource;
   readonly activeAttemptRegistry?: ActiveAttemptRegistry;
   readonly lockStore?: WorkspaceLockStore;
   readonly journal?: AttemptJournal;
@@ -231,17 +233,22 @@ export class FileBackendCodexSafeExecutor {
     const localSafeExecutionStores = createLocalFileSafeExecutionStores({
       rootDir: options.stateRootDir,
     });
-    this.runner = new SafeExecutionRunner({
-      lockStore: options.lockStore ?? localSafeExecutionStores.lockStore,
-      journal: options.journal ?? localSafeExecutionStores.journal,
-      controlInbox:
-        options.controlInbox ??
-        new WorkerControlService({
+    const localControl = options.controlInbox === undefined
+      ? new WorkerControlService({
           store: new LocalFileWorkerControlInboxStore({
             rootDir: options.stateRootDir,
           }),
           ...(options.clock ? { clock: options.clock } : {}),
-        }),
+        })
+      : undefined;
+    const controlInbox = options.controlInbox ?? localControl;
+    const controlInterruptSource =
+      options.controlInterruptSource ?? localControl;
+    this.runner = new SafeExecutionRunner({
+      lockStore: options.lockStore ?? localSafeExecutionStores.lockStore,
+      journal: options.journal ?? localSafeExecutionStores.journal,
+      ...(controlInbox ? { controlInbox } : {}),
+      ...(controlInterruptSource ? { controlInterruptSource } : {}),
       ...(options.activeAttemptRegistry === undefined
         ? {}
         : { activeAttemptRegistry: options.activeAttemptRegistry }),

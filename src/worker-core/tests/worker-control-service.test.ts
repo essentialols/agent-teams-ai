@@ -228,6 +228,57 @@ describe("WorkerControlService", () => {
     expect(batch.message).toContain("Urgent guidance");
   });
 
+  it("exposes a pending durable interrupt without consuming its continuation", async () => {
+    const store = new InMemoryWorkerControlInboxStore();
+    const writer = new WorkerControlService({
+      store,
+      idFactory: sequentialIds("durable-interrupt-writer"),
+    });
+    const reader = new WorkerControlService({
+      store,
+      idFactory: sequentialIds("durable-interrupt-reader"),
+    });
+    const target = { jobId: "job-durable-interrupt" };
+    await writer.enqueueSignal({
+      target,
+      intent: "guidance",
+      deliveryMode: "next_safe_point",
+      body: "Do not interrupt for ordinary continuation guidance.",
+    });
+    const interruptSignal = await writer.enqueueSignal({
+      target,
+      intent: "guidance",
+      deliveryMode: "interrupt_then_continue",
+      body: "Interrupt the active attempt and preserve current work.",
+      caller: { kind: "orchestrator" },
+      priority: "high",
+    });
+
+    const claim = await reader.claimPendingInterrupt({
+      target,
+      deliveryAttemptId: "attempt-1:interrupt",
+    });
+    expect(claim).toMatchObject({
+      signal: { signalId: interruptSignal.signalId },
+      claimDeliveryAttemptId: "attempt-1:interrupt",
+    });
+    if (!claim) throw new Error("expected interrupt claim");
+    const decision = await reader.getDecision({ target });
+    expect(decision.pendingSignals).toHaveLength(1);
+    const competingBatch = await writer.consumeForContinuation({
+      target,
+      deliveryAttemptId: "competing-attempt",
+    });
+    expect(competingBatch.signalIds).not.toContain(interruptSignal.signalId);
+
+    const delivered = await reader.deliverClaimedInterrupt({
+      claim,
+      deliveryAttemptId: "attempt-2",
+    });
+    expect(delivered.signalIds).toEqual([interruptSignal.signalId]);
+    expect(delivered.message).toContain("Interrupt the active attempt");
+  });
+
   it("interrupts a registered active attempt through the use case", async () => {
     const store = new InMemoryWorkerControlInboxStore();
     const service = new WorkerControlService({
@@ -519,6 +570,7 @@ describe("WorkerControlService", () => {
 class InMemoryWorkerControlInboxStore implements WorkerControlInboxStore {
   private readonly signals: WorkerControlSignal[] = [];
   private readonly receipts: WorkerControlDeliveryReceipt[] = [];
+  private readonly claims = new Map<string, WorkerControlDeliveryReceipt>();
 
   async appendSignal(signal: WorkerControlSignal): Promise<WorkerControlSignal> {
     this.signals.push(signal);
@@ -546,12 +598,37 @@ class InMemoryWorkerControlInboxStore implements WorkerControlInboxStore {
     return receipt;
   }
 
+  async tryClaimDelivery(
+    receipt: WorkerControlDeliveryReceipt,
+  ): Promise<WorkerControlDeliveryReceipt | null> {
+    if (this.claims.has(receipt.signalId)) return null;
+    this.claims.set(receipt.signalId, receipt);
+    return receipt;
+  }
+
+  async releaseDeliveryClaim(input: {
+    readonly signalId: string;
+    readonly deliveryAttemptId?: string;
+  }): Promise<boolean> {
+    const existing = this.claims.get(input.signalId);
+    if (
+      !existing ||
+      existing.state !== "accepted" ||
+      (input.deliveryAttemptId !== undefined &&
+        existing.deliveryAttemptId !== input.deliveryAttemptId)
+    ) {
+      return false;
+    }
+    this.claims.delete(input.signalId);
+    return true;
+  }
+
   async listReceipts(input: {
     readonly target?: WorkerControlTarget;
     readonly signalIds?: readonly string[];
   } = {}): Promise<readonly WorkerControlDeliveryReceipt[]> {
     const signalIds = new Set(input.signalIds ?? []);
-    return this.receipts
+    return [...this.receipts, ...this.claims.values()]
       .filter((receipt) =>
         input.target ? workerControlTargetMatches(input.target, receipt.target) : true
       )

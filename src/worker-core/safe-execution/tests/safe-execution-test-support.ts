@@ -133,6 +133,7 @@ export function deferred<T>(): {
 export class InMemoryWorkerControlInboxStore implements WorkerControlInboxStore {
   private readonly signals: WorkerControlSignal[] = [];
   private readonly receipts: WorkerControlDeliveryReceipt[] = [];
+  private readonly claims = new Map<string, WorkerControlDeliveryReceipt>();
 
   async appendSignal(signal: WorkerControlSignal): Promise<WorkerControlSignal> {
     this.signals.push(signal);
@@ -152,17 +153,25 @@ export class InMemoryWorkerControlInboxStore implements WorkerControlInboxStore 
   async tryClaimDelivery(
     receipt: WorkerControlDeliveryReceipt,
   ): Promise<WorkerControlDeliveryReceipt | null> {
-    if (
-      this.receipts.some((existing) =>
-        existing.signalId === receipt.signalId &&
-        existing.state === "accepted" &&
-        existing.deliveryAttemptId === receipt.deliveryAttemptId
-      )
-    ) {
-      return null;
-    }
-    this.receipts.push(receipt);
+    if (this.claims.has(receipt.signalId)) return null;
+    this.claims.set(receipt.signalId, receipt);
     return receipt;
+  }
+
+  async releaseDeliveryClaim(input: {
+    readonly signalId: string;
+    readonly deliveryAttemptId?: string;
+  }): Promise<boolean> {
+    const claim = this.claims.get(input.signalId);
+    if (
+      !claim ||
+      (input.deliveryAttemptId !== undefined &&
+        claim.deliveryAttemptId !== input.deliveryAttemptId)
+    ) {
+      return false;
+    }
+    this.claims.delete(input.signalId);
+    return true;
   }
 
   async appendReceipt(
@@ -176,7 +185,7 @@ export class InMemoryWorkerControlInboxStore implements WorkerControlInboxStore 
     readonly target?: WorkerControlTarget;
     readonly signalIds?: readonly string[];
   } = {}): Promise<readonly WorkerControlDeliveryReceipt[]> {
-    return this.receipts.filter((receipt) =>
+    return [...this.receipts, ...this.claims.values()].filter((receipt) =>
       (!input.target || workerControlTargetMatches(input.target, receipt.target)) &&
       (!input.signalIds || input.signalIds.includes(receipt.signalId))
     );

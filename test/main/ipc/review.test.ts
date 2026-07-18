@@ -91,6 +91,7 @@ describe('review IPC path confinement', () => {
     reapplyRejectedRename: ReturnType<typeof vi.fn>;
     classifyEditedFileTransition: ReturnType<typeof vi.fn>;
     classifyRejectedRenameTransition: ReturnType<typeof vi.fn>;
+    getRejectedRenamePostimages: ReturnType<typeof vi.fn>;
   };
   let resolver: {
     getFileContent: ReturnType<typeof vi.fn>;
@@ -200,6 +201,39 @@ describe('review IPC path confinement', () => {
       classifyRejectedRenameTransition: vi
         .fn()
         .mockImplementation(async () => renameTransitionState),
+      getRejectedRenamePostimages: vi.fn().mockImplementation(
+        async (
+          original: string | null,
+          modified: string | null,
+          snippets: Array<{
+            filePath: string;
+            ledger?: {
+              operation?: string;
+              originalFullContent?: string | null;
+              modifiedFullContent?: string | null;
+            };
+          }>,
+          direction: 'restore' | 'reapply'
+        ) => {
+          const oldSnippet = snippets.find((snippet) => snippet.ledger?.operation === 'delete');
+          const newSnippet = snippets.find((snippet) => snippet.ledger?.operation === 'create');
+          if (!oldSnippet || !newSnippet) throw new Error('Rename postimages are unavailable');
+          const oldContent = oldSnippet.ledger?.originalFullContent ?? original;
+          const newContent = newSnippet.ledger?.modifiedFullContent ?? modified;
+          if (oldContent === null || newContent === null) {
+            throw new Error('Rename postimages are unavailable');
+          }
+          return direction === 'restore'
+            ? [
+                { filePath: oldSnippet.filePath, content: null },
+                { filePath: newSnippet.filePath, content: newContent },
+              ]
+            : [
+                { filePath: oldSnippet.filePath, content: oldContent },
+                { filePath: newSnippet.filePath, content: null },
+              ];
+        }
+      ),
     };
     resolver = {
       getFileContent: vi
@@ -588,7 +622,13 @@ describe('review IPC path confinement', () => {
       expectedDecisionRevision: 1,
     });
 
-    expect(result).toEqual({ success: true, data: { decisionRevision: 2 } });
+    expect(result).toEqual({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        diskPostimages: [{ filePath: projectFile, content: 'restored\n' }],
+      },
+    });
     expect(applier.saveEditedFile).toHaveBeenCalledWith(projectFile, 'restored\n', 'project\n');
     await expect(
       ipcMain.invoke(
@@ -661,7 +701,13 @@ describe('review IPC path confinement', () => {
       expectedDecisionRevision: 2,
     });
 
-    expect(redone).toEqual({ success: true, data: { decisionRevision: 3 } });
+    expect(redone).toEqual({
+      success: true,
+      data: {
+        decisionRevision: 3,
+        diskPostimages: [{ filePath: projectFile, content: 'project\n' }],
+      },
+    });
     expect(applier.saveEditedFile).toHaveBeenCalledWith(projectFile, 'project\n', 'restored\n');
     await expect(
       ipcMain.invoke(
@@ -1119,6 +1165,155 @@ describe('review IPC path confinement', () => {
     await expect(readFile(projectFile, 'utf8')).resolves.toBe('restored\n');
   });
 
+  it('returns exact old and new path postimages for a durable Rename restore', async () => {
+    const oldFile = path.join(projectDir, 'src', 'old.ts');
+    const relation = { kind: 'rename' as const, oldPath: oldFile, newPath: projectFile };
+    const expectation = {
+      eventId: 'durable-rename-old',
+      beforeHash: null,
+      afterHash: null,
+      relation,
+    };
+    const snippets = [
+      {
+        toolUseId: 'durable-rename-old',
+        filePath: oldFile,
+        toolName: 'Bash' as const,
+        type: 'shell-snapshot' as const,
+        oldString: 'before\n',
+        newString: '',
+        replaceAll: false,
+        timestamp: '2026-07-18T12:00:00.000Z',
+        isError: false,
+        ledger: {
+          eventId: 'durable-rename-old',
+          source: 'ledger-snapshot' as const,
+          confidence: 'high' as const,
+          originalFullContent: 'before\n',
+          modifiedFullContent: null,
+          beforeHash: null,
+          afterHash: null,
+          operation: 'delete' as const,
+          relation,
+        },
+      },
+      {
+        toolUseId: 'durable-rename-new',
+        filePath: projectFile,
+        toolName: 'Bash' as const,
+        type: 'shell-snapshot' as const,
+        oldString: '',
+        newString: 'after\n',
+        replaceAll: false,
+        timestamp: '2026-07-18T12:00:01.000Z',
+        isError: false,
+        ledger: {
+          eventId: 'durable-rename-new',
+          source: 'ledger-snapshot' as const,
+          confidence: 'high' as const,
+          originalFullContent: null,
+          modifiedFullContent: 'after\n',
+          beforeHash: null,
+          afterHash: null,
+          operation: 'create' as const,
+          relation,
+        },
+      },
+    ];
+    const file = {
+      filePath: projectFile,
+      relativePath: 'src/project.ts',
+      snippets,
+      linesAdded: 1,
+      linesRemoved: 1,
+      isNewFile: false,
+    };
+    extractor.getAgentChanges.mockResolvedValue({ files: [file] });
+    resolver.getFileContent.mockResolvedValue({
+      ...file,
+      originalFullContent: 'before\n',
+      modifiedFullContent: 'after\n',
+      contentSource: 'ledger-snapshot',
+    });
+    await rm(projectFile);
+    await writeFile(oldFile, 'before\n', 'utf8');
+
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:durable-rename-postimages',
+    };
+    await new ReviewDecisionStore().save('safe-team', persistenceScope.scopeKey, {
+      scopeToken: persistenceScope.scopeToken,
+      hunkDecisions: {},
+      fileDecisions: { [projectFile]: 'rejected' },
+      hunkContextHashesByFile: {},
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
+      expectedRevision: 0,
+    });
+    const action = {
+      id: 'durable-rename-action',
+      createdAt: '2026-07-18T12:01:00.000Z',
+      kind: 'disk' as const,
+      descriptor: { intent: 'restore-rename' as const, filePath: projectFile },
+      action: {
+        snapshot: {
+          filePath: projectFile,
+          beforeContent: '',
+          afterContent: null,
+          restoreMode: 'reapply-rejected-rename' as const,
+          renameExpectation: expectation,
+          file,
+        },
+        file,
+        decisionSnapshot: {
+          hunkDecisions: {},
+          fileDecisions: { [projectFile]: 'rejected' as const },
+        },
+      },
+    };
+
+    const result = await ipcMain.invoke(REVIEW_EXECUTE_MUTATION, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      kind: 'rename',
+      expectedDecisionRevision: 1,
+      diskSteps: [
+        {
+          id: `${action.id}:0`,
+          type: 'restore-rejected-rename',
+          filePath: projectFile,
+          expectation,
+        },
+      ],
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: { [projectFile]: 'accepted' },
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [action],
+        reviewRedoHistory: [],
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        diskPostimages: [
+          { filePath: oldFile, content: null },
+          { filePath: projectFile, content: 'after\n' },
+        ],
+        committedReviewAction: { id: action.id },
+      },
+    });
+    expect(applier.getRejectedRenamePostimages).toHaveBeenCalledWith(
+      'before\n',
+      'after\n',
+      snippets,
+      'restore'
+    );
+  });
+
   it('fails Restore closed when the latest durable snapshot has a reconstruction conflict', async () => {
     const persistenceScope = {
       scopeKey: 'agent-worker',
@@ -1514,7 +1709,10 @@ describe('review IPC path confinement', () => {
       },
       expectedDecisionRevision: 1,
     });
-    expect(undone).toEqual({ success: true, data: { decisionRevision: 2 } });
+    expect(undone).toEqual({
+      success: true,
+      data: { decisionRevision: 2, diskPostimages: [] },
+    });
     expect(applier.saveEditedFile).not.toHaveBeenCalled();
 
     const stale = await ipcMain.invoke(REVIEW_EXECUTE_MUTATION, {
@@ -1572,7 +1770,10 @@ describe('review IPC path confinement', () => {
       },
       expectedDecisionRevision: 2,
     });
-    expect(redone).toEqual({ success: true, data: { decisionRevision: 3 } });
+    expect(redone).toEqual({
+      success: true,
+      data: { decisionRevision: 3, diskPostimages: [] },
+    });
   });
 
   it('atomically reloads an externally changed file without silently dropping independent Undo', async () => {
@@ -1657,7 +1858,10 @@ describe('review IPC path confinement', () => {
       expectedDecisionRevision: 1,
     });
 
-    expect(reloaded).toEqual({ success: true, data: { decisionRevision: 2 } });
+    expect(reloaded).toEqual({
+      success: true,
+      data: { decisionRevision: 2, diskPostimages: [] },
+    });
     expect(applier.saveEditedFile).not.toHaveBeenCalled();
     await expect(
       ipcMain.invoke(
@@ -1882,6 +2086,7 @@ describe('review IPC path confinement', () => {
         decisionRevision: 2,
         direction: 'undo',
         actionCount: 2,
+        diskPostimages: [{ filePath: projectFile, content: 'state-1\n' }],
         persistedState: {
           hunkDecisions: { [`${projectFile}:0`]: 'accepted' },
           reviewActionHistory: [{ id: firstAction.id }],
@@ -2087,6 +2292,8 @@ describe('review IPC path confinement', () => {
         recoveredMutation: false,
         recoveredRestoreHistory: false,
         differentMutationPending: true,
+        expectedRestoreCompleted: false,
+        diskPostimages: [],
         retried: false,
       },
     });
@@ -2112,6 +2319,11 @@ describe('review IPC path confinement', () => {
         recoveredMutation: true,
         recoveredRestoreHistory: true,
         differentMutationPending: false,
+        expectedRestoreCompleted: true,
+        diskPostimages: expect.arrayContaining([
+          { filePath: projectFile, content: 'restored-project\n' },
+          { filePath: worktreeFile, content: 'restored-worktree\n' },
+        ]),
         persistedState: {
           hunkDecisions: {},
           fileDecisions: {},
@@ -2134,6 +2346,54 @@ describe('review IPC path confinement', () => {
     await expect(readFile(worktreeFile, 'utf8')).resolves.toBe('restored-worktree\n');
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
 
+    const responseLost = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      expectedRestore: {
+        expectedDecisionRevision: 1,
+        persistedState: blockedRecord.persistedState,
+        diskSteps: expectedDiskSteps,
+      },
+    });
+    expect(responseLost).toMatchObject({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        recoveredMutation: false,
+        recoveredRestoreHistory: false,
+        differentMutationPending: false,
+        expectedRestoreCompleted: true,
+        diskPostimages: expect.arrayContaining([
+          { filePath: projectFile, content: 'restored-project\n' },
+          { filePath: worktreeFile, content: 'restored-worktree\n' },
+        ]),
+        retried: false,
+      },
+    });
+
+    await writeFile(projectFile, 'external-after-response-loss\n', 'utf8');
+    const driftedResponseLost = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      expectedRestore: {
+        expectedDecisionRevision: 1,
+        persistedState: blockedRecord.persistedState,
+        diskSteps: expectedDiskSteps,
+      },
+    });
+    expect(driftedResponseLost).toMatchObject({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        recoveredMutation: false,
+        recoveredRestoreHistory: false,
+        differentMutationPending: false,
+        expectedRestoreCompleted: false,
+        diskPostimages: [],
+        retried: false,
+      },
+    });
+
     const alreadyRecovered = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
       scope: { teamName: 'safe-team', memberName: 'worker' },
       decisionPersistenceScope: persistenceScope,
@@ -2145,6 +2405,8 @@ describe('review IPC path confinement', () => {
         recoveredMutation: false,
         recoveredRestoreHistory: false,
         differentMutationPending: false,
+        expectedRestoreCompleted: false,
+        diskPostimages: [],
         persistedState: { reviewActionHistory: [], reviewRedoHistory: expect.any(Array) },
         retried: false,
       },
@@ -2829,6 +3091,7 @@ describe('review IPC path confinement', () => {
       data: {
         applied: 1,
         errors: [],
+        diskPostimages: [],
         committedReviewAction: {
           id: action.id,
           descriptor: action.descriptor,
@@ -3070,6 +3333,8 @@ describe('review IPC path confinement', () => {
         recoveredMutation: true,
         recoveredRestoreHistory: false,
         differentMutationPending: false,
+        expectedRestoreCompleted: false,
+        diskPostimages: [],
         persistedState: {
           fileDecisions: { [projectFile]: 'rejected', [worktreeFile]: 'rejected' },
           reviewActionHistory: [{ id: bulkAction.id }],
@@ -3152,7 +3417,14 @@ describe('review IPC path confinement', () => {
       ],
     });
 
-    expect(result).toMatchObject({ success: true, data: { applied: 1, errors: [] } });
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        applied: 1,
+        errors: [],
+        diskPostimages: [{ filePath: projectFile, content: 'actual-three-way-result\n' }],
+      },
+    });
     const loaded = await ipcMain.invoke(
       REVIEW_LOAD_DECISIONS,
       'safe-team',
@@ -3255,7 +3527,10 @@ describe('review IPC path confinement', () => {
       ],
     });
 
-    expect(rejected).toMatchObject({ success: true, data: { applied: 1, errors: [] } });
+    expect(rejected).toMatchObject({
+      success: true,
+      data: { applied: 1, errors: [], diskPostimages: [] },
+    });
     const storedAfterReject = await new ReviewDecisionStore().load(
       'safe-team',
       persistenceScope.scopeKey,
@@ -3309,7 +3584,13 @@ describe('review IPC path confinement', () => {
       },
     });
 
-    expect(undone).toEqual({ success: true, data: { decisionRevision: 2 } });
+    expect(undone).toEqual({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        diskPostimages: [{ filePath: projectFile, content: expectedUndoContent }],
+      },
+    });
     await expect(readFile(projectFile, 'utf8')).resolves.toBe(expectedUndoContent);
   });
 

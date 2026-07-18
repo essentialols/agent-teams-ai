@@ -105,6 +105,7 @@ import type {
   ReviewDirectDiskMutationStep,
   ReviewDiskUndoSnapshot,
   ReviewFileScope,
+  ReviewMutationDiskPostimage,
   ReviewPersistedStateSnapshot,
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
@@ -1567,6 +1568,15 @@ function mergeReviewApplyResults(
   };
 }
 
+function mergeReviewMutationDiskPostimages(
+  target: Map<string, ReviewMutationDiskPostimage>,
+  postimages: readonly ReviewMutationDiskPostimage[]
+): void {
+  for (const postimage of postimages) {
+    target.set(normalizeReviewPathForIdentity(postimage.filePath), postimage);
+  }
+}
+
 function composeReviewDiskTransitions(
   existing: readonly ReviewMutationJournalPathTransition[],
   next: readonly ApplyReviewDiskTransition[]
@@ -1626,7 +1636,8 @@ function composeReviewDiskTransitions(
 
 async function applyJournalDecisionBatchDisk(
   record: ReviewMutationJournalRecord,
-  onResult?: (result: ApplyReviewResult) => void
+  onResult?: (result: ApplyReviewResult) => void,
+  onPostimages?: (postimages: readonly ReviewMutationDiskPostimage[]) => void
 ): Promise<ReviewMutationJournalRecord> {
   let current = record;
   let aggregate: ApplyReviewResult = { applied: 0, skipped: 0, conflicts: 0, errors: [] };
@@ -1727,6 +1738,19 @@ async function applyJournalDecisionBatchDisk(
       const decisionTransitions = [
         ...(current.decisionTransitions ?? current.decisions.map(() => null)),
       ];
+      const mutatedPaths = new Set<string>();
+      for (const transition of decisionTransitions[index] ?? []) {
+        if (transition.beforeContent === transition.afterContent && !transition.operation) continue;
+        mutatedPaths.add(normalizeReviewPathForIdentity(transition.filePath));
+        if (transition.relatedFilePath) {
+          mutatedPaths.add(normalizeReviewPathForIdentity(transition.relatedFilePath));
+        }
+      }
+      onPostimages?.(
+        [...pathPostimages.contents]
+          .filter(([filePath]) => mutatedPaths.has(normalizeReviewPathForIdentity(filePath)))
+          .map(([filePath, content]) => ({ filePath, content }))
+      );
       let persistedState = current.persistedState;
       if (persistedState) {
         persistedState = await reconcileLatestReviewActionPostimages(
@@ -2690,6 +2714,7 @@ async function applyDecisionsWithDurableJournal(
   expectedDecisionRevision: number
 ): Promise<ApplyReviewResult> {
   return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
+    const diskPostimages = new Map<string, ReviewMutationDiskPostimage>();
     try {
       await recoverReviewMutationJournal(scope.teamName, persistenceScope);
       await assertCurrentReviewDecisionRevision(
@@ -2727,9 +2752,13 @@ async function applyDecisionsWithDurableJournal(
         },
         {
           applyDisk: (record) =>
-            applyJournalDecisionBatchDisk(record, (nextResult) => {
-              result = nextResult;
-            }),
+            applyJournalDecisionBatchDisk(
+              record,
+              (nextResult) => {
+                result = nextResult;
+              },
+              (postimages) => mergeReviewMutationDiskPostimages(diskPostimages, postimages)
+            ),
           commitDecisions: commitReviewMutationDecisions,
         }
       );
@@ -2742,9 +2771,12 @@ async function applyDecisionsWithDurableJournal(
         ...(result ?? { applied: 0, skipped: 0, conflicts: 0, errors: [] }),
         decisionRevision: committed?.revision ?? expectedDecisionRevision,
         committedReviewAction: committed?.reviewActionHistory.at(-1),
+        diskPostimages: [...diskPostimages.values()],
       };
     } catch (error) {
-      if (error instanceof ReviewMutationApplyResultError) return error.result;
+      if (error instanceof ReviewMutationApplyResultError) {
+        return { ...error.result, diskPostimages: [...diskPostimages.values()] };
+      }
       throw error;
     }
   });
@@ -2812,6 +2844,77 @@ async function normalizeDirectReviewMutationSteps(
     });
   }
   return normalized;
+}
+
+async function buildDirectReviewMutationDiskPostimages(
+  steps: readonly ReviewMutationJournalDiskStep[]
+): Promise<ReviewMutationDiskPostimage[]> {
+  const postimages = new Map<string, ReviewMutationDiskPostimage>();
+  for (const step of steps) {
+    if (step.type === 'write') {
+      mergeReviewMutationDiskPostimages(postimages, [
+        { filePath: step.filePath, content: step.content },
+      ]);
+      continue;
+    }
+    if (step.type === 'delete') {
+      mergeReviewMutationDiskPostimages(postimages, [{ filePath: step.filePath, content: null }]);
+      continue;
+    }
+    const content = step.authoritativeContent;
+    if (!content) throw new Error('Rename recovery content is unavailable');
+    mergeReviewMutationDiskPostimages(
+      postimages,
+      await getApplier().getRejectedRenamePostimages(
+        content.originalFullContent,
+        content.modifiedFullContent,
+        content.snippets,
+        step.type === 'restore-rejected-rename' ? 'restore' : 'reapply'
+      )
+    );
+  }
+  return [...postimages.values()];
+}
+
+async function buildJournalRecoveryDiskPostimages(
+  record: ReviewMutationJournalRecord
+): Promise<ReviewMutationDiskPostimage[]> {
+  if (record.diskSteps) return buildDirectReviewMutationDiskPostimages(record.diskSteps);
+
+  const postimages = new Map<string, ReviewMutationDiskPostimage>();
+  for (const [index, content] of record.fileContents.entries()) {
+    const transitions = (record.decisionTransitions?.[index] ?? []).filter(
+      (transition) => transition.beforeContent !== transition.afterContent || transition.operation
+    );
+    const hasRename = content.snippets.some(
+      (snippet) => snippet.ledger?.relation?.kind === 'rename' && !snippet.isError
+    );
+    if (hasRename && transitions.length > 0) {
+      mergeReviewMutationDiskPostimages(
+        postimages,
+        await getApplier().getRejectedRenamePostimages(
+          content.originalFullContent,
+          content.modifiedFullContent,
+          content.snippets,
+          'reapply'
+        )
+      );
+      continue;
+    }
+    for (const transition of transitions) {
+      if (transition.operation === 'move' && transition.relatedFilePath) {
+        mergeReviewMutationDiskPostimages(postimages, [
+          { filePath: transition.filePath, content: null },
+          { filePath: transition.relatedFilePath, content: transition.afterContent },
+        ]);
+      } else {
+        mergeReviewMutationDiskPostimages(postimages, [
+          { filePath: transition.filePath, content: transition.afterContent },
+        ]);
+      }
+    }
+  }
+  return [...postimages.values()];
 }
 
 type DirectReviewMutationState = 'before' | 'after' | 'both' | 'intermediate';
@@ -3037,6 +3140,7 @@ async function handleExecuteReviewMutation(
         scope,
         authorization
       );
+      const diskPostimages = await buildDirectReviewMutationDiskPostimages(diskSteps);
       await assertDirectReviewMutationPreimages(diskSteps);
       await reviewMutationCoordinator.execute(
         {
@@ -3062,6 +3166,7 @@ async function handleExecuteReviewMutation(
       );
       return {
         decisionRevision: committed?.revision ?? request.expectedDecisionRevision,
+        diskPostimages,
         ...(request.kind === 'restore' || request.kind === 'rename'
           ? { committedReviewAction: committed?.reviewActionHistory.at(-1) }
           : {}),
@@ -3141,6 +3246,7 @@ async function handleRestoreReviewHistory(
           persistedState: currentState,
           direction: 'none' as const,
           actionCount: 0,
+          diskPostimages: [],
         };
       }
       if (plan.direction === 'none') {
@@ -3157,6 +3263,7 @@ async function handleRestoreReviewHistory(
         scope,
         authorization
       );
+      const diskPostimages = await buildDirectReviewMutationDiskPostimages(diskSteps);
       await assertDirectReviewMutationPreimages(diskSteps);
       await reviewMutationCoordinator.execute(
         {
@@ -3192,6 +3299,7 @@ async function handleRestoreReviewHistory(
         },
         direction,
         actionCount: plan.actionCount,
+        diskPostimages,
       };
     });
   });
@@ -3565,7 +3673,7 @@ async function handleRetryReviewMutationRecovery(
       throw new Error('Invalid review mutation recovery request');
     }
     const request = requestValue as RetryReviewMutationRecoveryRequest;
-    const { scope } = await resolveReviewPathAuthorization(request.scope, {
+    const { scope, authorization } = await resolveReviewPathAuthorization(request.scope, {
       requireIdentity: true,
     });
     const persistenceScope = parseDecisionPersistenceScope(request.decisionPersistenceScope, scope);
@@ -3621,8 +3729,20 @@ async function handleRetryReviewMutationRecovery(
                 reviewRedoHistory: committed.reviewRedoHistory,
               }
             : null,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
           retried: false,
         };
+      }
+      let diskPostimages: ReviewMutationDiskPostimage[] = [];
+      let postimagesResolved = false;
+      if (record) {
+        try {
+          diskPostimages = await buildJournalRecoveryDiskPostimages(record);
+          postimagesResolved = true;
+        } catch (error) {
+          logger.warn('Unable to resolve interrupted review mutation postimages:', error);
+        }
       }
       const retried = Boolean(record?.blocked);
       if (record?.blocked) await reviewMutationJournal.unblock(record);
@@ -3632,20 +3752,57 @@ async function handleRetryReviewMutationRecovery(
         persistenceScope.scopeKey,
         persistenceScope.scopeToken
       );
+      const persistedState = committed
+        ? {
+            hunkDecisions: committed.hunkDecisions,
+            fileDecisions: committed.fileDecisions,
+            hunkContextHashesByFile: committed.hunkContextHashesByFile,
+            reviewActionHistory: committed.reviewActionHistory,
+            reviewRedoHistory: committed.reviewRedoHistory,
+          }
+        : null;
+      const expectedRestoreStateCompleted = Boolean(
+        expectedRestore &&
+        committed &&
+        committed.revision === expectedRestore.expectedDecisionRevision + 1 &&
+        persistedState &&
+        isDurableReviewEqual(persistedState, expectedRestore.persistedState) &&
+        (!record || record.kind === 'restore-history')
+      );
+      if (expectedRestoreStateCompleted && !record && expectedRestore) {
+        try {
+          const normalizedSteps = await normalizeDirectReviewMutationSteps(
+            expectedRestore.diskSteps,
+            scope,
+            authorization
+          );
+          const postimageStates = await Promise.all(
+            normalizedSteps.map((step) => classifyDirectReviewMutationStep(step))
+          );
+          if (postimageStates.some((state) => state !== 'after' && state !== 'both')) {
+            throw new Error('Completed Restore disk postimage is no longer present');
+          }
+          diskPostimages = await buildDirectReviewMutationDiskPostimages(normalizedSteps);
+          postimagesResolved = true;
+        } catch (error) {
+          logger.warn('Unable to verify completed Restore postimages:', error);
+          diskPostimages = [];
+        }
+      }
+      const expectedRestoreCompleted = Boolean(
+        expectedRestoreStateCompleted &&
+        expectedRestore &&
+        (expectedRestore.diskSteps.length === 0 || postimagesResolved)
+      );
       return {
         decisionRevision: committed?.revision ?? 0,
         recoveredMutation: Boolean(record),
         recoveredRestoreHistory: record?.kind === 'restore-history',
         differentMutationPending: false,
-        persistedState: committed
-          ? {
-              hunkDecisions: committed.hunkDecisions,
-              fileDecisions: committed.fileDecisions,
-              hunkContextHashesByFile: committed.hunkContextHashesByFile,
-              reviewActionHistory: committed.reviewActionHistory,
-              reviewRedoHistory: committed.reviewRedoHistory,
-            }
-          : null,
+        persistedState,
+        expectedRestoreCompleted,
+        diskPostimages:
+          expectedRestoreCompleted || (Boolean(record) && postimagesResolved) ? diskPostimages : [],
         retried,
       };
     });

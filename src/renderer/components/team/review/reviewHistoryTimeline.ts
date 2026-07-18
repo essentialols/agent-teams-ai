@@ -2,6 +2,7 @@ import type {
   HunkDecision,
   RetryReviewMutationRecoveryResult,
   ReviewDiskUndoSnapshot,
+  ReviewMutationDiskPostimage,
   ReviewPersistedStateSnapshot,
   ReviewRedoAction,
   ReviewUndoAction,
@@ -43,13 +44,22 @@ export function classifyReviewHistoryRecovery(
     return 'retry-restore';
   }
   if (
-    (recovery.recoveredRestoreHistory || !recovery.recoveredMutation) &&
+    recovery.expectedRestoreCompleted &&
     recovery.persistedState &&
     areReviewPersistedStatesEqual(recovery.persistedState, plannedState)
   ) {
     return 'apply-selected-restore';
   }
   return 'synchronize-latest';
+}
+
+export function markReviewMutationDiskPostimages(
+  postimages: readonly ReviewMutationDiskPostimage[] | undefined,
+  markExpectedWrite: (filePath: string, expectedContent: string | null) => void
+): void {
+  for (const postimage of postimages ?? []) {
+    markExpectedWrite(postimage.filePath, postimage.content);
+  }
 }
 
 export {

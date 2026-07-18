@@ -23,13 +23,12 @@ import type {
   FileChangeWithContent,
   LedgerChangeRelation,
   RejectResult,
+  ReviewMutationDiskPostimage,
   SnippetDiff,
 } from '@shared/types';
 
 export interface ReviewApplyMutationHooks {
-  checkpointDiskTransitions: (
-    transitions: readonly ApplyReviewDiskTransition[]
-  ) => Promise<void>;
+  checkpointDiskTransitions: (transitions: readonly ApplyReviewDiskTransition[]) => Promise<void>;
   initialDiskTransitions?: readonly ApplyReviewDiskTransition[];
 }
 
@@ -335,6 +334,71 @@ export class ReviewApplierService {
   }
 
   /**
+   * Resolve the exact watched-path postimage of a rename without reading file contents
+   * after the mutation. Case-only aliases intentionally report both lexical paths.
+   */
+  async getRejectedRenamePostimages(
+    original: string | null,
+    modified: string | null,
+    snippets: SnippetDiff[],
+    direction: 'restore' | 'reapply'
+  ): Promise<ReviewMutationDiskPostimage[]> {
+    const ledgerSnippets = snippets.filter((snippet) => snippet.ledger && !snippet.isError);
+    const relation = this.resolveLedgerRelation(ledgerSnippets);
+    if (relation?.kind !== 'rename') {
+      throw new Error('Review file is not a ledger rename.');
+    }
+    const oldSnippet =
+      ledgerSnippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'delete' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.oldPath)
+      ) ?? ledgerSnippets.find((snippet) => snippet.ledger?.operation === 'delete');
+    const newSnippet =
+      ledgerSnippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'create' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.newPath)
+      ) ?? ledgerSnippets.find((snippet) => snippet.ledger?.operation === 'create');
+    const oldFilePath =
+      oldSnippet?.filePath ??
+      this.resolveRelatedLedgerPath(newSnippet?.filePath, relation.newPath, relation.oldPath);
+    const newFilePath = newSnippet?.filePath;
+    const oldContent = oldSnippet?.ledger?.originalFullContent ?? original;
+    const newContent = newSnippet?.ledger?.modifiedFullContent ?? modified;
+    if (!oldFilePath || !newFilePath || oldContent === null || newContent === null) {
+      throw new Error('Ledger rename recovery metadata is incomplete.');
+    }
+    if (
+      ledgerSnippets.some(
+        (snippet) =>
+          snippet.ledger?.beforeState?.unavailableReason ||
+          snippet.ledger?.afterState?.unavailableReason
+      )
+    ) {
+      throw new Error('Ledger rename recovery content is unavailable.');
+    }
+
+    const aliased = await this.pathsReferToSameFile(oldFilePath, newFilePath);
+    const finalContent = direction === 'restore' ? newContent : oldContent;
+    if (aliased) {
+      return [...new Set([oldFilePath, newFilePath])].map((filePath) => ({
+        filePath,
+        content: finalContent,
+      }));
+    }
+    return direction === 'restore'
+      ? [
+          { filePath: oldFilePath, content: null },
+          { filePath: newFilePath, content: newContent },
+        ]
+      : [
+          { filePath: oldFilePath, content: oldContent },
+          { filePath: newFilePath, content: null },
+        ];
+  }
+
+  /**
    * Check if the file on disk has been modified since the review was computed.
    * Compares current disk content against the expected modified content.
    */
@@ -568,10 +632,7 @@ export class ReviewApplierService {
       hooks,
       observedPreimages: new Map(),
       plannedTransitions: new Map(
-        (hooks?.initialDiskTransitions ?? []).map((transition) => [
-          transition.filePath,
-          transition,
-        ])
+        (hooks?.initialDiskTransitions ?? []).map((transition) => [transition.filePath, transition])
       ),
     };
     return reviewApplyMutationContext.run(context, async () => {
@@ -1396,12 +1457,7 @@ export class ReviewApplierService {
     }
 
     try {
-      await this.moveExpectedTextFile(
-        newFilePath,
-        oldFilePath,
-        newCurrent.content,
-        oldContent
-      );
+      await this.moveExpectedTextFile(newFilePath, oldFilePath, newCurrent.content, oldContent);
       return { handled: true, status: 'applied' };
     } catch (error) {
       return {
@@ -1680,9 +1736,7 @@ export class ReviewApplierService {
         throw new Error('Review file transaction evidence is unavailable or conflicted');
       }
       if (state !== 'published') {
-        await context.hooks?.checkpointDiskTransitions([
-          ...context.plannedTransitions.values(),
-        ]);
+        await context.hooks?.checkpointDiskTransitions([...context.plannedTransitions.values()]);
         await executeReviewFileTransaction(transaction);
       }
     }

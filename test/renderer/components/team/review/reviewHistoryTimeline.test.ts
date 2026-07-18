@@ -8,6 +8,7 @@ import {
   createReviewRedoAction,
   executeWithPreparedReviewWriteExpectations,
   getReviewDiskMutationExpectedContent,
+  markReviewMutationDiskPostimages,
 } from '@renderer/components/team/review/reviewHistoryTimeline';
 import { describe, expect, it } from 'vitest';
 
@@ -55,6 +56,8 @@ describe('review history timeline', () => {
           recoveredRestoreHistory: false,
           differentMutationPending: false,
           persistedState: equivalent,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
           retried: false,
         },
         3,
@@ -69,6 +72,8 @@ describe('review history timeline', () => {
           recoveredRestoreHistory: true,
           differentMutationPending: false,
           persistedState: equivalent,
+          expectedRestoreCompleted: true,
+          diskPostimages: [{ filePath: '/repo/file.ts', content: 'before\n' }],
           retried: true,
         },
         3,
@@ -83,6 +88,8 @@ describe('review history timeline', () => {
           recoveredRestoreHistory: true,
           differentMutationPending: false,
           persistedState: different,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
           retried: true,
         },
         3,
@@ -97,6 +104,8 @@ describe('review history timeline', () => {
           recoveredRestoreHistory: false,
           differentMutationPending: false,
           persistedState: equivalent,
+          expectedRestoreCompleted: true,
+          diskPostimages: [{ filePath: '/repo/file.ts', content: 'before\n' }],
           retried: false,
         },
         3,
@@ -111,6 +120,8 @@ describe('review history timeline', () => {
           recoveredRestoreHistory: false,
           differentMutationPending: true,
           persistedState: left,
+          expectedRestoreCompleted: false,
+          diskPostimages: [],
           retried: false,
         },
         3,
@@ -254,6 +265,26 @@ describe('review history timeline', () => {
     expect(marked).toEqual(new Map([['/repo/file.ts', 'after\n']]));
     releaseMutation?.();
     await pending;
+  });
+
+  it('replaces provisional rename expectations with exact main-process postimages', () => {
+    const marked = new Map<string, string | null>();
+    marked.set('/repo/new.ts', null);
+
+    markReviewMutationDiskPostimages(
+      [
+        { filePath: '/repo/old.ts', content: null },
+        { filePath: '/repo/new.ts', content: 'authoritative agent content\n' },
+      ],
+      (filePath, content) => marked.set(filePath, content)
+    );
+
+    expect(marked).toEqual(
+      new Map([
+        ['/repo/new.ts', 'authoritative agent content\n'],
+        ['/repo/old.ts', null],
+      ])
+    );
   });
 
   it('restores only exact numeric hunk aliases for the selected review key', () => {

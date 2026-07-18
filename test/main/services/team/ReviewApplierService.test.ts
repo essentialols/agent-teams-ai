@@ -108,7 +108,8 @@ describe('ReviewApplierService', () => {
         const latest = await lstat(transaction.sourcePath);
         if (
           options?.expectedIdentity &&
-          (latest.dev !== options.expectedIdentity.dev || latest.ino !== options.expectedIdentity.ino)
+          (latest.dev !== options.expectedIdentity.dev ||
+            latest.ino !== options.expectedIdentity.ino)
         ) {
           throw new Error('File changed during review update; refusing to mutate it');
         }
@@ -592,10 +593,9 @@ describe('ReviewApplierService', () => {
       }),
       { mode: 0o755 }
     );
-    expect(atomicWriteMocks.executeReviewFileTransaction).toHaveBeenCalledWith(
-      expect.any(Object),
-      { expectedIdentity: expect.objectContaining({ dev: 1, ino: 1, mode: 0o100755 }) }
-    );
+    expect(atomicWriteMocks.executeReviewFileTransaction).toHaveBeenCalledWith(expect.any(Object), {
+      expectedIdentity: expect.objectContaining({ dev: 1, ino: 1, mode: 0o100755 }),
+    });
     expect(lstat).toHaveBeenCalledTimes(2);
   });
 
@@ -1428,6 +1428,30 @@ describe('ReviewApplierService', () => {
     expect(files.has(newPath)).toBe(false);
   });
 
+  it('resolves exact rename postimages for both durable directions', async () => {
+    const oldPath = '/repo/src/old.ts';
+    const newPath = '/repo/src/new.ts';
+    const oldContent = 'old\n';
+    const newContent = 'new\n';
+    const relation = { kind: 'rename' as const, oldPath: 'src/old.ts', newPath: 'src/new.ts' };
+    const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+    const service = new ReviewApplierService();
+
+    await expect(
+      service.getRejectedRenamePostimages(oldContent, newContent, change.snippets, 'restore')
+    ).resolves.toEqual([
+      { filePath: oldPath, content: null },
+      { filePath: newPath, content: newContent },
+    ]);
+    await expect(
+      service.getRejectedRenamePostimages(oldContent, newContent, change.snippets, 'reapply')
+    ).resolves.toEqual([
+      { filePath: oldPath, content: oldContent },
+      { filePath: newPath, content: null },
+    ]);
+  });
+
   it('refuses rename Undo when the restored old path changed externally', async () => {
     const fsPromises = await import('fs/promises');
     const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
@@ -1603,14 +1627,17 @@ describe('ReviewApplierService', () => {
     const relation = { kind: 'rename' as const, oldPath: 'src/Foo.ts', newPath: 'src/foo.ts' };
     const change = buildLedgerRenameChange(oldPath, newPath, oldContent, newContent, relation);
     const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+    const service = new ReviewApplierService();
 
     await expect(
-      new ReviewApplierService().restoreRejectedRename(
-        newPath,
-        oldContent,
-        newContent,
-        change.snippets
-      )
+      service.getRejectedRenamePostimages(oldContent, newContent, change.snippets, 'restore')
+    ).resolves.toEqual([
+      { filePath: oldPath, content: newContent },
+      { filePath: newPath, content: newContent },
+    ]);
+
+    await expect(
+      service.restoreRejectedRename(newPath, oldContent, newContent, change.snippets)
     ).resolves.toEqual({ success: true });
     expect(rename).toHaveBeenCalledWith(oldPath, newPath);
     expect(writeFile).toHaveBeenCalledWith(newPath, newContent, 'utf8');

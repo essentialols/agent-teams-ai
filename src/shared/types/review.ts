@@ -411,10 +411,20 @@ export interface ApplyReviewResult {
   decisionRevision?: number;
   /** Main-bound action that must replace the renderer's optimistic history entry. */
   committedReviewAction?: ReviewUndoAction;
+  /** Exact watched-path state produced by a durable disk mutation. */
+  diskPostimages?: ReviewMutationDiskPostimage[];
+}
+
+/** Exact text state expected at one watched path after a review disk mutation. */
+export interface ReviewMutationDiskPostimage {
+  filePath: string;
+  /** Null means the path is absent. */
+  content: string | null;
 }
 
 export interface ExecuteReviewMutationResult {
   decisionRevision: number;
+  diskPostimages: ReviewMutationDiskPostimage[];
   /** Present for Restore/Rename because main binds their authoritative disk snapshot. */
   committedReviewAction?: ReviewUndoAction;
 }
@@ -441,6 +451,10 @@ export interface RetryReviewMutationRecoveryResult {
   differentMutationPending: boolean;
   /** Exact state after recovery, or null when this scope has no persisted review state. */
   persistedState: ReviewPersistedStateSnapshot | null;
+  /** True only when the caller's exact checkpoint Restore is durably complete. */
+  expectedRestoreCompleted: boolean;
+  /** Exact watched-path state for the recovered mutation or completed expected Restore. */
+  diskPostimages: ReviewMutationDiskPostimage[];
   /** Kept separate so callers can explain that a previously blocked mutation was retried. */
   retried: boolean;
 }
@@ -462,6 +476,7 @@ export interface RestoreReviewHistoryResult {
   persistedState: ReviewPersistedStateSnapshot;
   direction: 'undo' | 'redo' | 'none';
   actionCount: number;
+  diskPostimages: ReviewMutationDiskPostimage[];
 }
 
 /** Exact main-process disk transition used to bind durable Undo history. */

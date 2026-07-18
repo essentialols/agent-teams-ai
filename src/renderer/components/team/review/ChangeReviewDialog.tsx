@@ -4,6 +4,7 @@ import { redoDepth, undoDepth } from '@codemirror/commands';
 import { Transaction } from '@codemirror/state';
 import { serializeReviewDraftEditorState } from '@features/change-review-history/renderer';
 import { useAppTranslation } from '@features/localization/renderer';
+import { buildReviewRestoreDecisionState } from '@features/review-mutations';
 import { api, isElectronMode } from '@renderer/api';
 import { EditorSelectionMenu } from '@renderer/components/team/editor/EditorSelectionMenu';
 import { Button } from '@renderer/components/ui/button';
@@ -52,6 +53,7 @@ import {
   isReviewFileFullyRejected,
   popOrderedReviewAction,
   reconcileReviewDecisionRecordsAfterApply,
+  replaceLatestReviewAction,
   resolveReviewFileIsNew,
   restoreReviewDecisionRecordsForFile,
   shouldCreateFileWhenUndoingReject,
@@ -68,6 +70,7 @@ import {
 import { resolveReviewFilePath } from './reviewFilePathResolution';
 import { ReviewFileTree } from './ReviewFileTree';
 import {
+  buildForwardDiskMutationSteps,
   buildRedoDiskMutationSteps,
   buildUndoDiskMutationSteps,
   createReviewRedoAction,
@@ -89,7 +92,6 @@ import type {
   FileChangeSummary,
   HunkDecision,
   ReviewDecisionSnapshot,
-  ReviewDirectDiskMutationStep,
   ReviewDiskUndoAction,
   ReviewDiskUndoSnapshot,
   ReviewFileScope,
@@ -838,6 +840,22 @@ export const ChangeReviewDialog = ({
     [setReviewActionHistory, setReviewRedoHistory]
   );
 
+  const bindCommittedReviewAction = useCallback(
+    (optimistic: ReviewUndoAction, committed: ReviewUndoAction | undefined): boolean => {
+      if (!committed) return false;
+      const result = replaceLatestReviewAction(
+        reviewUndoActionsRef.current,
+        optimistic,
+        committed
+      );
+      if (!result.replaced) return false;
+      reviewUndoActionsRef.current = result.stack;
+      setReviewActionHistory(result.stack);
+      return true;
+    },
+    [setReviewActionHistory]
+  );
+
   const completeReviewRedoAction = useCallback(
     (redoAction: ReviewRedoAction): boolean => {
       const latest = reviewRedoActionsRef.current.at(-1);
@@ -1305,6 +1323,7 @@ export const ChangeReviewDialog = ({
           }
           const result = await applyReview(teamName, taskId, memberName);
           if (useStore.getState().changeSetEpoch !== changeSetEpoch) return;
+          bindCommittedReviewAction(preparedAction, result?.committedReviewAction);
           const currentDecisionState = useStore.getState();
           const reconciliation = reconcileReviewDecisionRecordsAfterApply(
             requestedFiles,
@@ -1399,6 +1418,7 @@ export const ChangeReviewDialog = ({
     }
   }, [
     activeChangeSet,
+    bindCommittedReviewAction,
     rejectablePendingFiles,
     rejectAllFile,
     applyReview,
@@ -1489,7 +1509,6 @@ export const ChangeReviewDialog = ({
         let restoredDiskContent: string | null = desiredContent;
         let restoreMode: ReviewDiskUndoSnapshot['restoreMode'] = 'content';
         let renameExpectation: ReviewRenameRecoveryExpectation | null = null;
-        let diskStep: ReviewDirectDiskMutationStep;
 
         if (isLedgerRenameReviewFile(file)) {
           renameExpectation =
@@ -1498,12 +1517,6 @@ export const ChangeReviewDialog = ({
             throw new Error('Rename recovery metadata is unavailable; refusing an unsafe restore.');
           }
           restoreMode = 'reapply-rejected-rename';
-          diskStep = {
-            id: 'pending',
-            type: 'restore-rejected-rename',
-            filePath,
-            expectation: renameExpectation,
-          };
         } else if (isExpectedDeletion) {
           const expectedRejectedContent =
             latestDiskSnapshot?.afterContent ??
@@ -1515,25 +1528,12 @@ export const ChangeReviewDialog = ({
           rejectedDiskContent = expectedRejectedContent;
           restoredDiskContent = null;
           restoreMode = 'create-file';
-          diskStep = {
-            id: 'pending',
-            type: 'delete',
-            filePath,
-            expectedContent: expectedRejectedContent,
-          };
         } else if (resolveReviewFileIsNew(file, content)) {
           const current = await api.review.checkConflict(reviewScope, filePath, '');
           const isMissing = current.hasConflict && current.conflictContent === null;
           if (isMissing) {
             rejectedDiskContent = '';
             restoreMode = 'delete-file';
-            diskStep = {
-              id: 'pending',
-              type: 'write',
-              filePath,
-              expectedContent: null,
-              content: desiredContent,
-            };
           } else {
             if (rejectedNewFileWasRemoved) {
               throw new Error('A file now exists at this path; refusing to overwrite it.');
@@ -1545,13 +1545,6 @@ export const ChangeReviewDialog = ({
             }
             rejectedDiskContent = current.currentContent;
             restoredDiskContent = desiredContent;
-            diskStep = {
-              id: 'pending',
-              type: 'write',
-              filePath,
-              expectedContent: current.currentContent,
-              content: desiredContent,
-            };
           }
         } else {
           const baseline = sessionSnapshot?.afterContent ?? content?.originalFullContent;
@@ -1568,24 +1561,13 @@ export const ChangeReviewDialog = ({
             throw new Error('Agent changes conflict with edits made after rejection.');
           }
           restoredDiskContent = merged.content;
-          diskStep = {
-            id: 'pending',
-            type: 'write',
-            filePath,
-            expectedContent: current.currentContent,
-            content: restoredDiskContent,
-          };
         }
 
         if (useStore.getState().changeSetEpoch !== operationEpoch) return;
         if (!(await quiesceDecisionPersistence(teamName, decisionScopeKey, decisionScopeToken))) {
           throw new Error('Unable to finish saving the previous review state. Retry Restore.');
         }
-        restoreFileDecisions(file, { hunkDecisions: {}, fileDecisions: {} });
-        if (!acceptAllFile(filePath)) {
-          restoreFileDecisions(file, decisionSnapshot);
-          throw new Error('Review state changed while restoring the file.');
-        }
+        useStore.setState((state) => buildReviewRestoreDecisionState(file, state));
 
         const snapshot: ReviewDiskUndoSnapshot = {
           filePath,
@@ -1611,7 +1593,7 @@ export const ChangeReviewDialog = ({
               scopeToken: decisionScopeToken,
             },
             kind: isLedgerRenameReviewFile(file) ? 'rename' : 'restore',
-            diskSteps: [{ ...diskStep, id: `${preparedAction.id}:0` }],
+            diskSteps: buildForwardDiskMutationSteps(preparedAction.id, [snapshot]),
             persistedState: {
               hunkDecisions: state.hunkDecisions,
               fileDecisions: state.fileDecisions,
@@ -1621,6 +1603,7 @@ export const ChangeReviewDialog = ({
             },
             expectedDecisionRevision: state.decisionRevision,
           });
+          bindCommittedReviewAction(preparedAction, committed.committedReviewAction);
           recordDecisionRevision(
             teamName,
             decisionScopeKey,
@@ -1660,8 +1643,8 @@ export const ChangeReviewDialog = ({
       }
     },
     [
-      acceptAllFile,
       activeChangeSet,
+      bindCommittedReviewAction,
       changeSetEpoch,
       clearReviewFileExternalChange,
       fetchFileContent,
@@ -1814,6 +1797,7 @@ export const ChangeReviewDialog = ({
           }
           const result = await applySingleFileDecision(teamName, filePath, taskId, memberName);
           if (useStore.getState().changeSetEpoch !== operationEpoch) return;
+          bindCommittedReviewAction(preparedAction, result?.committedReviewAction);
 
           if (isNew) {
             const hasErrorForFile =
@@ -1882,6 +1866,7 @@ export const ChangeReviewDialog = ({
       rejectAllFile,
       activeChangeSet,
       applySingleFileDecision,
+      bindCommittedReviewAction,
       teamName,
       taskId,
       memberName,
@@ -1992,6 +1977,7 @@ export const ChangeReviewDialog = ({
             }
             const result = await applySingleFileDecision(teamName, filePath, taskId, memberName);
             if (useStore.getState().changeSetEpoch !== operationEpoch) return;
+            bindCommittedReviewAction(preparedAction, result?.committedReviewAction);
             const hasErrorForFile =
               !result ||
               result.errors.some(
@@ -2046,6 +2032,7 @@ export const ChangeReviewDialog = ({
       setHunkDecision,
       clearHunkDecisionByOriginalIndex,
       applySingleFileDecision,
+      bindCommittedReviewAction,
       teamName,
       taskId,
       memberName,

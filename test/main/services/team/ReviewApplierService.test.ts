@@ -11,7 +11,13 @@ const atomicWriteMocks = vi.hoisted(() => ({
   atomicCreateAsync: vi.fn(),
   atomicWriteAsync: vi.fn(),
   cleanupAtomicCreateTempLinks: vi.fn(),
+  executeReviewFileTransaction: vi.fn(),
+  finalizePreparedReviewFileTransaction: vi.fn(),
+  finalizeReviewFileTransaction: vi.fn(),
+  inspectReviewFileTransaction: vi.fn(),
+  prepareReviewFileTransaction: vi.fn(),
   renamePathWithRetry: vi.fn(),
+  resumePreparedReviewFileTransaction: vi.fn(),
   unlinkPathDurably: vi.fn(),
 }));
 
@@ -82,6 +88,51 @@ describe('ReviewApplierService', () => {
     );
     atomicWriteMocks.unlinkPathDurably.mockImplementation(async (filePath: string) =>
       unlink(filePath)
+    );
+    atomicWriteMocks.prepareReviewFileTransaction.mockImplementation(async (input) => ({
+      ...input,
+      id: '00000000-0000-4000-8000-000000000000',
+    }));
+    atomicWriteMocks.resumePreparedReviewFileTransaction.mockResolvedValue(null);
+    atomicWriteMocks.inspectReviewFileTransaction.mockResolvedValue('published');
+    atomicWriteMocks.executeReviewFileTransaction.mockImplementation(
+      async (
+        transaction: {
+          kind: 'replace' | 'delete' | 'move';
+          sourcePath: string;
+          targetPath: string;
+          nextContent: string | null;
+        },
+        options?: { expectedIdentity?: { dev: number; ino: number } }
+      ) => {
+        const latest = await lstat(transaction.sourcePath);
+        if (
+          options?.expectedIdentity &&
+          (latest.dev !== options.expectedIdentity.dev || latest.ino !== options.expectedIdentity.ino)
+        ) {
+          throw new Error('File changed during review update; refusing to mutate it');
+        }
+        if (transaction.kind === 'delete') {
+          await atomicWriteMocks.unlinkPathDurably(transaction.sourcePath);
+          return;
+        }
+        if (transaction.kind === 'move') {
+          await atomicWriteMocks.renamePathWithRetry(
+            transaction.sourcePath,
+            transaction.targetPath,
+            { syncDirectories: true }
+          );
+        }
+        await atomicWriteMocks.atomicWriteAsync(
+          transaction.targetPath,
+          transaction.nextContent ?? '',
+          {
+            mode: latest.mode & 0o7777,
+            durability: 'strict',
+            syncDirectory: true,
+          }
+        );
+      }
     );
   });
 
@@ -221,6 +272,59 @@ describe('ReviewApplierService', () => {
     expect(result.hadConflicts).toBe(true);
     expect(result.newContent).toBe('EXTERNAL\ntwo');
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('checkpoints the exact lock preimage before an indistinguishable Reject write', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const filePath = '/tmp/exact-reject-race.ts';
+    const original = 'header\nbase\n';
+    const modified = 'header\nagent\n';
+    const events: string[] = [];
+    readFile.mockResolvedValue(original);
+    atomicWriteMocks.atomicWriteAsync.mockImplementationOnce(async () => {
+      events.push('write');
+    });
+    const checkpointDiskTransitions = vi.fn(async () => {
+      events.push('checkpoint');
+    });
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    const result = await new ReviewApplierService().applyReviewDecisions(
+      {
+        teamName: 'team',
+        decisions: [{ filePath, fileDecision: 'rejected', hunkDecisions: {} }],
+      },
+      new Map([
+        [
+          filePath,
+          {
+            filePath,
+            relativePath: 'exact-reject-race.ts',
+            snippets: [],
+            linesAdded: 1,
+            linesRemoved: 1,
+            isNewFile: false,
+            originalFullContent: original,
+            modifiedFullContent: modified,
+            contentSource: 'ledger-exact',
+          },
+        ],
+      ]),
+      { checkpointDiskTransitions }
+    );
+
+    expect(result).toEqual({ applied: 1, skipped: 0, conflicts: 0, errors: [] });
+    expect(events[0]).toBe('checkpoint');
+    expect(checkpointDiskTransitions).toHaveBeenCalledWith([
+      {
+        filePath,
+        beforeContent: original,
+        afterContent: original,
+        operation: 'replace',
+        transactionId: '00000000-0000-4000-8000-000000000000',
+      },
+    ]);
   });
 
   it('preserves CRLF and trailing blank lines during partial reject', async () => {
@@ -386,6 +490,37 @@ describe('ReviewApplierService', () => {
     expect(atomicWriteMocks.atomicWriteAsync).not.toHaveBeenCalled();
   });
 
+  it('recognizes an app-owned published transaction before its WAL checkpoint', async () => {
+    const fsPromises = await import('fs/promises');
+    const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
+    const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
+    const filePath = '/tmp/published-transition.txt';
+    const transaction = {
+      id: '00000000-0000-4000-8000-000000000001',
+      kind: 'replace' as const,
+      sourcePath: filePath,
+      targetPath: filePath,
+      expectedContent: 'before\n',
+      nextContent: 'after\n',
+    };
+    readFile.mockResolvedValue('after\n');
+    lstat.mockResolvedValue({ ...regularFileStats(), nlink: 2 });
+    atomicWriteMocks.resumePreparedReviewFileTransaction.mockResolvedValue(transaction);
+    atomicWriteMocks.inspectReviewFileTransaction.mockResolvedValue('published');
+    const { ReviewApplierService } = await import('@main/services/team/ReviewApplierService');
+
+    await expect(
+      new ReviewApplierService().classifyEditedFileTransition(filePath, 'before\n', 'after\n')
+    ).resolves.toBe('after');
+    expect(atomicWriteMocks.resumePreparedReviewFileTransaction).toHaveBeenCalledWith({
+      kind: 'replace',
+      sourcePath: filePath,
+      targetPath: filePath,
+      expectedContent: 'before\n',
+      nextContent: 'after\n',
+    });
+  });
+
   it('classifies exact ledger rename states used by crash recovery', async () => {
     const fsPromises = await import('fs/promises');
     const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
@@ -426,7 +561,7 @@ describe('ReviewApplierService', () => {
     expect(atomicWriteMocks.atomicWriteAsync).not.toHaveBeenCalled();
   });
 
-  it('uses strict atomic replacement, preserves mode, and repeats the CAS guard', async () => {
+  it('uses a strict no-clobber transaction, preserves mode, and binds the source inode', async () => {
     const fsPromises = await import('fs/promises');
     const readFile = fsPromises.readFile as unknown as ReturnType<typeof vi.fn>;
     const lstat = fsPromises.lstat as unknown as ReturnType<typeof vi.fn>;
@@ -447,8 +582,19 @@ describe('ReviewApplierService', () => {
         mode: 0o755,
         durability: 'strict',
         syncDirectory: true,
-        beforeCommit: expect.any(Function),
       })
+    );
+    expect(atomicWriteMocks.prepareReviewFileTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'replace',
+        sourcePath: '/tmp/executable-save.sh',
+        targetPath: '/tmp/executable-save.sh',
+      }),
+      { mode: 0o755 }
+    );
+    expect(atomicWriteMocks.executeReviewFileTransaction).toHaveBeenCalledWith(
+      expect.any(Object),
+      { expectedIdentity: expect.objectContaining({ dev: 1, ino: 1, mode: 0o100755 }) }
     );
     expect(lstat).toHaveBeenCalledTimes(2);
   });

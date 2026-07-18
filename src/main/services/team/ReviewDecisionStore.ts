@@ -614,6 +614,7 @@ export class ReviewDecisionStore {
       filePath?: unknown;
       beforeContent?: unknown;
       afterContent?: unknown;
+      authoritativeBeforeSha256?: unknown;
       file?: unknown;
       fileIndex?: unknown;
       restoreConflict?: unknown;
@@ -633,6 +634,10 @@ export class ReviewDecisionStore {
       candidate.filePath.length <= MAX_STORED_KEY_LENGTH &&
       typeof candidate.beforeContent === 'string' &&
       (typeof candidate.afterContent === 'string' || candidate.afterContent === null) &&
+      (candidate.authoritativeBeforeSha256 === undefined ||
+        candidate.authoritativeBeforeSha256 === null ||
+        (typeof candidate.authoritativeBeforeSha256 === 'string' &&
+          /^[a-f0-9]{64}$/.test(candidate.authoritativeBeforeSha256))) &&
       (candidate.file === undefined || this.isFileSummary(candidate.file)) &&
       (candidate.fileIndex === undefined ||
         (Number.isSafeInteger(candidate.fileIndex) && (candidate.fileIndex as number) >= 0)) &&

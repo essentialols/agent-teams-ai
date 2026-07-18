@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 type CrashPoint =
   | 'prepared'
   | 'after_disk_effect'
+  | 'after_disk_checkpoint'
   | 'disk_applied'
   | 'after_decision_effect'
   | 'decisions_committed'
@@ -45,7 +46,11 @@ async function runWorker(
   filePath: string,
   auditPath: string,
   crashPoint: CrashPoint | 'none',
-  operationShape: 'disk' | 'disk-redo' | 'decision-only-redo' = 'disk'
+  operationShape:
+    | 'disk'
+    | 'disk-redo'
+    | 'decision-only-redo'
+    | 'disk-undo-after-redo' = 'disk'
 ): Promise<WorkerResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -80,6 +85,7 @@ describe('review mutation crash recovery process E2E', () => {
   it.each([
     'prepared',
     'after_disk_effect',
+    'after_disk_checkpoint',
     'disk_applied',
     'after_decision_effect',
     'decisions_committed',
@@ -116,6 +122,7 @@ describe('review mutation crash recovery process E2E', () => {
           decisionAttempts: crashPoint === 'after_decision_effect' ? 2 : 1,
         },
       });
+
     },
     30_000
   );
@@ -150,6 +157,7 @@ describe('review mutation crash recovery process E2E', () => {
   it.each([
     'prepared',
     'after_disk_effect',
+    'after_disk_checkpoint',
     'disk_applied',
     'after_decision_effect',
     'decisions_committed',
@@ -201,6 +209,41 @@ describe('review mutation crash recovery process E2E', () => {
           decisionAttempts: crashPoint === 'after_decision_effect' ? 2 : 1,
         },
       });
+
+      const repeatedUndo = await runWorker(
+        'run',
+        claudeBasePath,
+        filePath,
+        auditPath,
+        'none',
+        'disk-undo-after-redo'
+      );
+      expect(repeatedUndo.code, repeatedUndo.stderr).toBe(0);
+
+      const afterRepeatedUndo = await runWorker(
+        'inspect',
+        claudeBasePath,
+        filePath,
+        auditPath,
+        'none',
+        'disk-undo-after-redo'
+      );
+      expect(afterRepeatedUndo.code, afterRepeatedUndo.stderr).toBe(0);
+      expect(JSON.parse(afterRepeatedUndo.stdout) as RecoverySnapshot).toMatchObject({
+        fileContent: 'before\n',
+        decisions: {
+          hunkDecisions: {},
+          reviewActionHistory: [],
+          reviewRedoHistory: [{ action: { id: 'fixture-disk-action' } }],
+          revision: 3,
+        },
+        pendingRecords: 0,
+        audit: {
+          diskWrites: 2,
+          diskAttempts: crashPoint === 'after_disk_effect' ? 3 : 2,
+          decisionAttempts: crashPoint === 'after_decision_effect' ? 3 : 2,
+        },
+      });
     },
     30_000
   );
@@ -247,6 +290,8 @@ describe('review mutation crash recovery process E2E', () => {
         fileContent: 'before\n',
         decisions: {
           hunkDecisions: { 'fixture-change:0': 'accepted' },
+          reviewActionHistory: [{ id: 'fixture-hunk-action' }],
+          reviewRedoHistory: [],
           revision: 1,
         },
         pendingRecords: 0,

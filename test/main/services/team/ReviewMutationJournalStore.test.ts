@@ -173,14 +173,31 @@ describe('ReviewMutationJournalStore', () => {
           },
         ],
       ],
+      decisionTransitions: [
+        [
+          {
+            filePath: '/repo/file.ts',
+            beforeContent: 'before',
+            afterContent: 'after',
+          },
+        ],
+      ],
     });
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([checkpointed]);
 
     const recordPath = findRecordPath(teamsBasePath, prepared.id);
     const parsed = JSON.parse(await readFile(recordPath, 'utf8')) as {
       decisionPostimages: { sha256: string | null }[][];
+      decisionTransitions: { beforeContent: unknown }[][];
     };
     parsed.decisionPostimages[0]![0]!.sha256 = 'not-a-digest';
+    await writeFile(recordPath, JSON.stringify(parsed), 'utf8');
+    await expect(store.list('demo', persistenceScope)).rejects.toThrow(
+      'Invalid review mutation journal record'
+    );
+
+    parsed.decisionPostimages[0]![0]!.sha256 = createHash('sha256').update('after').digest('hex');
+    parsed.decisionTransitions[0]![0]!.beforeContent = 42;
     await writeFile(recordPath, JSON.stringify(parsed), 'utf8');
     await expect(store.list('demo', persistenceScope)).rejects.toThrow(
       'Invalid review mutation journal record'

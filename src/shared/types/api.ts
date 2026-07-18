@@ -24,6 +24,7 @@ import type {
   ChangeStats,
   ConflictCheckResult,
   ExecuteReviewMutationRequest,
+  ExecuteReviewMutationResult,
   FileChangeWithContent,
   HunkDecision,
   RejectResult,
@@ -762,7 +763,7 @@ export interface ReviewAPI {
     snippets?: SnippetDiff[]
   ) => Promise<FileChangeWithContent>;
   applyDecisions: (request: ApplyReviewRequest) => Promise<ApplyReviewResult>;
-  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<{ decisionRevision: number }>;
+  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<ExecuteReviewMutationResult>;
   // Phase 2
   checkConflict: (
     scope: ReviewFileScope,

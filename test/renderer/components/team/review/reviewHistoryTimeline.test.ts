@@ -1,4 +1,6 @@
+import { restoreReviewDecisionRecordsForFile } from '@features/review-mutations';
 import {
+  buildForwardDiskMutationSteps,
   buildRedoDiskMutationSteps,
   buildUndoDiskMutationSteps,
   createReviewRedoAction,
@@ -34,6 +36,15 @@ describe('review history timeline', () => {
     expect(buildRedoDiskMutationSteps('action', [snapshot('content')])).toEqual([
       {
         id: 'action:redo:0',
+        type: 'write',
+        filePath: '/repo/file.ts',
+        expectedContent: 'before\n',
+        content: 'after\n',
+      },
+    ]);
+    expect(buildForwardDiskMutationSteps('action', [snapshot('content')])).toEqual([
+      {
+        id: 'action:0',
         type: 'write',
         filePath: '/repo/file.ts',
         expectedContent: 'before\n',
@@ -147,5 +158,39 @@ describe('review history timeline', () => {
     expect(marked).toEqual(new Map([['/repo/file.ts', 'after\n']]));
     releaseMutation?.();
     await pending;
+  });
+
+  it('restores only exact numeric hunk aliases for the selected review key', () => {
+    const file = {
+      filePath: '/repo/a',
+      changeKey: 'change:a',
+      relativePath: 'a',
+      snippets: [],
+      linesAdded: 1,
+      linesRemoved: 0,
+      isNewFile: false,
+    };
+    expect(
+      restoreReviewDecisionRecordsForFile(
+        file,
+        {
+          hunkDecisions: {
+            'change:a:0': 'rejected',
+            '/repo/a:1': 'rejected',
+            '/repo/a:shadow:0': 'accepted',
+            'change:a:shadow:0': 'accepted',
+          },
+          fileDecisions: {},
+        },
+        { hunkDecisions: { 'change:a:0': 'accepted' }, fileDecisions: {} }
+      )
+    ).toEqual({
+      hunkDecisions: {
+        'change:a:0': 'accepted',
+        '/repo/a:shadow:0': 'accepted',
+        'change:a:shadow:0': 'accepted',
+      },
+      fileDecisions: {},
+    });
   });
 });

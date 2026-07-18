@@ -1,6 +1,19 @@
-export type {
-  ReviewMutationJournalPort,
-  ReviewMutationPhaseObserver,
-  ReviewMutationSteps,
+export {
+  ReviewMutationCoordinator,
+  type ReviewMutationJournalPort,
+  type ReviewMutationPhaseObserver,
+  type ReviewMutationSteps,
 } from '../core/application/ReviewMutationCoordinator';
-export { ReviewMutationCoordinator } from '../core/application/ReviewMutationCoordinator';
+export {
+  buildReviewRestoreDecisionState,
+  buildReviewUndoDecisionState,
+  restoreReviewDecisionRecordsForFile,
+  restoreReviewDecisionRecordsForFiles,
+  type ReviewDecisionRecords,
+} from '../core/domain/reviewHistoryDecisions';
+export {
+  buildForwardDiskMutationSteps,
+  buildRedoDiskMutationSteps,
+  buildUndoDiskMutationSteps,
+  getReviewActionDiskSnapshots,
+} from '../core/domain/reviewHistoryDiskSteps';

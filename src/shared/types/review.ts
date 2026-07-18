@@ -264,6 +264,8 @@ export interface ReviewDiskUndoSnapshot {
   filePath: string;
   beforeContent: string;
   afterContent: string | null;
+  /** Main-observed preimage binding. Undefined snapshots predate authoritative history. */
+  authoritativeBeforeSha256?: string | null;
   file?: FileChangeSummary;
   fileIndex?: number;
   restoreConflict?: string;
@@ -387,6 +389,27 @@ export interface ApplyReviewResult {
   }[];
   /** Revision committed together with the disk mutation. */
   decisionRevision?: number;
+  /** Main-bound action that must replace the renderer's optimistic history entry. */
+  committedReviewAction?: ReviewUndoAction;
+}
+
+export interface ExecuteReviewMutationResult {
+  decisionRevision: number;
+  /** Present for Restore/Rename because main binds their authoritative disk snapshot. */
+  committedReviewAction?: ReviewUndoAction;
+}
+
+/** Exact main-process disk transition used to bind durable Undo history. */
+export interface ApplyReviewDiskTransition {
+  filePath: string;
+  beforeContent: string | null;
+  afterContent: string | null;
+  /** Kernel-level mutation shape used to verify exact no-op provenance after a crash. */
+  operation?: 'replace' | 'delete' | 'move';
+  /** App-owned filesystem transaction retained until the WAL postimage checkpoint. */
+  transactionId?: string;
+  /** Destination path for a move transaction. */
+  relatedFilePath?: string;
 }
 
 /** Полный file content для CodeMirror */

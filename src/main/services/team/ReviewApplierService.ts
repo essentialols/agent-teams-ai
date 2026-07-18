@@ -1,17 +1,22 @@
 import {
   atomicCreateAsync,
-  atomicWriteAsync,
-  renamePathWithRetry,
-  unlinkPathDurably,
+  executeReviewFileTransaction,
+  finalizePreparedReviewFileTransaction,
+  finalizeReviewFileTransaction,
+  inspectReviewFileTransaction,
+  prepareReviewFileTransaction,
+  resumePreparedReviewFileTransaction,
 } from '@main/utils/atomicWrite';
 import { isWindowsishPath, normalizePathForComparison } from '@shared/utils/platformPath';
 import { buildReviewChunkContextHashes, rejectReviewChunks } from '@shared/utils/reviewChunks';
 import { threeWayTextMerge } from '@shared/utils/threeWayTextMerge';
+import { AsyncLocalStorage } from 'async_hooks';
 import { createHash } from 'crypto';
 import { lstat, mkdir, readFile } from 'fs/promises';
 import { dirname } from 'path';
 
 import type {
+  ApplyReviewDiskTransition,
   ApplyReviewRequest,
   ApplyReviewResult,
   ConflictCheckResult,
@@ -20,6 +25,21 @@ import type {
   RejectResult,
   SnippetDiff,
 } from '@shared/types';
+
+export interface ReviewApplyMutationHooks {
+  checkpointDiskTransitions: (
+    transitions: readonly ApplyReviewDiskTransition[]
+  ) => Promise<void>;
+  initialDiskTransitions?: readonly ApplyReviewDiskTransition[];
+}
+
+interface ReviewApplyMutationContext {
+  hooks?: ReviewApplyMutationHooks;
+  observedPreimages: Map<string, ApplyReviewDiskTransition>;
+  plannedTransitions: Map<string, ApplyReviewDiskTransition>;
+}
+
+const reviewApplyMutationContext = new AsyncLocalStorage<ReviewApplyMutationContext>();
 
 type ApplyErrorCode = NonNullable<ApplyReviewResult['errors'][number]['code']>;
 type LedgerApplyOutcome =
@@ -118,10 +138,26 @@ export class ReviewApplierService {
     afterContent: string | null
   ): Promise<ReviewFileTransitionState> {
     return withFileMutationLock(filePath, async () => {
+      const resumedTransaction =
+        beforeContent === null
+          ? null
+          : await resumePreparedReviewFileTransaction({
+              kind: afterContent === null ? 'delete' : 'replace',
+              sourcePath: filePath,
+              targetPath: filePath,
+              expectedContent: beforeContent,
+              nextContent: afterContent,
+            });
+      const ownsPublishedTarget = resumedTransaction
+        ? (await inspectReviewFileTransaction(resumedTransaction)) === 'published'
+        : false;
+      if (resumedTransaction && !ownsPublishedTarget) {
+        throw new Error('Review file transaction evidence is unavailable or conflicted');
+      }
       const current = await this.readCurrentText(filePath);
       const currentError = getCurrentTextReadError(current);
       if (currentError) throw new Error(currentError);
-      if (!current.missing) {
+      if (!current.missing && !ownsPublishedTarget) {
         await this.assertSafeExpectedFile(filePath, current.content);
       }
 
@@ -525,7 +561,36 @@ export class ReviewApplierService {
    */
   async applyReviewDecisions(
     request: ApplyReviewRequest,
-    fileContents = new Map<string, FileChangeWithContent>()
+    fileContents = new Map<string, FileChangeWithContent>(),
+    hooks?: ReviewApplyMutationHooks
+  ): Promise<ApplyReviewResult> {
+    const context: ReviewApplyMutationContext = {
+      hooks,
+      observedPreimages: new Map(),
+      plannedTransitions: new Map(
+        (hooks?.initialDiskTransitions ?? []).map((transition) => [
+          transition.filePath,
+          transition,
+        ])
+      ),
+    };
+    return reviewApplyMutationContext.run(context, async () => {
+      await this.resumeInitialReviewFileTransactions(context);
+      const result = await this.applyReviewDecisionsInContext(request, fileContents);
+      const diskTransitions = new Map(context.plannedTransitions);
+      for (const [filePath, observed] of context.observedPreimages) {
+        if (!diskTransitions.has(filePath)) diskTransitions.set(filePath, observed);
+      }
+      if (result.errors.length === 0 && diskTransitions.size > 0) {
+        await hooks?.checkpointDiskTransitions([...diskTransitions.values()]);
+      }
+      return result;
+    });
+  }
+
+  private async applyReviewDecisionsInContext(
+    request: ApplyReviewRequest,
+    fileContents: Map<string, FileChangeWithContent>
   ): Promise<ApplyReviewResult> {
     let applied = 0;
     let skipped = 0;
@@ -693,6 +758,15 @@ export class ReviewApplierService {
     expectedCurrentContent: string | null
   ): Promise<{ success: boolean }> {
     return withFileMutationLock(filePath, async () => {
+      if (expectedCurrentContent !== null) {
+        await resumePreparedReviewFileTransaction({
+          kind: 'replace',
+          sourcePath: filePath,
+          targetPath: filePath,
+          expectedContent: expectedCurrentContent,
+          nextContent: content,
+        });
+      }
       const current = await this.readCurrentText(filePath);
       const currentError = getCurrentTextReadError(current);
       if (currentError) {
@@ -737,6 +811,13 @@ export class ReviewApplierService {
     expectedCurrentContent: string
   ): Promise<{ success: boolean }> {
     return withFileMutationLock(filePath, async () => {
+      await resumePreparedReviewFileTransaction({
+        kind: 'delete',
+        sourcePath: filePath,
+        targetPath: filePath,
+        expectedContent: expectedCurrentContent,
+        nextContent: null,
+      });
       const current = await this.readCurrentText(filePath);
       const currentError = getCurrentTextReadError(current);
       if (currentError) throw new Error(currentError);
@@ -1042,6 +1123,11 @@ export class ReviewApplierService {
       }
       try {
         await mkdir(dirname(filePath), { recursive: true });
+        await this.checkpointPlannedDiskTransition({
+          filePath,
+          beforeContent: null,
+          afterContent: original,
+        });
         await atomicCreateAsync(filePath, original);
         return { handled: true, status: 'applied' };
       } catch (err) {
@@ -1177,6 +1263,7 @@ export class ReviewApplierService {
       this.resolveRelatedLedgerPath(newSnippet?.filePath, relation.newPath, relation.oldPath);
     const newFilePath = newSnippet?.filePath;
     const oldContent = oldSnippet?.ledger?.originalFullContent ?? original;
+    const authoritativeNewContent = newSnippet?.ledger?.modifiedFullContent;
     const newHash = newSnippet?.ledger?.afterState?.sha256 ?? newSnippet?.ledger?.afterHash;
     const oldHash = oldSnippet?.ledger?.beforeState?.sha256 ?? oldSnippet?.ledger?.beforeHash;
 
@@ -1195,6 +1282,16 @@ export class ReviewApplierService {
         code: 'manual-review-required',
         error: 'Ledger rename content metadata is unavailable; manual review is required.',
       };
+    }
+
+    if (typeof authoritativeNewContent === 'string') {
+      await resumePreparedReviewFileTransaction({
+        kind: 'move',
+        sourcePath: newFilePath,
+        targetPath: oldFilePath,
+        expectedContent: authoritativeNewContent,
+        nextContent: oldContent,
+      });
     }
 
     const newCurrent = await this.readCurrentText(newFilePath);
@@ -1232,10 +1329,7 @@ export class ReviewApplierService {
       }
       const currentContent = newMatchesExpected ? newCurrent.content : oldCurrent.content;
       try {
-        await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
-        if (currentContent !== oldContent) {
-          await this.atomicReplaceTextFile(oldFilePath, currentContent, oldContent);
-        }
+        await this.moveExpectedTextFile(newFilePath, oldFilePath, currentContent, oldContent);
         return { handled: true, status: 'applied' };
       } catch (error) {
         return {
@@ -1302,10 +1396,12 @@ export class ReviewApplierService {
     }
 
     try {
-      await renamePathWithRetry(newFilePath, oldFilePath, { syncDirectories: true });
-      if (newCurrent.content !== oldContent) {
-        await this.atomicReplaceTextFile(oldFilePath, newCurrent.content, oldContent);
-      }
+      await this.moveExpectedTextFile(
+        newFilePath,
+        oldFilePath,
+        newCurrent.content,
+        oldContent
+      );
       return { handled: true, status: 'applied' };
     } catch (error) {
       return {
@@ -1355,6 +1451,14 @@ export class ReviewApplierService {
       throw new Error('Ledger rename recovery content is unavailable.');
     }
 
+    await resumePreparedReviewFileTransaction({
+      kind: 'move',
+      sourcePath: oldFilePath,
+      targetPath: newFilePath,
+      expectedContent: oldContent,
+      nextContent: newContent,
+    });
+
     const oldCurrent = await this.readCurrentText(oldFilePath);
     const oldReadError = getCurrentTextReadError(oldCurrent);
     if (oldReadError) throw new Error(oldReadError);
@@ -1372,10 +1476,7 @@ export class ReviewApplierService {
         throw new Error('Case-only rename content changed after rejection; refusing Undo.');
       }
       try {
-        await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
-        if (oldContent !== newContent) {
-          await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
-        }
+        await this.moveExpectedTextFile(oldFilePath, newFilePath, oldContent, newContent);
         return;
       } catch (error) {
         throw new Error(`Failed to restore case-only ledger rename: ${String(error)}`);
@@ -1399,10 +1500,7 @@ export class ReviewApplierService {
     }
 
     try {
-      await renamePathWithRetry(oldFilePath, newFilePath, { syncDirectories: true });
-      if (oldContent !== newContent) {
-        await this.atomicReplaceTextFile(newFilePath, oldContent, newContent);
-      }
+      await this.moveExpectedTextFile(oldFilePath, newFilePath, oldContent, newContent);
     } catch (error) {
       throw new Error(`Failed to restore ledger rename: ${String(error)}`);
     }
@@ -1515,18 +1613,190 @@ export class ReviewApplierService {
   }
 
   private async readCurrentText(filePath: string): Promise<CurrentTextReadResult> {
+    let result: CurrentTextReadResult;
     try {
-      return { missing: false, content: await readFile(filePath, 'utf8') };
+      result = { missing: false, content: await readFile(filePath, 'utf8') };
     } catch (err) {
       const code =
         err && typeof err === 'object' && 'code' in err
           ? String((err as { code?: unknown }).code)
           : '';
       if (code === 'ENOENT') {
-        return { missing: true, content: '' };
+        result = { missing: true, content: '' };
+      } else {
+        result = {
+          missing: false,
+          content: '',
+          error: `Не удалось прочитать файл: ${String(err)}`,
+        };
       }
-      return { missing: false, content: '', error: `Не удалось прочитать файл: ${String(err)}` };
     }
+    const context = reviewApplyMutationContext.getStore();
+    if (context && !('error' in result) && !context.observedPreimages.has(filePath)) {
+      const content = result.missing ? null : result.content;
+      context.observedPreimages.set(filePath, {
+        filePath,
+        beforeContent: content,
+        afterContent: content,
+      });
+    }
+    return result;
+  }
+
+  private getReviewFileTransactionFromTransition(
+    transition: ApplyReviewDiskTransition
+  ): Parameters<typeof executeReviewFileTransaction>[0] | null {
+    const { operation, transactionId, beforeContent, afterContent } = transition;
+    if (!operation || !transactionId || beforeContent === null) return null;
+    if (operation === 'move') {
+      if (!transition.relatedFilePath || afterContent === null) return null;
+      return {
+        id: transactionId,
+        kind: 'move',
+        sourcePath: transition.filePath,
+        targetPath: transition.relatedFilePath,
+        expectedContent: beforeContent,
+        nextContent: afterContent,
+      };
+    }
+    return {
+      id: transactionId,
+      kind: operation,
+      sourcePath: transition.filePath,
+      targetPath: transition.filePath,
+      expectedContent: beforeContent,
+      nextContent: operation === 'delete' ? null : afterContent,
+    };
+  }
+
+  private async resumeInitialReviewFileTransactions(
+    context: ReviewApplyMutationContext
+  ): Promise<void> {
+    for (const transition of context.plannedTransitions.values()) {
+      const transaction = this.getReviewFileTransactionFromTransition(transition);
+      if (!transaction) continue;
+      const state = await inspectReviewFileTransaction(transaction);
+      if (state === 'missing' || state === 'conflict') {
+        throw new Error('Review file transaction evidence is unavailable or conflicted');
+      }
+      if (state !== 'published') {
+        await context.hooks?.checkpointDiskTransitions([
+          ...context.plannedTransitions.values(),
+        ]);
+        await executeReviewFileTransaction(transaction);
+      }
+    }
+  }
+
+  async finalizeReviewDiskTransitions(
+    transitions: readonly ApplyReviewDiskTransition[]
+  ): Promise<void> {
+    for (const transition of transitions) {
+      const transaction = this.getReviewFileTransactionFromTransition(transition);
+      if (transaction) await finalizeReviewFileTransaction(transaction);
+    }
+  }
+
+  async finalizeEditedFileTransaction(
+    filePath: string,
+    expectedContent: string | null,
+    nextContent: string | null
+  ): Promise<void> {
+    if (expectedContent === null) return;
+    await finalizePreparedReviewFileTransaction({
+      kind: nextContent === null ? 'delete' : 'replace',
+      sourcePath: filePath,
+      targetPath: filePath,
+      expectedContent,
+      nextContent,
+    });
+  }
+
+  async finalizeRejectedRenameTransaction(
+    filePath: string,
+    original: string | null,
+    modified: string | null,
+    snippets: SnippetDiff[],
+    direction: 'restore' | 'reapply'
+  ): Promise<void> {
+    const ledgerSnippets = snippets.filter((snippet) => snippet.ledger && !snippet.isError);
+    const relation = this.resolveLedgerRelation(ledgerSnippets);
+    if (relation?.kind !== 'rename') return;
+    const oldSnippet =
+      ledgerSnippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'delete' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.oldPath)
+      ) ?? ledgerSnippets.find((snippet) => snippet.ledger?.operation === 'delete');
+    const newSnippet =
+      ledgerSnippets.find(
+        (snippet) =>
+          snippet.ledger?.operation === 'create' &&
+          this.pathMatchesRelationPath(snippet.filePath, relation.newPath)
+      ) ?? ledgerSnippets.find((snippet) => snippet.ledger?.operation === 'create');
+    const oldFilePath =
+      oldSnippet?.filePath ??
+      this.resolveRelatedLedgerPath(newSnippet?.filePath, relation.newPath, relation.oldPath);
+    const newFilePath = newSnippet?.filePath ?? filePath;
+    const oldContent = oldSnippet?.ledger?.originalFullContent ?? original;
+    const newContent = newSnippet?.ledger?.modifiedFullContent ?? modified;
+    if (!oldFilePath || oldContent === null || newContent === null) return;
+    const sourcePath = direction === 'restore' ? oldFilePath : newFilePath;
+    const targetPath = direction === 'restore' ? newFilePath : oldFilePath;
+    const expectedContent = direction === 'restore' ? oldContent : newContent;
+    const nextContent = direction === 'restore' ? newContent : oldContent;
+    if (
+      await finalizePreparedReviewFileTransaction({
+        kind: 'move',
+        sourcePath,
+        targetPath,
+        expectedContent,
+        nextContent,
+      })
+    ) {
+      return;
+    }
+    await finalizePreparedReviewFileTransaction({
+      kind: 'replace',
+      sourcePath: targetPath,
+      targetPath,
+      expectedContent,
+      nextContent,
+    });
+    if (direction === 'reapply') {
+      await finalizePreparedReviewFileTransaction({
+        kind: 'delete',
+        sourcePath: newFilePath,
+        targetPath: newFilePath,
+        expectedContent: newContent,
+        nextContent: null,
+      });
+    }
+  }
+
+  private async checkpointPlannedDiskTransition(
+    transition: ApplyReviewDiskTransition
+  ): Promise<void> {
+    const context = reviewApplyMutationContext.getStore();
+    if (!context) return;
+    const existing = context.plannedTransitions.get(transition.filePath);
+    const cumulative = existing
+      ? {
+          ...existing,
+          filePath: transition.filePath,
+          beforeContent: existing.beforeContent,
+          afterContent: transition.afterContent,
+          ...(transition.operation === undefined ? {} : { operation: transition.operation }),
+          ...(transition.transactionId === undefined
+            ? {}
+            : { transactionId: transition.transactionId }),
+          ...(transition.relatedFilePath === undefined
+            ? {}
+            : { relatedFilePath: transition.relatedFilePath }),
+        }
+      : transition;
+    context.plannedTransitions.set(transition.filePath, cumulative);
+    await context.hooks?.checkpointDiskTransitions([...context.plannedTransitions.values()]);
   }
 
   private async atomicReplaceTextFile(
@@ -1535,17 +1805,53 @@ export class ReviewApplierService {
     nextContent: string
   ): Promise<void> {
     const initial = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
-    await atomicWriteAsync(filePath, nextContent, {
-      mode: initial.mode & 0o7777,
-      durability: 'strict',
-      syncDirectory: true,
-      beforeCommit: async () => {
-        const latest = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
-        if (latest.dev !== initial.dev || latest.ino !== initial.ino) {
-          throw new Error('File changed during review update; refusing to overwrite');
-        }
+    const transaction = await prepareReviewFileTransaction(
+      {
+        kind: 'replace',
+        sourcePath: filePath,
+        targetPath: filePath,
+        expectedContent: expectedCurrentContent,
+        nextContent,
       },
+      { mode: initial.mode & 0o7777 }
+    );
+    const transition: ApplyReviewDiskTransition = {
+      filePath,
+      beforeContent: expectedCurrentContent,
+      afterContent: nextContent,
+      operation: 'replace',
+      transactionId: transaction.id,
+    };
+    await this.checkpointPlannedDiskTransition(transition);
+    await executeReviewFileTransaction(transaction, { expectedIdentity: initial });
+  }
+
+  private async moveExpectedTextFile(
+    sourcePath: string,
+    targetPath: string,
+    expectedSourceContent: string,
+    finalTargetContent: string
+  ): Promise<void> {
+    const initial = await this.assertSafeExpectedFile(sourcePath, expectedSourceContent);
+    const transaction = await prepareReviewFileTransaction(
+      {
+        kind: 'move',
+        sourcePath,
+        targetPath,
+        expectedContent: expectedSourceContent,
+        nextContent: finalTargetContent,
+      },
+      { mode: initial.mode & 0o7777 }
+    );
+    await this.checkpointPlannedDiskTransition({
+      filePath: sourcePath,
+      beforeContent: expectedSourceContent,
+      afterContent: finalTargetContent,
+      operation: 'move',
+      transactionId: transaction.id,
+      relatedFilePath: targetPath,
     });
+    await executeReviewFileTransaction(transaction, { expectedIdentity: initial });
   }
 
   private async assertSafeExpectedFile(
@@ -1579,17 +1885,22 @@ export class ReviewApplierService {
     filePath: string,
     expectedCurrentContent: string
   ): Promise<void> {
-    try {
-      const initial = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
-      const latest = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
-      if (latest.dev !== initial.dev || latest.ino !== initial.ino) {
-        throw new Error('File changed during review delete; refusing to remove it');
-      }
-      await unlinkPathDurably(filePath);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
-    }
+    const initial = await this.assertSafeExpectedFile(filePath, expectedCurrentContent);
+    const transaction = await prepareReviewFileTransaction({
+      kind: 'delete',
+      sourcePath: filePath,
+      targetPath: filePath,
+      expectedContent: expectedCurrentContent,
+      nextContent: null,
+    });
+    await this.checkpointPlannedDiskTransition({
+      filePath,
+      beforeContent: expectedCurrentContent,
+      afterContent: null,
+      operation: 'delete',
+      transactionId: transaction.id,
+    });
+    await executeReviewFileTransaction(transaction, { expectedIdentity: initial });
   }
 
   private async pathsReferToSameFile(firstPath: string, secondPath: string): Promise<boolean> {

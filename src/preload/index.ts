@@ -301,6 +301,7 @@ import type {
   CrossTeamSendResult,
   ElectronAPI,
   ExecuteReviewMutationRequest,
+  ExecuteReviewMutationResult,
   FileChangeWithContent,
   GlobalTask,
   HttpServerStatus,
@@ -1515,7 +1516,7 @@ const electronAPI: ElectronAPI = {
       return invokeIpcWithResult<ApplyReviewResult>(REVIEW_APPLY_DECISIONS, request);
     },
     executeMutation: async (request: ExecuteReviewMutationRequest) => {
-      return invokeIpcWithResult<{ decisionRevision: number }>(REVIEW_EXECUTE_MUTATION, request);
+      return invokeIpcWithResult<ExecuteReviewMutationResult>(REVIEW_EXECUTE_MUTATION, request);
     },
     // Phase 2
     checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {

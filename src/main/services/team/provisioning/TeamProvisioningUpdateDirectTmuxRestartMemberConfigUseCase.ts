@@ -107,7 +107,19 @@ export function createUpdateDirectTmuxRestartMemberConfigUseCase(
       throw new Error(`Team "${input.teamName}" configuration is no longer available`);
     }
 
-    const parsed = JSON.parse(raw) as TeamConfig & { members?: Record<string, unknown>[] };
+    let parsed: TeamConfig & { members?: Record<string, unknown>[] };
+    try {
+      parsed = JSON.parse(raw) as TeamConfig & { members?: Record<string, unknown>[] };
+    } catch (error) {
+      // config.json can be written concurrently by the runtime CLI (outside our
+      // config-mutation lock), so a read can observe a torn/partial file. Treat a
+      // corrupt read as a transient restart failure with a clear message instead
+      // of surfacing a raw SyntaxError.
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Team "${input.teamName}" configuration is currently unreadable (possibly mid-write by the runtime CLI): ${message}`
+      );
+    }
     const members = Array.isArray(parsed.members) ? parsed.members : [];
     const existingIndex = members.findIndex((member) => {
       const candidateName = typeof member?.name === 'string' ? member.name.trim() : '';

@@ -41,12 +41,14 @@ const visibleElement = (expression) => `(() => {
 const visibleRejectHunkButton = `Array.from(document.querySelectorAll('button[title^="Reject change"]'))
   .find((button) => {
     const rect = button.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    const toolbar = button.closest('[data-review-floating-toolbar="true"]');
+    return rect.width > 0 && rect.height > 0 && toolbar?.textContent?.includes('1 of 12');
   })`;
 const visibleAcceptHunkButton = `Array.from(document.querySelectorAll('button[title^="Accept change"]'))
   .find((button) => {
     const rect = button.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    const toolbar = button.closest('[data-review-floating-toolbar="true"]');
+    return rect.width > 0 && rect.height > 0 && toolbar?.textContent?.includes('1 of 12');
   })`;
 const reviewedLine = (index, value) => `Array.from(document.querySelectorAll('.cm-line'))
   .find((line) => line.textContent?.includes(${JSON.stringify(`reviewed_${index} = '${value}'`)}))`;
@@ -579,6 +581,30 @@ async function main() {
     }
     throw new Error(`Unable to open ${label}`);
   };
+  const ensureHistoryClosed = async (label) => {
+    if (!(await client.evaluate(`document.body?.innerText.includes('Review action history')`))) {
+      return;
+    }
+    await client.domClick(historyButton);
+    await client.waitFor(
+      `!document.body?.innerText.includes('Review action history')`,
+      label,
+      3_000
+    );
+  };
+  const activateFirstHunkAction = async (buttonExpression, label) => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await client.moveTo(reviewedLine(0, 'after-0'));
+      try {
+        await client.waitFor(buttonExpression, label, 750);
+        return;
+      } catch {
+        // CodeMirror can finish an async extension update after the pointer event and hide
+        // the floating toolbar. Re-hover, but never act unless its exact hunk counter is 1.
+      }
+    }
+    throw new Error(`Unable to activate ${label} for exact hunk 1`);
+  };
   const restoreConfirm = `Array.from(document.querySelectorAll('[role="alertdialog"] button'))
     .find((button) => button.textContent?.trim() === 'Restore' && !button.disabled)`;
   const enabledUndoCheckpointRestore = `(() => {
@@ -600,7 +626,9 @@ async function main() {
     `document.querySelector('[role="alertdialog"]')?.textContent.includes('undo 1 review action') &&
       document.querySelector('[data-review-history-impact]')?.textContent.includes('1 net disk transition') &&
       document.querySelector('[data-review-history-impact]')?.textContent.includes('Update') &&
-      document.querySelector('[data-review-history-impact]')?.textContent.includes('src/review-history.ts')`,
+      document.querySelector('[data-review-history-impact]')?.textContent.includes('src/review-history.ts') &&
+      document.querySelector('[data-review-history-disk-transition="update"]')?.textContent.includes('+12') &&
+      document.querySelector('[data-review-history-disk-transition="update"]')?.textContent.includes('-12')`,
     'Undo checkpoint confirmation'
   );
   await client.domClick(restoreConfirm);
@@ -626,7 +654,9 @@ async function main() {
     `document.querySelector('[role="alertdialog"]')?.textContent.includes('redo 1 review action') &&
       document.querySelector('[data-review-history-impact]')?.textContent.includes('1 net disk transition') &&
       document.querySelector('[data-review-history-impact]')?.textContent.includes('Update') &&
-      document.querySelector('[data-review-history-impact]')?.textContent.includes('src/review-history.ts')`,
+      document.querySelector('[data-review-history-impact]')?.textContent.includes('src/review-history.ts') &&
+      document.querySelector('[data-review-history-disk-transition="update"]')?.textContent.includes('+12') &&
+      document.querySelector('[data-review-history-disk-transition="update"]')?.textContent.includes('-12')`,
     'Redo checkpoint confirmation'
   );
   await client.domClick(restoreConfirm);
@@ -644,13 +674,7 @@ async function main() {
   await client.domClick(enabledButtonWithText('Undo'));
   await client.waitFor(`document.body?.innerText.includes('12 pending')`, 'second cleanup Undo');
   await waitForDiskLines(fixture.changedFile, 'after-0', 'after-1');
-  if (await client.evaluate(`document.body?.innerText.includes('Review action history')`)) {
-    await client.click(historyButton);
-    await client.waitFor(
-      `!document.body?.innerText.includes('Review action history')`,
-      'closed history after cleanup Undo'
-    );
-  }
+  await ensureHistoryClosed('closed history after cleanup Undo');
 
   // dev:mcp adds Vite reload/focus timing that is unrelated to the hunk-hover controls.
   // Keep this mode focused on the new durable Restore workflow; the production-preview
@@ -673,9 +697,8 @@ async function main() {
     return;
   }
 
-  await client.moveTo(reviewedLine(0, 'after-0'));
-  await client.waitFor(visibleRejectHunkButton, 'hunk Reject');
-  await client.click(visibleRejectHunkButton);
+  await activateFirstHunkAction(visibleRejectHunkButton, 'hunk Reject');
+  await client.domMouseDown(visibleRejectHunkButton);
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'one rejected hunk');
   await waitForDiskLines(fixture.changedFile, 'before-0', 'after-1');
 
@@ -761,9 +784,8 @@ async function main() {
   );
   await client.screenshot(finalScreenshot);
 
-  await client.moveTo(reviewedLine(0, 'after-0'));
-  await client.waitFor(visibleAcceptHunkButton, 'hunk Accept');
-  await client.click(visibleAcceptHunkButton);
+  await activateFirstHunkAction(visibleAcceptHunkButton, 'hunk Accept');
+  await client.domMouseDown(visibleAcceptHunkButton);
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'one accepted hunk');
   await client.waitFor(
     `document.querySelector('button[aria-label^="Review history:"][aria-label$="; saved"]')`,
@@ -787,10 +809,10 @@ async function main() {
   await client.waitFor(`document.body?.innerText.includes('12 pending')`, 'accepted Undo result');
   await client.waitFor(enabledButtonWithText('Redo'), 'accepted Redo after forced restart Undo');
   await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
+  await ensureHistoryClosed('closed accepted history before the guarded-close action');
 
-  await client.moveTo(reviewedLine(0, 'after-0'));
-  await client.waitFor(visibleAcceptHunkButton, 'hunk Accept');
-  await client.click(visibleAcceptHunkButton);
+  await activateFirstHunkAction(visibleAcceptHunkButton, 'hunk Accept');
+  await client.domMouseDown(visibleAcceptHunkButton);
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'accepted before close');
   await client.evaluate(`void window.electronAPI?.windowControls?.close()`);
   await waitForAppExit();
@@ -833,6 +855,12 @@ try {
         url: location.href,
         title: document.title,
         bodyTail: document.body?.innerText.slice(-3000) ?? '',
+        hunkToolbars: Array.from(document.querySelectorAll('[data-review-floating-toolbar="true"]'))
+          .map((toolbar) => ({
+            text: toolbar.textContent,
+            display: getComputedStyle(toolbar).display,
+            rect: toolbar.getBoundingClientRect().toJSON(),
+          })),
       })`
       )
       .catch((diagnosticError) => ({ diagnosticError: String(diagnosticError) }));

@@ -1,8 +1,10 @@
 import { restoreReviewDecisionRecordsForFile } from '@features/review-mutations';
 import {
+  areReviewPersistedStatesEqual,
   buildForwardDiskMutationSteps,
   buildRedoDiskMutationSteps,
   buildUndoDiskMutationSteps,
+  classifyReviewHistoryRecovery,
   createReviewRedoAction,
   executeWithPreparedReviewWriteExpectations,
   getReviewDiskMutationExpectedContent,
@@ -23,6 +25,100 @@ function snapshot(
 }
 
 describe('review history timeline', () => {
+  it('compares durable states independently of record key order', () => {
+    const left = {
+      hunkDecisions: { 'file.ts:1': 'rejected' as const, 'file.ts:0': 'accepted' as const },
+      fileDecisions: {},
+      hunkContextHashesByFile: undefined,
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
+    };
+    const equivalent = {
+      hunkDecisions: { 'file.ts:0': 'accepted' as const, 'file.ts:1': 'rejected' as const },
+      fileDecisions: {},
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
+    };
+    const different = {
+      ...equivalent,
+      hunkDecisions: { ...equivalent.hunkDecisions, 'file.ts:1': 'accepted' as const },
+    };
+
+    expect(areReviewPersistedStatesEqual(left, equivalent)).toBe(true);
+    expect(areReviewPersistedStatesEqual(left, different)).toBe(false);
+
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 3,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: false,
+          persistedState: equivalent,
+          retried: false,
+        },
+        3,
+        left
+      )
+    ).toBe('retry-restore');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 4,
+          recoveredMutation: true,
+          recoveredRestoreHistory: true,
+          differentMutationPending: false,
+          persistedState: equivalent,
+          retried: true,
+        },
+        3,
+        left
+      )
+    ).toBe('apply-selected-restore');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 4,
+          recoveredMutation: true,
+          recoveredRestoreHistory: true,
+          differentMutationPending: false,
+          persistedState: different,
+          retried: true,
+        },
+        3,
+        left
+      )
+    ).toBe('synchronize-latest');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 4,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: false,
+          persistedState: equivalent,
+          retried: false,
+        },
+        3,
+        left
+      )
+    ).toBe('apply-selected-restore');
+    expect(
+      classifyReviewHistoryRecovery(
+        {
+          decisionRevision: 3,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: true,
+          persistedState: left,
+          retried: false,
+        },
+        3,
+        left
+      )
+    ).toBe('different-mutation-pending');
+  });
+
   it('inverts content, create, and delete snapshots without weakening CAS', () => {
     expect(buildUndoDiskMutationSteps('action', [snapshot('content')])).toEqual([
       {

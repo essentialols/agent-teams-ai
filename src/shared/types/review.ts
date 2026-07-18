@@ -423,10 +423,25 @@ export interface ExecuteReviewMutationResult {
 export interface RetryReviewMutationRecoveryRequest {
   scope: ReviewFileScope;
   decisionPersistenceScope: ReviewDecisionPersistenceScope;
+  /** Optional fingerprint used by checkpoint Restore so it never resumes a different WAL. */
+  expectedRestore?: {
+    expectedDecisionRevision: number;
+    persistedState: ReviewPersistedStateSnapshot;
+    diskSteps: ReviewDirectDiskMutationStep[];
+  };
 }
 
 export interface RetryReviewMutationRecoveryResult {
   decisionRevision: number;
+  /** True when this call found and finished a journaled mutation. */
+  recoveredMutation: boolean;
+  /** True only when that journal belonged to a checkpoint Restore. */
+  recoveredRestoreHistory: boolean;
+  /** A WAL exists, but it is not the exact Restore fingerprint supplied by this caller. */
+  differentMutationPending: boolean;
+  /** Exact state after recovery, or null when this scope has no persisted review state. */
+  persistedState: ReviewPersistedStateSnapshot | null;
+  /** Kept separate so callers can explain that a previously blocked mutation was retried. */
   retried: boolean;
 }
 

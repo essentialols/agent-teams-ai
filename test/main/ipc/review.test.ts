@@ -1936,6 +1936,221 @@ describe('review IPC path confinement', () => {
     expect(applier.saveEditedFile).not.toHaveBeenCalled();
   });
 
+  it('explicitly recovers a partially applied multi-file history Restore in-session', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    extractor.getAgentChanges.mockResolvedValue({
+      files: [
+        {
+          filePath: projectFile,
+          relativePath: 'src/project.ts',
+          snippets: [],
+          linesAdded: 1,
+          linesRemoved: 1,
+          isNewFile: false,
+        },
+        {
+          filePath: worktreeFile,
+          relativePath: 'src/worktree.ts',
+          snippets: [],
+          linesAdded: 1,
+          linesRemoved: 1,
+          isNewFile: false,
+        },
+      ],
+    });
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:partial-history-restore',
+    };
+    const fileSummary = (filePath: string) => ({
+      filePath,
+      relativePath: path.relative(projectDir, filePath),
+      snippets: [],
+      linesAdded: 1,
+      linesRemoved: 1,
+      isNewFile: false,
+    });
+    const projectAction = {
+      id: 'partial-restore-project',
+      createdAt: '2026-07-18T08:00:00.000Z',
+      kind: 'disk' as const,
+      action: {
+        originalIndex: 0,
+        snapshot: {
+          filePath: projectFile,
+          beforeContent: 'restored-project\n',
+          afterContent: 'project\n',
+          authoritativeBeforeSha256: createHash('sha256')
+            .update('restored-project\n')
+            .digest('hex'),
+          file: fileSummary(projectFile),
+        },
+      },
+    };
+    const worktreeAction = {
+      id: 'partial-restore-worktree',
+      createdAt: '2026-07-18T08:00:01.000Z',
+      kind: 'disk' as const,
+      action: {
+        originalIndex: 1,
+        snapshot: {
+          filePath: worktreeFile,
+          beforeContent: 'restored-worktree\n',
+          afterContent: 'worktree\n',
+          authoritativeBeforeSha256: createHash('sha256')
+            .update('restored-worktree\n')
+            .digest('hex'),
+          file: fileSummary(worktreeFile),
+        },
+      },
+    };
+    await new ReviewDecisionStore().save('safe-team', persistenceScope.scopeKey, {
+      scopeToken: persistenceScope.scopeToken,
+      hunkDecisions: {},
+      fileDecisions: {},
+      hunkContextHashesByFile: {},
+      reviewActionHistory: [projectAction, worktreeAction],
+      reviewRedoHistory: [],
+      expectedRevision: 0,
+    });
+
+    let writeCount = 0;
+    applier.saveEditedFile.mockImplementation(async (filePath, content) => {
+      writeCount += 1;
+      if (writeCount === 2) throw new Error('simulated second Restore write failure');
+      await writeFile(filePath, content, 'utf8');
+      return { success: true };
+    });
+    const interrupted = await ipcMain.invoke(REVIEW_RESTORE_HISTORY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      target: { kind: 'start' },
+      expectedDecisionRevision: 1,
+    });
+
+    expect(interrupted).toEqual({
+      success: false,
+      error: 'simulated second Restore write failure',
+    });
+    const journal = new ReviewMutationJournalStore();
+    const [blockedRecord] = await journal.list('safe-team', persistenceScope);
+    expect(blockedRecord).toMatchObject({
+      kind: 'restore-history',
+      phase: 'prepared',
+      blocked: true,
+      diskSteps: [{ status: 'applied' }, { status: 'pending' }],
+    });
+    if (!blockedRecord?.persistedState || !blockedRecord.diskSteps) {
+      throw new Error('Expected an exact blocked history Restore record');
+    }
+    const expectedDiskSteps = blockedRecord.diskSteps.map(
+      ({ status: _status, authoritativeContent: _authoritativeContent, ...step }) => step
+    );
+    await expect(readFile(worktreeFile, 'utf8')).resolves.toBe('restored-worktree\n');
+    await expect(readFile(projectFile, 'utf8')).resolves.toBe('project\n');
+
+    const ordinaryRetry = await ipcMain.invoke(REVIEW_RESTORE_HISTORY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      target: { kind: 'start' },
+      expectedDecisionRevision: 1,
+    });
+    expect(ordinaryRetry).toEqual({
+      success: false,
+      error:
+        'A previous review update did not finish safely. Retry recovery or discard saved review state.',
+    });
+
+    applier.saveEditedFile.mockClear();
+    applier.saveEditedFile.mockImplementation(async (filePath, content) => {
+      await writeFile(filePath, content, 'utf8');
+      return { success: true };
+    });
+    const differentPending = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      expectedRestore: {
+        expectedDecisionRevision: 1,
+        persistedState: blockedRecord.persistedState,
+        diskSteps: expectedDiskSteps.map((step, index) =>
+          index === 0 && step.type === 'write'
+            ? { ...step, content: `${step.content}//different-restore\n` }
+            : step
+        ),
+      },
+    });
+    expect(differentPending).toMatchObject({
+      success: true,
+      data: {
+        decisionRevision: 1,
+        recoveredMutation: false,
+        recoveredRestoreHistory: false,
+        differentMutationPending: true,
+        retried: false,
+      },
+    });
+    expect(applier.saveEditedFile).not.toHaveBeenCalled();
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toMatchObject([
+      { blocked: true, diskSteps: [{ status: 'applied' }, { status: 'pending' }] },
+    ]);
+
+    const recovered = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      expectedRestore: {
+        expectedDecisionRevision: 1,
+        persistedState: blockedRecord.persistedState,
+        diskSteps: expectedDiskSteps,
+      },
+    });
+
+    expect(recovered).toMatchObject({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        recoveredMutation: true,
+        recoveredRestoreHistory: true,
+        differentMutationPending: false,
+        persistedState: {
+          hunkDecisions: {},
+          fileDecisions: {},
+          reviewActionHistory: [],
+          reviewRedoHistory: [
+            { action: { id: worktreeAction.id } },
+            { action: { id: projectAction.id } },
+          ],
+        },
+        retried: true,
+      },
+    });
+    expect(applier.saveEditedFile).toHaveBeenCalledTimes(1);
+    expect(applier.saveEditedFile).toHaveBeenCalledWith(
+      projectFile,
+      'restored-project\n',
+      'project\n'
+    );
+    await expect(readFile(projectFile, 'utf8')).resolves.toBe('restored-project\n');
+    await expect(readFile(worktreeFile, 'utf8')).resolves.toBe('restored-worktree\n');
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+
+    const alreadyRecovered = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+    });
+    expect(alreadyRecovered).toMatchObject({
+      success: true,
+      data: {
+        decisionRevision: 2,
+        recoveredMutation: false,
+        recoveredRestoreHistory: false,
+        differentMutationPending: false,
+        persistedState: { reviewActionHistory: [], reviewRedoHistory: expect.any(Array) },
+        retried: false,
+      },
+    });
+  });
+
   it('refuses a delayed CAS clear after a newer WAL commit', async () => {
     const persistenceScope = {
       scopeKey: 'agent-worker',
@@ -2848,9 +3063,20 @@ describe('review IPC path confinement', () => {
       scope: { teamName: 'safe-team', memberName: 'worker' },
       decisionPersistenceScope: persistenceScope,
     });
-    expect(retried).toEqual({
+    expect(retried).toMatchObject({
       success: true,
-      data: { decisionRevision: 1, retried: true },
+      data: {
+        decisionRevision: 1,
+        recoveredMutation: true,
+        recoveredRestoreHistory: false,
+        differentMutationPending: false,
+        persistedState: {
+          fileDecisions: { [projectFile]: 'rejected', [worktreeFile]: 'rejected' },
+          reviewActionHistory: [{ id: bulkAction.id }],
+          reviewRedoHistory: [],
+        },
+        retried: true,
+      },
     });
     const recovered = await ipcMain.invoke(
       REVIEW_LOAD_DECISIONS,

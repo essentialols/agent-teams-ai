@@ -37,6 +37,7 @@ interface ReviewActionHistoryPopoverProps {
   onRetryPersistence?: () => void;
   onNavigateToAction?: (action: ReviewUndoAction) => void;
   onRestoreToTarget?: (target: ReviewHistoryRestoreTarget) => Promise<void>;
+  onRecoverFailedRestore?: (target: ReviewHistoryRestoreTarget) => Promise<void>;
   getRestorePreview?: (target: ReviewHistoryRestoreTarget) => ReviewHistoryRestorePreview;
   restoreDisabled?: boolean;
 }
@@ -239,6 +240,7 @@ export const ReviewActionHistoryPopover = ({
   onRetryPersistence,
   onNavigateToAction,
   onRestoreToTarget,
+  onRecoverFailedRestore,
   getRestorePreview,
   restoreDisabled = false,
 }: ReviewActionHistoryPopoverProps): React.ReactElement | null => {
@@ -255,6 +257,7 @@ export const ReviewActionHistoryPopover = ({
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const cancelRestoreRef = useRef<HTMLButtonElement | null>(null);
   const restoreRunningRef = useRef(false);
+  const restoreRecoveryPendingRef = useRef(false);
   const undoActions = useMemo(
     () => takeRecentReviewActions(undoHistory, undoVisibleLimit),
     [undoHistory, undoVisibleLimit]
@@ -273,6 +276,7 @@ export const ReviewActionHistoryPopover = ({
   const requestRestore = (target: ReviewHistoryRestoreTarget, actionCount: number): void => {
     setOpen(false);
     setRestoreError(null);
+    restoreRecoveryPendingRef.current = false;
     try {
       setRestoreRequest({
         target,
@@ -302,6 +306,12 @@ export const ReviewActionHistoryPopover = ({
     setRestoreRunning(true);
     setRestoreError(null);
     try {
+      if (restoreRecoveryPendingRef.current && onRecoverFailedRestore) {
+        await onRecoverFailedRestore(restoreRequest.target);
+        restoreRecoveryPendingRef.current = false;
+        setRestoreRequest(null);
+        return;
+      }
       if (getRestorePreview) {
         let latestPreview: ReviewHistoryRestorePreview;
         try {
@@ -328,8 +338,10 @@ export const ReviewActionHistoryPopover = ({
         }
       }
       await onRestoreToTarget(restoreRequest.target);
+      restoreRecoveryPendingRef.current = false;
       setRestoreRequest(null);
     } catch (error) {
+      restoreRecoveryPendingRef.current = true;
       setRestoreError(error instanceof Error ? error.message : String(error));
     } finally {
       restoreRunningRef.current = false;
@@ -626,7 +638,13 @@ export const ReviewActionHistoryPopover = ({
               disabled={restoreRunning || Boolean(restoreRequest?.preparationError)}
               onClick={() => void runRestore()}
             >
-              {restoreRunning ? 'Restoring...' : restoreError ? 'Retry restore' : 'Restore'}
+              {restoreRunning
+                ? 'Restoring...'
+                : restoreRecoveryPendingRef.current && onRecoverFailedRestore
+                  ? 'Recover restore'
+                  : restoreError
+                    ? 'Retry restore'
+                    : 'Restore'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

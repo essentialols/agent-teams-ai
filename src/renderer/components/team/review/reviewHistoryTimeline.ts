@@ -1,14 +1,62 @@
 import type {
   HunkDecision,
+  RetryReviewMutationRecoveryResult,
   ReviewDiskUndoSnapshot,
+  ReviewPersistedStateSnapshot,
   ReviewRedoAction,
   ReviewUndoAction,
 } from '@shared/types';
+
+function toCanonicalReviewValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toCanonicalReviewValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, toCanonicalReviewValue(entry)])
+  );
+}
+
+export function areReviewPersistedStatesEqual(
+  left: ReviewPersistedStateSnapshot,
+  right: ReviewPersistedStateSnapshot
+): boolean {
+  return (
+    JSON.stringify(toCanonicalReviewValue(left)) === JSON.stringify(toCanonicalReviewValue(right))
+  );
+}
+
+export type ReviewHistoryRecoveryDisposition =
+  | 'retry-restore'
+  | 'apply-selected-restore'
+  | 'different-mutation-pending'
+  | 'synchronize-latest';
+
+export function classifyReviewHistoryRecovery(
+  recovery: RetryReviewMutationRecoveryResult,
+  currentRevision: number,
+  plannedState: ReviewPersistedStateSnapshot
+): ReviewHistoryRecoveryDisposition {
+  if (recovery.differentMutationPending) return 'different-mutation-pending';
+  if (!recovery.recoveredMutation && recovery.decisionRevision === currentRevision) {
+    return 'retry-restore';
+  }
+  if (
+    (recovery.recoveredRestoreHistory || !recovery.recoveredMutation) &&
+    recovery.persistedState &&
+    areReviewPersistedStatesEqual(recovery.persistedState, plannedState)
+  ) {
+    return 'apply-selected-restore';
+  }
+  return 'synchronize-latest';
+}
 
 export {
   buildForwardDiskMutationSteps,
   buildRedoDiskMutationSteps,
   buildReviewHistoryRestoreDiskImpact,
+  buildReviewHistoryRestoreDiskSteps,
   buildReviewHistoryRestorePlan,
   buildUndoDiskMutationSteps,
   getReviewActionDiskSnapshots,

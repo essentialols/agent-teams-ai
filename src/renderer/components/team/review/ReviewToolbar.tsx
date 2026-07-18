@@ -48,6 +48,7 @@ interface ReviewToolbarProps {
   onRetryHistoryPersistence?: () => void;
   onNavigateToHistoryAction?: (action: ReviewUndoAction) => void;
   onRestoreHistory?: (target: ReviewHistoryRestoreTarget) => Promise<void>;
+  onRecoverFailedRestore?: (target: ReviewHistoryRestoreTarget) => Promise<void>;
   getRestoreHistoryPreview?: (target: ReviewHistoryRestoreTarget) => ReviewHistoryRestorePreview;
   restoreHistoryDisabled?: boolean;
 }
@@ -81,6 +82,7 @@ export const ReviewToolbar = ({
   onRetryHistoryPersistence,
   onNavigateToHistoryAction,
   onRestoreHistory,
+  onRecoverFailedRestore,
   getRestoreHistoryPreview,
   restoreHistoryDisabled,
 }: ReviewToolbarProps): React.ReactElement => {
@@ -212,6 +214,7 @@ export const ReviewToolbar = ({
         onRetryPersistence={onRetryHistoryPersistence}
         onNavigateToAction={onNavigateToHistoryAction}
         onRestoreToTarget={onRestoreHistory}
+        onRecoverFailedRestore={onRecoverFailedRestore}
         getRestorePreview={getRestoreHistoryPreview}
         restoreDisabled={restoreHistoryDisabled}
       />

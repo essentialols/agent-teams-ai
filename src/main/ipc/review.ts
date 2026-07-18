@@ -3572,6 +3572,18 @@ async function handleRetryReviewMutationRecovery(
     if (!persistenceScope) {
       throw new Error('Review mutation recovery requires an exact decision scope');
     }
+    const expectedRestore = request.expectedRestore;
+    if (expectedRestore) {
+      if (
+        !Number.isSafeInteger(expectedRestore.expectedDecisionRevision) ||
+        expectedRestore.expectedDecisionRevision < 0 ||
+        !Array.isArray(expectedRestore.diskSteps) ||
+        expectedRestore.diskSteps.length > MAX_REVIEW_MUTATION_STEPS
+      ) {
+        throw new Error('Invalid expected review history Restore recovery');
+      }
+      reviewDecisionStore.assertValidSnapshot(expectedRestore.persistedState);
+    }
 
     return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
       const records = await reviewMutationJournal.list(scope.teamName, persistenceScope);
@@ -3579,6 +3591,39 @@ async function handleRetryReviewMutationRecovery(
         throw new Error('Multiple review mutations require manual recovery');
       }
       const record = records[0];
+      const recordDiskSteps = (record?.diskSteps ?? []).map(
+        ({ status: _status, authoritativeContent: _authoritativeContent, ...step }) => step
+      );
+      const matchesExpectedRestore =
+        !record ||
+        !expectedRestore ||
+        (record.kind === 'restore-history' &&
+          record.expectedDecisionRevision === expectedRestore.expectedDecisionRevision &&
+          isDurableReviewEqual(record.persistedState, expectedRestore.persistedState) &&
+          isDurableReviewEqual(recordDiskSteps, expectedRestore.diskSteps));
+      if (!matchesExpectedRestore) {
+        const committed = await reviewDecisionStore.load(
+          scope.teamName,
+          persistenceScope.scopeKey,
+          persistenceScope.scopeToken
+        );
+        return {
+          decisionRevision: committed?.revision ?? 0,
+          recoveredMutation: false,
+          recoveredRestoreHistory: false,
+          differentMutationPending: true,
+          persistedState: committed
+            ? {
+                hunkDecisions: committed.hunkDecisions,
+                fileDecisions: committed.fileDecisions,
+                hunkContextHashesByFile: committed.hunkContextHashesByFile,
+                reviewActionHistory: committed.reviewActionHistory,
+                reviewRedoHistory: committed.reviewRedoHistory,
+              }
+            : null,
+          retried: false,
+        };
+      }
       const retried = Boolean(record?.blocked);
       if (record?.blocked) await reviewMutationJournal.unblock(record);
       await recoverReviewMutationJournal(scope.teamName, persistenceScope);
@@ -3587,7 +3632,22 @@ async function handleRetryReviewMutationRecovery(
         persistenceScope.scopeKey,
         persistenceScope.scopeToken
       );
-      return { decisionRevision: committed?.revision ?? 0, retried };
+      return {
+        decisionRevision: committed?.revision ?? 0,
+        recoveredMutation: Boolean(record),
+        recoveredRestoreHistory: record?.kind === 'restore-history',
+        differentMutationPending: false,
+        persistedState: committed
+          ? {
+              hunkDecisions: committed.hunkDecisions,
+              fileDecisions: committed.fileDecisions,
+              hunkContextHashesByFile: committed.hunkContextHashesByFile,
+              reviewActionHistory: committed.reviewActionHistory,
+              reviewRedoHistory: committed.reviewRedoHistory,
+            }
+          : null,
+        retried,
+      };
     });
   });
 }

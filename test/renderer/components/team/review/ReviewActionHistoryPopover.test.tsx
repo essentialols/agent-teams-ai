@@ -333,6 +333,55 @@ describe('ReviewActionHistoryPopover', () => {
     act(() => root.unmount());
   });
 
+  it('uses explicit recovery after Restore execution fails', async () => {
+    const root = createRoot(container);
+    const older = makeAction(1);
+    const current = makeAction(2);
+    const onRestoreToTarget = vi.fn().mockRejectedValue(new Error('partial restore interrupted'));
+    const onRecoverFailedRestore = vi.fn().mockResolvedValue(undefined);
+    act(() => {
+      root.render(
+        <ReviewActionHistoryPopover
+          undoHistory={[older, current]}
+          redoHistory={[]}
+          onRestoreToTarget={onRestoreToTarget}
+          onRecoverFailedRestore={onRecoverFailedRestore}
+        />
+      );
+    });
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-review-history-restore="action-1"]')
+        ?.click()
+    );
+
+    const findConfirm = (label: string) =>
+      [...(document.querySelector('[role="alertdialog"]')?.querySelectorAll('button') ?? [])].find(
+        (button) => button.textContent === label
+      );
+    await act(async () => {
+      findConfirm('Restore')?.click();
+      await Promise.resolve();
+    });
+    expect(onRestoreToTarget).toHaveBeenCalledTimes(1);
+    expect(onRecoverFailedRestore).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('partial restore interrupted');
+    expect(findConfirm('Recover restore')).toBeDefined();
+
+    await act(async () => {
+      findConfirm('Recover restore')?.click();
+      await Promise.resolve();
+    });
+    expect(onRestoreToTarget).toHaveBeenCalledTimes(1);
+    expect(onRecoverFailedRestore).toHaveBeenCalledWith({
+      kind: 'after-action',
+      stack: 'undo',
+      actionId: older.id,
+    });
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    act(() => root.unmount());
+  });
+
   it('coalesces duplicate confirmation events while Restore is running', async () => {
     const root = createRoot(container);
     const older = makeAction(1);

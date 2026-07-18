@@ -757,6 +757,13 @@ export async function projectControlRefillWorkerView(
       expectedCanonicalWorkspacePath,
       owner: `project-refill-start:${controller.controller.jobId}:${manifest.jobId}`,
       effect: async (workspace) => {
+        if (
+          (mergeAlreadyBound || recoveredMergeAlreadyBound) &&
+          (!(await projectMergeBoundRetryStartRequired(manifest)) ||
+            (await projectMergeBoundRetryRunnerAlive(manifest)))
+        ) {
+          return undefined;
+        }
         dependencyPreflight = await runDependencyBootstrap({
           workspacePath: workspace.canonicalWorkspacePath,
           jobRootDir: manifest.jobRootDir,
@@ -830,8 +837,8 @@ export async function projectControlRefillWorkerView(
         }
       },
     });
-    start = started.start;
-    accountReservation = started.accountReservation;
+    start = started?.start;
+    accountReservation = started?.accountReservation;
   } else {
     dependencyPreflight = await withValidatedProjectWorkspaceLock({
       locks: projectControlWorkspaceLocks(controller.registryRootDir),
@@ -1188,6 +1195,23 @@ export async function projectMergeBoundRetryStartRequired(
   if (status === "validated_not_launched") return true;
   if (status === "launch_authorized") return false;
   throw new Error("project_control_pre_start_receipt_invalid");
+}
+
+async function projectMergeBoundRetryRunnerAlive(
+  manifest: CodexGoalJobManifest,
+): Promise<boolean> {
+  const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
+  const status = await collectCodexGoalStatus(
+    codexGoalStatusInputFromLaunch(launch),
+  );
+  const progressStale =
+    status.progressHeartbeatAgeMs !== undefined &&
+    status.progressHeartbeatAgeMs > 10 * 60_000;
+  return (
+    status.tmuxAlive === true ||
+    status.progressProcessAlive === true ||
+    resolveCodexGoalWorkerLiveness({ status, progressStale }).alive
+  );
 }
 
 const terminalMergeRebindResultStatuses = new Set([

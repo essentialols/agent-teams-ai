@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -27,6 +28,10 @@ import {
 } from "../application/project-control/codex-goal-project-pre-start-launch-authorization";
 import { planProjectPreStartAdmission } from "../application/project-control/codex-goal-project-pre-start-admission";
 import { replaceProjectRefillLaunchArtifacts } from "../application/project-control/codex-goal-project-refill";
+import {
+  projectControlWorkspaceLocks,
+  withValidatedProjectWorkspaceLock,
+} from "../codex-goal-project-workspace-lock";
 import {
   callToolJson,
   git,
@@ -512,15 +517,35 @@ describe("project merge-bound refill", () => {
       expect(await projectMergeBoundRetryStartRequired(reboundManifest)).toBe(
         true,
       );
-      await withProjectPreStartAdmissionLaunchAuthorization(
-        {
-          manifest: reboundManifest,
-          scope: projectAccessScope,
-          workspaceMode: "clean_explicit_continuation",
-        },
-        async () => {
-          brokerStartCalls += 1;
-        },
+      const canonicalWorkerWorkspace = await realpath(workerWorkspace);
+      await Promise.all(
+        ["retry-a", "retry-b"].map(
+          async (owner) =>
+            await withValidatedProjectWorkspaceLock({
+              locks: projectControlWorkspaceLocks(registry),
+              scope: projectAccessScope,
+              requestedWorkspacePath: workerWorkspace,
+              expectedCanonicalWorkspacePath: canonicalWorkerWorkspace,
+              owner,
+              effect: async () => {
+                if (
+                  !(await projectMergeBoundRetryStartRequired(reboundManifest))
+                ) {
+                  return;
+                }
+                await withProjectPreStartAdmissionLaunchAuthorization(
+                  {
+                    manifest: reboundManifest,
+                    scope: projectAccessScope,
+                    workspaceMode: "clean_explicit_continuation",
+                  },
+                  async () => {
+                    brokerStartCalls += 1;
+                  },
+                );
+              },
+            }),
+        ),
       );
       expect(await projectMergeBoundRetryStartRequired(reboundManifest)).toBe(
         false,

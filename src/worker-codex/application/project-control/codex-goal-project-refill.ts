@@ -634,10 +634,10 @@ export async function reconcileProjectRefillLaunchArtifactTransaction(input: {
   readonly scope: ProjectAccessScope;
 }): Promise<void> {
   const jobRootDir = resolve(input.manifest.jobRootDir);
-  const registryRoot = resolve(input.scope.registryRoot);
+  const workerJobsRoot = dirname(resolve(input.scope.registryRoot));
   if (
-    jobRootDir !== registryRoot &&
-    !jobRootDir.startsWith(`${registryRoot}${sep}`)
+    jobRootDir !== workerJobsRoot &&
+    !jobRootDir.startsWith(`${workerJobsRoot}${sep}`)
   ) {
     throw new Error("project_control_merge_rebind_marker_outside_registry");
   }

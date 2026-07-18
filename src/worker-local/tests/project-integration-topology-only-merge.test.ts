@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 describe("local topology-only merge integration", () => {
-  it("creates an exact two-parent merge when the reviewed merge has no file diff", async () => {
+  it("discards reviewed source drift and creates an exact target-tree two-parent merge", async () => {
     const fixture = await createTopologyOnlyMergeFixture();
     const adapter = new LocalGitIntegrationAdapter({
       allowedPatchRoots: [fixture.rootDir],
@@ -56,6 +56,13 @@ describe("local topology-only merge integration", () => {
       fixture.targetCommit,
       fixture.sourceCommit,
     ]);
+    await expect(gitOutput(fixture.workspacePath, [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      fixture.targetCommit,
+      fixture.sourceCommit,
+    ])).resolves.toBe("src/shared.ts\nsrc/source-only.ts\n");
     await expect(adapter.commit({
       workspacePath: fixture.workspacePath,
       message: "chore(git): preserve reviewed merge topology",
@@ -69,5 +76,47 @@ describe("local topology-only merge integration", () => {
       `${commit.commitSha}^1`,
       commit.commitSha,
     ])).resolves.toBe("");
+    await expect(Promise.all([
+      gitOutput(fixture.workspacePath, ["rev-parse", `${commit.commitSha}^{tree}`]),
+      gitOutput(fixture.workspacePath, ["rev-parse", `${fixture.targetCommit}^{tree}`]),
+    ])).resolves.toSatisfy(([mergeTree, targetTree]) =>
+      mergeTree === targetTree
+    );
+  });
+
+  it("aborts when the pending merge footprint does not equal the pinned target-to-source diff", async () => {
+    const fixture = await createTopologyOnlyMergeFixture({
+      targetOnlyChange: true,
+    });
+    const adapter = new LocalGitIntegrationAdapter({
+      allowedPatchRoots: [fixture.rootDir],
+    });
+
+    await expect(adapter.applyWorkerOutput({
+      attempt: {
+        targetWorkspacePath: fixture.workspacePath,
+        expectedFiles: [],
+        merge: {
+          sourceRemote: "origin",
+          sourceBranch: "base",
+          sourceCommit: fixture.sourceCommit,
+          expectedTargetCommit: fixture.targetCommit,
+        },
+      },
+      workerOutput: {
+        workerJobId: "topology-merge-reviewer",
+        workspacePath: fixture.workspacePath,
+        patchPath: fixture.patchPath,
+        patchSha256: fixture.patchSha256,
+        baseCommit: fixture.targetCommit,
+        changedFiles: [],
+      },
+    })).rejects.toThrow(
+      "local_git_integration_topology_only_footprint_mismatch",
+    );
+    await expect(adapter.getStatus({ workspacePath: fixture.workspacePath }))
+      .resolves.toEqual({ branch: "main", dirtyFiles: [] });
+    await expect(gitOutput(fixture.workspacePath, ["rev-parse", "HEAD"]))
+      .resolves.toBe(`${fixture.targetCommit}\n`);
   });
 });

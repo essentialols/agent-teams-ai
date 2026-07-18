@@ -202,6 +202,43 @@ export async function applyReviewedMerge(input: {
           "local_git_integration_clean_merge_reviewed_changes_must_be_empty",
         );
       }
+      if (isTopologyOnlyMerge(input)) {
+        const patchPath = await runtime.canonicalWorkerPatch(
+          input.workerOutput,
+        );
+        await runtime.assertPatchSha256(patchPath, emptyPatchSha256);
+        const sourceFootprint = await runtime.gitNullTerminatedPaths(
+          [
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            merge.expectedTargetCommit,
+            merge.sourceCommit,
+          ],
+          workspacePath,
+        );
+        if (!sameFiles(mergeFootprint, sourceFootprint)) {
+          throw new Error(
+            `local_git_integration_topology_only_footprint_mismatch:expected=${
+              uniqueSorted(sourceFootprint).join(",")
+            };actual=${uniqueSorted(mergeFootprint).join(",")}`,
+          );
+        }
+        await restoreExactFilesToCommit(
+          runtime,
+          workspacePath,
+          merge.expectedTargetCommit,
+          mergeFootprint,
+        );
+        await assertDiscardedTopologyOnlyMerge({
+          runtime,
+          workspacePath,
+          expectedTargetCommit: merge.expectedTargetCommit,
+          expectedSourceCommit: merge.sourceCommit,
+        });
+        return { changedFiles: [] };
+      }
       if (!sameFiles(mergeFootprint, input.attempt.expectedFiles)) {
         throw new Error(
           `local_git_integration_clean_merge_footprint_mismatch:expected=${
@@ -287,6 +324,48 @@ export async function applyReviewedMerge(input: {
       }
     }
     throw error;
+  }
+}
+
+function isTopologyOnlyMerge(input: {
+  readonly workerOutput: LocalGitMergeWorkerOutput;
+  readonly attempt: LocalGitMergeAttempt;
+}): boolean {
+  return input.attempt.expectedFiles.length === 0 &&
+    input.workerOutput.changedFiles?.length === 0 &&
+    input.workerOutput.patchSha256 === emptyPatchSha256;
+}
+
+async function assertDiscardedTopologyOnlyMerge(input: {
+  readonly runtime: Pick<
+    LocalGitMergeRuntime,
+    "git" | "getStatus"
+  >;
+  readonly workspacePath: string;
+  readonly expectedTargetCommit: string;
+  readonly expectedSourceCommit: string;
+}): Promise<void> {
+  const [head, mergeHead, status] = await Promise.all([
+    input.runtime.git(["rev-parse", "HEAD"], input.workspacePath),
+    input.runtime.git(["rev-parse", "MERGE_HEAD"], input.workspacePath),
+    input.runtime.getStatus(input.workspacePath),
+  ]);
+  if (
+    head.stdout.trim().toLowerCase() !==
+      input.expectedTargetCommit.toLowerCase() ||
+    mergeHead.stdout.trim().toLowerCase() !==
+      input.expectedSourceCommit.toLowerCase()
+  ) {
+    throw new Error(
+      "local_git_integration_topology_only_merge_parents_changed",
+    );
+  }
+  if (status.dirtyFiles.length > 0) {
+    throw new Error(
+      `local_git_integration_topology_only_discard_left_dirty_workspace:${
+        uniqueSorted(status.dirtyFiles).join(",")
+      }`,
+    );
   }
 }
 

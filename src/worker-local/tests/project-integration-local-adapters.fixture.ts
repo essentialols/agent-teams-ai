@@ -178,7 +178,9 @@ export async function createCleanMergeFixture(): Promise<{
   };
 }
 
-export async function createTopologyOnlyMergeFixture(): Promise<{
+export async function createTopologyOnlyMergeFixture(options: {
+  readonly targetOnlyChange?: boolean;
+} = {}): Promise<{
   readonly rootDir: string;
   readonly workspacePath: string;
   readonly sourceCommit: string;
@@ -206,12 +208,16 @@ export async function createTopologyOnlyMergeFixture(): Promise<{
   await git(workspacePath, ["remote", "add", "origin", remotePath]);
 
   await git(workspacePath, ["checkout", "-b", "base"]);
-  await git(workspacePath, [
-    "commit",
-    "--allow-empty",
-    "-m",
-    "chore: record source topology",
-  ]);
+  await writeFile(
+    join(workspacePath, "src", "shared.ts"),
+    "export const shared = 'source';\n",
+  );
+  await writeFile(
+    join(workspacePath, "src", "source-only.ts"),
+    "export const sourceOnly = true;\n",
+  );
+  await git(workspacePath, ["add", "."]);
+  await git(workspacePath, ["commit", "-m", "feat: add rejected source drift"]);
   const sourceCommit = (await gitOutput(
     workspacePath,
     ["rev-parse", "HEAD"],
@@ -219,12 +225,25 @@ export async function createTopologyOnlyMergeFixture(): Promise<{
   await git(workspacePath, ["push", "origin", "base"]);
 
   await git(workspacePath, ["checkout", "main"]);
-  await git(workspacePath, [
-    "commit",
-    "--allow-empty",
-    "-m",
-    "chore: record target topology",
-  ]);
+  if (options.targetOnlyChange) {
+    await writeFile(
+      join(workspacePath, "src", "target-only.ts"),
+      "export const targetOnly = true;\n",
+    );
+    await git(workspacePath, ["add", "."]);
+    await git(workspacePath, [
+      "commit",
+      "-m",
+      "feat: preserve target-only content",
+    ]);
+  } else {
+    await git(workspacePath, [
+      "commit",
+      "--allow-empty",
+      "-m",
+      "chore: record target topology",
+    ]);
+  }
   const targetCommit = (await gitOutput(
     workspacePath,
     ["rev-parse", "HEAD"],

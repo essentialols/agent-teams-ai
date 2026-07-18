@@ -530,35 +530,54 @@ describe("project merge-bound refill", () => {
         true,
       );
       const canonicalWorkerWorkspace = await realpath(workerWorkspace);
-      await Promise.all(
-        ["retry-a", "retry-b"].map(
-          async (owner) =>
-            await withValidatedProjectWorkspaceLock({
-              locks: projectControlWorkspaceLocks(registry),
+      let releaseFirstRetry!: () => void;
+      const firstRetryRelease = new Promise<void>((resolve) => {
+        releaseFirstRetry = resolve;
+      });
+      let firstRetryEntered!: () => void;
+      const firstRetryReady = new Promise<void>((resolve) => {
+        firstRetryEntered = resolve;
+      });
+      const firstRetry = withValidatedProjectWorkspaceLock({
+        locks: projectControlWorkspaceLocks(registry),
+        scope: projectAccessScope,
+        requestedWorkspacePath: workerWorkspace,
+        expectedCanonicalWorkspacePath: canonicalWorkerWorkspace,
+        owner: "retry-a",
+        effect: async () => {
+          if (!(await projectMergeBoundRetryStartRequired(reboundManifest))) {
+            return;
+          }
+          await withProjectPreStartAdmissionLaunchAuthorization(
+            {
+              manifest: reboundManifest,
               scope: projectAccessScope,
-              requestedWorkspacePath: workerWorkspace,
-              expectedCanonicalWorkspacePath: canonicalWorkerWorkspace,
-              owner,
-              effect: async () => {
-                if (
-                  !(await projectMergeBoundRetryStartRequired(reboundManifest))
-                ) {
-                  return;
-                }
-                await withProjectPreStartAdmissionLaunchAuthorization(
-                  {
-                    manifest: reboundManifest,
-                    scope: projectAccessScope,
-                    workspaceMode: "clean_explicit_continuation",
-                  },
-                  async () => {
-                    brokerStartCalls += 1;
-                  },
-                );
-              },
-            }),
-        ),
-      );
+              workspaceMode: "clean_explicit_continuation",
+            },
+            async () => {
+              brokerStartCalls += 1;
+              firstRetryEntered();
+              await firstRetryRelease;
+            },
+          );
+        },
+      });
+      await firstRetryReady;
+      try {
+        await expect(
+          withValidatedProjectWorkspaceLock({
+            locks: projectControlWorkspaceLocks(registry),
+            scope: projectAccessScope,
+            requestedWorkspacePath: workerWorkspace,
+            expectedCanonicalWorkspacePath: canonicalWorkerWorkspace,
+            owner: "retry-b",
+            effect: async () => undefined,
+          }),
+        ).rejects.toMatchObject({ code: "safe_execution_workspace_locked" });
+      } finally {
+        releaseFirstRetry();
+      }
+      await firstRetry;
       expect(await projectMergeBoundRetryStartRequired(reboundManifest)).toBe(
         false,
       );

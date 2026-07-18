@@ -1223,7 +1223,7 @@ async function handleApplyDecisions(
       }
       if (
         !Number.isSafeInteger(request.expectedDecisionRevision) ||
-        (request.expectedDecisionRevision as number) < 0
+        request.expectedDecisionRevision! < 0
       ) {
         throw new Error('Durable review mutation requires an exact decision revision');
       }
@@ -1235,7 +1235,7 @@ async function handleApplyDecisions(
         validatedDecisions as (FileReviewDecision & { reviewKey: string })[],
         fileContents,
         request.persistedState,
-        request.expectedDecisionRevision as number
+        request.expectedDecisionRevision!
       );
     }
 
@@ -2164,8 +2164,7 @@ function assertRecoverableJournalContent(
 ): void {
   if (
     record.persistedState &&
-    (!Number.isSafeInteger(record.expectedDecisionRevision) ||
-      (record.expectedDecisionRevision as number) < 0)
+    (!Number.isSafeInteger(record.expectedDecisionRevision) || record.expectedDecisionRevision! < 0)
   ) {
     throw new Error('Review mutation recovery revision is unavailable');
   }
@@ -2330,7 +2329,7 @@ async function handleSaveDecisions(
   reviewRedoHistory: ReviewRedoAction[] = []
 ): Promise<IpcResult<{ revision: number }>> {
   return wrapReviewHandler('saveDecisions', async () => {
-    if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0) {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision! < 0) {
       throw new Error('Saving review decisions requires an exact decision revision');
     }
     const persistenceScope = { scopeKey, scopeToken };
@@ -2343,7 +2342,7 @@ async function handleSaveDecisions(
         hunkContextHashesByFile: hunkContextHashesByFile ?? undefined,
         reviewActionHistory,
         reviewRedoHistory,
-        expectedRevision: expectedRevision as number,
+        expectedRevision: expectedRevision!,
       });
       return { revision };
     });

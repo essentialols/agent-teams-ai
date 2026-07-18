@@ -27,7 +27,7 @@ const SECRET_PATTERNS: readonly [RegExp, string][] = [
 ] as const;
 
 const SENSITIVE_ASSIGNMENT_PATTERN =
-  /(["']?[A-Z][A-Z0-9_-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi;
+  /(["']?[A-Z0-9_-]+["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)/gi;
 const SENSITIVE_ASSIGNMENT_KEYS = new Set([
   'apikey',
   'authorization',

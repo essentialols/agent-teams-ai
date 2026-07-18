@@ -332,9 +332,9 @@ export class ReviewDecisionStore {
       const { beforeBlob, afterBlob, fileRef, ...metadata } = candidate;
       return {
         ...metadata,
-        beforeContent: textBlobs[beforeBlob]!,
-        afterContent: afterBlob === null ? null : textBlobs[afterBlob]!,
-        ...(fileRef ? { file: fileSummaryBlobs[fileRef]! } : {}),
+        beforeContent: textBlobs[beforeBlob],
+        afterContent: afterBlob === null ? null : textBlobs[afterBlob],
+        ...(fileRef ? { file: fileSummaryBlobs[fileRef] } : {}),
       } as ReviewDiskUndoSnapshot;
     };
     const decodeAction = (value: unknown): ReviewUndoAction | null => {
@@ -367,7 +367,7 @@ export class ReviewDecisionStore {
         action: {
           ...actionMetadata,
           snapshot,
-          ...(fileRef ? { file: fileSummaryBlobs[fileRef]! } : {}),
+          ...(fileRef ? { file: fileSummaryBlobs[fileRef] } : {}),
         },
       } as ReviewUndoAction;
     };
@@ -450,7 +450,7 @@ export class ReviewDecisionStore {
         ...(data as ReviewDecisionsData),
         version: 6,
         scopeKey: data.scopeKey as string,
-        scopeToken: data.scopeToken as string,
+        scopeToken: data.scopeToken!,
         reviewActionHistory: decoded.undo,
         reviewRedoHistory: decoded.redo,
         revision: data.revision as number,
@@ -466,10 +466,7 @@ export class ReviewDecisionStore {
         !this.isReviewActionHistory(data.reviewActionHistory)) ||
       (data.version === 5 && !this.isReviewRedoHistory(data.reviewRedoHistory)) ||
       (data.version === 5 &&
-        !this.hasDisjointReviewActionIds(
-          data.reviewActionHistory as ReviewUndoAction[],
-          data.reviewRedoHistory as ReviewRedoAction[]
-        )) ||
+        !this.hasDisjointReviewActionIds(data.reviewActionHistory!, data.reviewRedoHistory!)) ||
       ((data.version === 4 || data.version === 5) &&
         (!Number.isSafeInteger(data.revision) ||
           (data.revision as number) < 1 ||

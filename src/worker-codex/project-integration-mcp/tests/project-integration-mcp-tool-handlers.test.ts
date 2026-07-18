@@ -8,6 +8,9 @@ import {
   type ProjectIntegrationMcpController,
 } from "../index";
 import { reviewedWorkerOutputFormat } from "../../reviewed-worker-output";
+import {
+  createFixture,
+} from "../../../worker-core/integration/tests/project-integration-use-cases.fixture";
 
 const controller: ProjectIntegrationMcpController = {
   registryRootDir: "/registry",
@@ -218,71 +221,78 @@ describe("project integration MCP tool handlers", () => {
     })).rejects.toThrow("reviewed_worker_output_explicit_source_conflict");
   });
 
-  it("previews a pinned two-parent merge only from immutable reviewed output", async () => {
+  it("previews and opens a glob-allowed pinned merge while denying a non-match", async () => {
     const reviewedOutputId = "a".repeat(64);
     const patchSha256 = "b".repeat(64);
     const targetCommit = "1".repeat(40);
     const sourceCommit = "2".repeat(40);
+    const sourceBranch = "fix/hosted-web-merge-source";
     const mergeController: ProjectIntegrationMcpController = {
       ...controller,
       scope: {
         ...controller.scope,
-        allowedBranches: ["feature/project", "base/current"],
+        workspaceRoots: ["/resolved/target", "/worker"],
+        worktreeRoots: ["/worker"],
+        jobIdPrefixes: ["merge-"],
+        allowedBranches: ["feature/project", "fix/hosted-web-*"],
         allowedGitRemotes: ["origin"],
       },
     };
-    const handlers = createProjectIntegrationMcpToolHandlers({
+    const reviewedOutput = (reviewedSourceBranch: string) => ({
+      snapshot: {
+        format: reviewedWorkerOutputFormat,
+        formatRevision: 1,
+        reviewedOutputId,
+        projectId: "project-1",
+        controllerJobId: "controller-1",
+        workerJobId: "merge-worker",
+        taskId: "merge-task",
+        sourceWorkspacePath: "/worker",
+        patchPath: "/evidence/output.patch",
+        patchSha256,
+        patchByteLength: 100,
+        baseCommit: targetCommit,
+        changedFiles: ["src/conflict.ts"],
+        reviewDecision: {
+          reviewedBy: "reviewer",
+          decision: ReviewDecisionStatus.Approved,
+          reason: "merge conflict resolution accepted",
+          approvedFiles: ["src/conflict.ts"],
+          requiredChecks: [],
+        },
+        merge: {
+          sourceRemote: "origin",
+          sourceBranch: reviewedSourceBranch,
+          sourceCommit,
+          expectedTargetCommit: targetCommit,
+        },
+        capturedAt: "2026-07-13T00:00:00.000Z",
+      },
+      workerOutput: {
+        workerJobId: "merge-worker",
+        workspacePath: "/worker",
+        patchPath: "/evidence/output.patch",
+        patchSha256,
+        baseCommit: targetCommit,
+        changedFiles: ["src/conflict.ts"],
+      },
+    } as const);
+    const fixture = createFixture();
+    const options: Parameters<
+      typeof createProjectIntegrationMcpToolHandlers
+    >[0] = {
       loadController: async () => mergeController,
       resolvePathArg: (_args, value, fieldName) => {
         if (typeof value !== "string") throw new Error(`${fieldName} is required`);
         return `/resolved/${value}`;
       },
-      resolveReviewedOutput: async () => ({
-        snapshot: {
-          format: reviewedWorkerOutputFormat,
-          formatRevision: 1,
-          reviewedOutputId,
-          projectId: "project-1",
-          controllerJobId: "controller-1",
-          workerJobId: "merge-worker",
-          taskId: "merge-task",
-          sourceWorkspacePath: "/worker",
-          patchPath: "/evidence/output.patch",
-          patchSha256,
-          patchByteLength: 100,
-          baseCommit: targetCommit,
-          changedFiles: ["src/conflict.ts"],
-          reviewDecision: {
-            reviewedBy: "reviewer",
-            decision: ReviewDecisionStatus.Approved,
-            reason: "merge conflict resolution accepted",
-            approvedFiles: ["src/conflict.ts", "src/non-conflicting.ts"],
-            requiredChecks: [],
-          },
-          merge: {
-            sourceRemote: "origin",
-            sourceBranch: "base/current",
-            sourceCommit,
-            expectedTargetCommit: targetCommit,
-          },
-          capturedAt: "2026-07-13T00:00:00.000Z",
-        },
-        workerOutput: {
-          workerJobId: "merge-worker",
-          workspacePath: "/worker",
-          patchPath: "/evidence/output.patch",
-          patchSha256,
-          baseCommit: targetCommit,
-          changedFiles: ["src/conflict.ts"],
-        },
-      }),
-      integrationDeps: () => {
-        throw new Error("integration_deps_unexpected");
-      },
-    });
+      resolveReviewedOutput: async () => reviewedOutput(sourceBranch),
+      integrationDeps: () => fixture.deps(),
+    };
+    const handlers = createProjectIntegrationMcpToolHandlers(options);
     const merge = {
       sourceRemote: "origin",
-      sourceBranch: "base/current",
+      sourceBranch,
       sourceCommit,
       expectedTargetCommit: targetCommit,
     } as const;
@@ -306,10 +316,36 @@ describe("project integration MCP tool handlers", () => {
           changedFiles: ["src/conflict.ts"],
         },
         reviewDecision: {
-          approvedFiles: ["src/conflict.ts", "src/non-conflicting.ts"],
+          approvedFiles: ["src/conflict.ts"],
         },
       },
     });
+
+    const opened = await handlers.openAttempt({
+      attemptId: "merge-attempt",
+      reviewedOutputId,
+      targetWorkspacePath: "target",
+      targetBranch: "feature/project",
+      confirmOpen: true,
+    });
+    expect(opened.structuredContent).toMatchObject({
+      ok: true,
+      attempt: {
+        attemptId: "merge-attempt",
+        merge,
+      },
+    });
+
+    const deniedHandlers = createProjectIntegrationMcpToolHandlers({
+      ...options,
+      resolveReviewedOutput: async () => reviewedOutput("feature/unrelated"),
+    });
+    await expect(deniedHandlers.openAttempt({
+      attemptId: "denied-merge-attempt",
+      reviewedOutputId,
+      targetWorkspacePath: "target",
+      targetBranch: "feature/project",
+    })).rejects.toThrow("project_integration_merge_source_branch_denied");
 
     await expect(handlers.openAttempt({
       attemptId: "unreviewed-merge",

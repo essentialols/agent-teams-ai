@@ -256,7 +256,7 @@ export const TeamChangesSection = memo(function TeamChangesSection({
     >
       {visibleSummaries.length > 0 ? (
         <div className="space-y-2">
-          <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+          <div className="max-h-[360px] overflow-y-auto border-y border-[var(--color-border-subtle)] pr-1">
             {renderedSummaries.map(({ summary, task, visibleFiles, fileBudget }) => {
               const changeSet = summary.changeSet;
               const files = getChangeSetFiles(changeSet);
@@ -285,9 +285,9 @@ export const TeamChangesSection = memo(function TeamChangesSection({
               return (
                 <div
                   key={summary.taskId}
-                  className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
+                  className="border-b border-[var(--color-border-subtle)] py-1 last:border-b-0"
                 >
-                  <div className="flex min-w-0 items-center gap-1 rounded-t-md px-2 py-1.5 transition-colors hover:bg-[var(--color-surface-raised)]">
+                  <div className="flex min-w-0 items-center gap-1 px-2 py-1.5 transition-colors hover:bg-[var(--color-surface-raised)]">
                     <button
                       type="button"
                       className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -349,14 +349,14 @@ export const TeamChangesSection = memo(function TeamChangesSection({
                   </div>
 
                   {summary.error ? (
-                    <div className="flex items-center gap-2 border-t border-[var(--color-border)] px-2 py-1.5 text-xs text-red-400">
+                    <div className="flex items-center gap-2 py-1.5 pl-8 pr-2 text-xs text-red-400">
                       <AlertTriangle size={13} className="shrink-0" />
                       <span className="min-w-0 truncate">{summary.error}</span>
                     </div>
                   ) : null}
 
                   {diagnosticMessages.length ? (
-                    <div className="space-y-1 border-t border-[var(--color-border)] px-2 py-1.5">
+                    <div className="space-y-1 py-1.5 pl-8 pr-2">
                       {diagnosticMessages.slice(0, 2).map((message) => (
                         <div
                           key={message}
@@ -378,14 +378,14 @@ export const TeamChangesSection = memo(function TeamChangesSection({
                   ) : null}
 
                   {visibleFiles.length > 0 ? (
-                    <div className="border-t border-[var(--color-border)] py-0.5">
+                    <div className="py-0.5">
                       {visibleFiles.map((file) => (
                         <div
                           key={`${summary.taskId}:${file.filePath}`}
                           role="button"
                           tabIndex={0}
                           title={getVisibleFilePath(file)}
-                          className="group flex w-full cursor-pointer items-center gap-2 px-2 py-1.5 text-left text-xs transition-colors hover:bg-[var(--color-surface-raised)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-border-emphasis)]"
+                          className="group flex w-full cursor-pointer items-center gap-2 py-1.5 pl-8 pr-2 text-left text-xs transition-colors hover:bg-[var(--color-surface-raised)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-border-emphasis)]"
                           onClick={() => onViewChanges(task.id, file.filePath)}
                           onKeyDown={(event) => {
                             if (event.target !== event.currentTarget) return;
@@ -433,7 +433,7 @@ export const TeamChangesSection = memo(function TeamChangesSection({
                   ) : null}
 
                   {files.length > visibleFiles.length && fileBudget > 0 ? (
-                    <div className="border-t border-[var(--color-border)] px-2 py-1.5 text-xs text-[var(--color-text-muted)]">
+                    <div className="py-1.5 pl-8 pr-2 text-xs text-[var(--color-text-muted)]">
                       {t('taskDetail.changes.moreFiles', {
                         count: files.length - visibleFiles.length,
                       })}

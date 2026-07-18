@@ -1334,13 +1334,17 @@ export const TaskDetailDialog = ({
                 ) : taskChangesError ? (
                   <p className="text-xs text-red-400">{taskChangesError}</p>
                 ) : taskChangesFiles ? (
-                  <div className="space-y-2">
+                  <div
+                    className={
+                      taskChangesWarnings.length > 0 || taskChangesFiles.length > 0
+                        ? 'border-y border-[var(--color-border-subtle)]'
+                        : undefined
+                    }
+                  >
                     {taskChangesWarnings.length > 0 ? (
                       <div
-                        className={`space-y-1 rounded-md border px-2 py-1.5 ${
-                          taskChangesReviewability === 'attention_required'
-                            ? 'border-amber-500/20 bg-amber-500/10'
-                            : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]'
+                        className={`space-y-1 border-b border-[var(--color-border-subtle)] px-2 py-1.5 ${
+                          taskChangesReviewability === 'attention_required' ? 'bg-amber-500/5' : ''
                         }`}
                       >
                         {taskChangesWarnings.slice(0, 2).map((warning) => (
@@ -1371,14 +1375,15 @@ export const TaskDetailDialog = ({
                     ) : null}
 
                     {taskChangesFiles.length > 0 ? (
-                      <div className="max-h-[200px] space-y-0.5 overflow-y-auto">
+                      <div className="max-h-[200px] overflow-y-auto">
                         {taskChangesFiles.map((file) => (
                           <div
                             key={file.filePath}
-                            role={onViewChanges ? 'button' : undefined}
-                            tabIndex={onViewChanges ? 0 : undefined}
-                            title={file.relativePath}
-                            className={`group flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-[var(--color-surface-raised)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-border-emphasis)] ${
+                            role="button"
+                            aria-disabled={!onViewChanges}
+                            aria-label={file.relativePath}
+                            tabIndex={onViewChanges ? 0 : -1}
+                            className={`group flex w-full items-center gap-2 border-b border-[var(--color-border-subtle)] px-2 py-1.5 text-left text-xs transition-colors last:border-b-0 hover:bg-[var(--color-surface-raised)] focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-border-emphasis)] ${
                               onViewChanges ? 'cursor-pointer' : ''
                             }`}
                             onClick={
@@ -1514,20 +1519,9 @@ export const TaskDetailDialog = ({
               </CollapsibleTeamSection>
             ) : null}
 
-            {/* Review info */}
-            {kanbanTaskState?.reviewer || kanbanTaskState?.errorDescription ? (
-              <div className="mb-2 space-y-1">
-                <div className="flex items-center gap-2">
-                  {kanbanTaskState.reviewer ? (
-                    <span className="text-xs text-[var(--color-text-secondary)]">
-                      {t('taskDetail.review.reviewer', { reviewer: kanbanTaskState.reviewer })}
-                    </span>
-                  ) : null}
-                  {kanbanTaskState.errorDescription ? (
-                    <span className="text-xs text-red-400">{kanbanTaskState.errorDescription}</span>
-                  ) : null}
-                </div>
-              </div>
+            {/* Review error */}
+            {kanbanTaskState?.errorDescription ? (
+              <div className="mb-2 text-xs text-red-400">{kanbanTaskState.errorDescription}</div>
             ) : null}
 
             {/* Workflow History */}

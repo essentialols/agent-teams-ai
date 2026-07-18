@@ -1,5 +1,17 @@
 export type ProjectPreStartAdmissionDirtyContinuationMode =
-  "reviewed_dirty_continuation" | "terminal_handoff_dependency_recovery";
+  | "reviewed_dirty_continuation"
+  | "terminal_handoff_dependency_recovery"
+  | "terminal_handoff_runtime_interrupt_continuation";
+
+export function isProjectPreStartAdmissionDirtyContinuationMode(
+  value: unknown,
+): value is ProjectPreStartAdmissionDirtyContinuationMode {
+  return (
+    value === "reviewed_dirty_continuation" ||
+    value === "terminal_handoff_dependency_recovery" ||
+    value === "terminal_handoff_runtime_interrupt_continuation"
+  );
+}
 
 export type ProjectPreStartAdmissionLaunchWorkspaceMode =
   | "clean_first_launch"

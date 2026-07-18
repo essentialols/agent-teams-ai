@@ -235,7 +235,7 @@ export function shouldDeliverSafeExecutionControlForContinuation(
 export function runtimeInterruptClassification(
   reason: unknown,
 ): SafeExecutionFailureClassification | null {
-  if (!isRuntimeInterruptReason(reason)) return null;
+  if (!isRuntimeControlledInterruptReason(reason)) return null;
   return {
     reason: "runtime_interrupted",
     safeMessage: reason.safeMessage,
@@ -423,7 +423,7 @@ export function safeExecutionDetailTail(value: string): string {
   return compact.length > 1000 ? compact.slice(-1000) : compact;
 }
 
-function isRuntimeInterruptReason(
+export function isRuntimeControlledInterruptReason(
   value: unknown,
 ): value is {
   readonly code: "runtime_controlled_interrupt";

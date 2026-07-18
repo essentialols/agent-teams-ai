@@ -7,6 +7,7 @@ import {
   AccessBoundary,
   NetworkAccessMode,
   type ProjectAccessScope,
+  type ProjectControlBroker,
 } from "@vioxen/subscription-runtime/worker-core";
 
 import { materializeCodexGoalHandoffArtifacts } from "../codex-goal-handoff-artifacts";
@@ -16,10 +17,14 @@ import {
 } from "../codex-goal-jobs";
 import {
   terminalHandoffDependencyRecoveryRequested,
+  terminalHandoffRuntimeInterruptContinuationRequested,
   verifyTerminalHandoffRecovery,
 } from "../application/project-control/codex-goal-project-terminal-handoff-recovery";
 import { localReviewedWorkerOutputDeps } from "../reviewed-worker-output";
-import { projectControlStartStoredJobView } from "../codex-goal-mcp-project-control-actions";
+import {
+  projectControlStartStoredJobView,
+  type CodexGoalMcpProjectControlActionsDeps,
+} from "../codex-goal-mcp-project-control-actions";
 import { git, gitInitRepository } from "./codex-goal-mcp-test-support";
 
 const roots: string[] = [];
@@ -30,7 +35,7 @@ afterEach(async () => {
   );
 });
 
-describe("terminal worker handoff dependency recovery", () => {
+describe("terminal worker handoff recovery", () => {
   it("requires the complete explicit dependency-recovery intent", () => {
     const request = {
       status: {
@@ -61,6 +66,46 @@ describe("terminal worker handoff dependency recovery", () => {
       },
     ]) {
       expect(terminalHandoffDependencyRecoveryRequested(invalid)).toBe(false);
+    }
+  });
+
+  it("recognizes only a stopped strict runtime-interrupted continuation", () => {
+    const request = {
+      status: {
+        workspaceDirty: true,
+        resultExists: true,
+        resultStatus: "partial",
+        resultReason: "runtime_interrupted",
+        recommendedAction: "inspect_dirty_failure",
+      },
+      forceStart: true,
+      workerAlive: false,
+    } as const;
+    expect(
+      terminalHandoffRuntimeInterruptContinuationRequested(request),
+    ).toBe(true);
+    for (const invalid of [
+      { ...request, status: { ...request.status, workspaceDirty: false } },
+      { ...request, reviewedOutputId: "a".repeat(64) },
+      { ...request, forceStart: false },
+      { ...request, workerAlive: true },
+      { ...request, status: { ...request.status, resultExists: false } },
+      { ...request, status: { ...request.status, resultStatus: "done" } },
+      {
+        ...request,
+        status: { ...request.status, resultReason: "goal_slice_exhausted" },
+      },
+      {
+        ...request,
+        status: {
+          ...request.status,
+          recommendedAction: "review_completed" as const,
+        },
+      },
+    ]) {
+      expect(
+        terminalHandoffRuntimeInterruptContinuationRequested(invalid),
+      ).toBe(false);
     }
   });
 
@@ -166,6 +211,97 @@ describe("terminal worker handoff dependency recovery", () => {
     ).rejects.toThrow("project_control_terminal_handoff_already_reviewed");
   });
 
+  it("accepts only the same-job strict runtime-interrupted handoff", async () => {
+    const fixture = await recoveryFixture({
+      status: "partial",
+      reason: "runtime_interrupted",
+      nextAction: "preserve_patch",
+    });
+    await expect(
+      verifyTerminalHandoffRecovery({
+        ...fixture.verifyInput,
+        kind: "runtime_interrupt_continuation",
+      }),
+    ).resolves.toMatchObject({ changedFiles: ["owned.ts"] });
+
+    const resultPath = join(
+      fixture.jobRootDir,
+      `${fixture.jobId}.latest-result.json`,
+    );
+    for (const producer of [
+      { ...fixture.verifyInput.producer, jobId: "project-other" },
+      {
+        ...fixture.verifyInput.producer,
+        taskId: "project-other-task",
+        outputPath: resultPath,
+      },
+      {
+        ...fixture.verifyInput.producer,
+        workspacePath: fixture.jobRootDir,
+      },
+    ]) {
+      await expect(
+        verifyTerminalHandoffRecovery({
+          ...fixture.verifyInput,
+          producer,
+          kind: "runtime_interrupt_continuation",
+        }),
+      ).rejects.toThrow("project_control_verifier_handoff_identity_mismatch");
+    }
+
+    await writeFile(
+      resultPath,
+      `${JSON.stringify({
+        status: "partial",
+        reason: "runtime_interrupted",
+        changedFiles: ["owned.ts"],
+        evidence: [],
+        blockers: ["runtime_interrupted"],
+        nextAction: "preserve_patch",
+      })}\n`,
+    );
+    await expect(
+      verifyTerminalHandoffRecovery({
+        ...fixture.verifyInput,
+        kind: "runtime_interrupt_continuation",
+      }),
+    ).rejects.toThrow("project_control_verifier_handoff_result_invalid");
+  });
+
+  it("continues the same terminal runtime-interrupted project job as adoption", async () => {
+    const fixture = await actionFixture({
+      status: "partial",
+      reason: "runtime_interrupted",
+      nextAction: "preserve_patch",
+    });
+    let workspaceMode: string | undefined;
+    let workerRole: string | undefined;
+    const started = await projectControlStartStoredJobView(
+      {
+        ...fixture.startArgs,
+        dependencyBootstrap: "off",
+        confirmDependencyBootstrap: false,
+      },
+      fixture.deps(
+        async () => undefined,
+        (input, request) => {
+          workspaceMode = input.startAdmissionWorkspaceMode;
+          workerRole = request.workerRole;
+        },
+      ),
+    );
+    expect(started).toMatchObject({
+      ok: true,
+      jobId: fixture.jobId,
+      taskId: fixture.jobId,
+      result: { status: "started" },
+    });
+    expect(workspaceMode).toBe(
+      "terminal_handoff_runtime_interrupt_continuation",
+    );
+    expect(workerRole).toBe("adoption");
+  });
+
   it("holds the project start lock across dependency bootstrap verification", async () => {
     const fixture = await actionFixture();
     await expect(
@@ -213,7 +349,12 @@ describe("terminal worker handoff dependency recovery", () => {
   );
 });
 
-async function recoveryFixture() {
+async function recoveryFixture(
+  result: TerminalResultOptions = {
+    status: "done",
+    nextAction: "review_completed",
+  },
+) {
   const root = await mkdtemp(
     join(tmpdir(), "subscription-runtime-terminal-recovery-pinned-"),
   );
@@ -237,7 +378,7 @@ async function recoveryFixture() {
     jobRootDir,
   });
   if (!handoff) throw new Error("expected handoff");
-  await writeTerminalResult(jobRootDir, jobId, handoff);
+  await writeTerminalResult(jobRootDir, jobId, handoff, result);
   const producer = {
     jobId,
     taskId: jobId,
@@ -261,22 +402,38 @@ async function writeTerminalResult(
   handoff: NonNullable<
     Awaited<ReturnType<typeof materializeCodexGoalHandoffArtifacts>>
   >,
+  result: TerminalResultOptions = {
+    status: "done",
+    nextAction: "review_completed",
+  },
 ): Promise<void> {
   await writeFile(
     join(jobRootDir, `${taskId}.latest-result.json`),
     `${JSON.stringify({
-      status: "done",
+      status: result.status,
+      ...(result.reason ? { reason: result.reason } : {}),
       changedFiles: handoff.changedPaths,
       evidence: [],
       blockers: [],
-      nextAction: "review_completed",
+      nextAction: result.nextAction,
       artifacts: handoff.artifacts,
       details: { baseCommit: handoff.baseCommit },
     })}\n`,
   );
 }
 
-async function actionFixture() {
+type TerminalResultOptions = {
+  readonly status: "done" | "partial";
+  readonly reason?: string;
+  readonly nextAction: "review_completed" | "preserve_patch";
+};
+
+async function actionFixture(
+  result: TerminalResultOptions = {
+    status: "done",
+    nextAction: "review_completed",
+  },
+) {
   const root = await mkdtemp(
     join(tmpdir(), "subscription-runtime-terminal-recovery-action-"),
   );
@@ -307,7 +464,7 @@ async function actionFixture() {
     jobRootDir,
   });
   if (!handoff) throw new Error("expected handoff");
-  await writeTerminalResult(jobRootDir, jobId, handoff);
+  await writeTerminalResult(jobRootDir, jobId, handoff, result);
   const scope: ProjectAccessScope = {
     projectId: "project",
     workspaceRoots: [canonicalWorkspacePath],
@@ -362,7 +519,13 @@ async function actionFixture() {
       dependencyBootstrap: "install" as const,
       confirmDependencyBootstrap: true,
     },
-    deps: (duringBootstrap: () => Promise<void>) => ({
+    deps: (
+      duringBootstrap: () => Promise<void>,
+      onStart?: (
+        input: { readonly startAdmissionWorkspaceMode?: string },
+        request: { readonly workerRole?: string },
+      ) => void,
+    ) => ({
       loadProjectControlController: async () => ({
         registryRootDir,
         controller,
@@ -371,8 +534,18 @@ async function actionFixture() {
       loadJobLaunch: async () => {
         throw new Error("unexpected loadJobLaunch");
       },
-      codexProjectControlBroker: () => {
-        throw new Error("unexpected broker start");
+      codexProjectControlBroker: (
+        input: Parameters<
+          CodexGoalMcpProjectControlActionsDeps["codexProjectControlBroker"]
+        >[0],
+      ) => {
+        if (!onStart) throw new Error("unexpected broker start");
+        return {
+          startWorker: async (request: { readonly workerRole?: string }) => {
+            onStart(input, request);
+            return { status: "started" };
+          },
+        } as unknown as ProjectControlBroker;
       },
       dependencyBootstrap: async () => {
         await duringBootstrap();

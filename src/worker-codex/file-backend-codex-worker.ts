@@ -25,6 +25,7 @@ import {
 import {
   SubscriptionWorkerError,
   combineAbortSignals,
+  isRuntimeControlledInterruptReason,
   type CapacityAwareSubscriptionWorker,
   type SubscriptionWorkerHealth,
   type SubscriptionWorkerPrewarmResult,
@@ -308,7 +309,9 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
           });
         } catch (error) {
           const failure = this.agentDriver.classifyRunFailure(error);
-          this.recordFailure(failure);
+          if (!isRuntimeControlledInterruptReason(abortSignal.reason)) {
+            this.recordFailure(failure);
+          }
           throw new SubscriptionWorkerError(
             "subscription_worker_run_failed",
             failure.safeMessage,
@@ -331,6 +334,9 @@ export class FileBackendCodexWorker implements CapacityAwareSubscriptionWorker<
             runId,
             job,
             attempt,
+            ...(isRuntimeControlledInterruptReason(abortSignal.reason)
+              ? { runtimeControlledInterrupt: true }
+              : {}),
           });
         }
 

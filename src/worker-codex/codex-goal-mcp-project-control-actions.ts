@@ -37,7 +37,9 @@ import {
 import { projectPreStartCapacityContinuationMode } from "./application/project-control/codex-goal-project-capacity-continuation";
 import {
   terminalHandoffDependencyRecoveryRequested,
+  terminalHandoffRuntimeInterruptContinuationRequested,
   verifyTerminalHandoffRecovery,
+  type TerminalHandoffRecoveryKind,
 } from "./application/project-control/codex-goal-project-terminal-handoff-recovery";
 import { projectAdmissionWorkerRoleArg } from "./application/project-control/codex-goal-project-admission";
 import {
@@ -226,13 +228,26 @@ export async function projectControlStartStoredJobView(
       confirmDependencyBootstrap:
         booleanValue(args.confirmDependencyBootstrap) === true,
     });
+  const terminalHandoffRuntimeInterruptContinuation =
+    terminalHandoffRuntimeInterruptContinuationRequested({
+      status,
+      ...(reviewedOutputId ? { reviewedOutputId } : {}),
+      forceStart: args.forceStart === true,
+      workerAlive: workerLiveness.alive,
+    });
+  const terminalHandoffRecoveryKind: TerminalHandoffRecoveryKind | undefined =
+    terminalHandoffDependencyRecovery
+      ? "dependency_bootstrap"
+      : terminalHandoffRuntimeInterruptContinuation
+        ? "runtime_interrupt_continuation"
+        : undefined;
   if (workspaceDirty && capacityContinuationMode === undefined) {
     if (!args.forceStart) {
       throw new Error(
         "project_control_reviewed_dirty_continuation_force_required",
       );
     }
-    if (!reviewedOutputId && !terminalHandoffDependencyRecovery) {
+    if (!reviewedOutputId && !terminalHandoffRecoveryKind) {
       throw new Error(
         "project_control_reviewed_dirty_continuation_output_required",
       );
@@ -297,6 +312,18 @@ export async function projectControlStartStoredJobView(
         );
       }
       if (
+        terminalHandoffRuntimeInterruptContinuation &&
+        !terminalHandoffRuntimeInterruptContinuationRequested({
+          status: lockedStatus,
+          forceStart: args.forceStart === true,
+          workerAlive: lockedWorkerLiveness.alive,
+        })
+      ) {
+        throw new Error(
+          "project_control_terminal_handoff_recovery_status_changed",
+        );
+      }
+      if (
         !isSafeStartAction(lockedStatus.recommendedAction) &&
         !args.forceStart
       ) {
@@ -325,11 +352,12 @@ export async function projectControlStartStoredJobView(
               reviewedOutputId,
             })
           : undefined;
-      const terminalRecovery = terminalHandoffDependencyRecovery
+      const terminalRecovery = terminalHandoffRecoveryKind
         ? await verifyTerminalHandoffRecovery({
             producer: loaded.manifest,
             workspacePath: workspace.canonicalWorkspacePath,
             snapshotter: reviewedOutputDeps.snapshotter,
+            kind: terminalHandoffRecoveryKind,
           })
         : undefined;
       if (reviewedContinuation) {
@@ -428,6 +456,9 @@ export async function projectControlStartStoredJobView(
           producer: loaded.manifest,
           workspacePath: workspace.canonicalWorkspacePath,
           snapshotter: reviewedOutputDeps.snapshotter,
+          ...(terminalHandoffRecoveryKind
+            ? { kind: terminalHandoffRecoveryKind }
+            : {}),
           expected: terminalRecovery,
         });
         await assertReviewedWorkerContinuationEnvironmentLocked(
@@ -437,7 +468,10 @@ export async function projectControlStartStoredJobView(
         await assertProjectPreStartAdmissionLaunchBinding({
           manifest: loaded.manifest,
           scope: controller.scope,
-          workspaceMode: "terminal_handoff_dependency_recovery",
+          workspaceMode:
+            terminalHandoffRecoveryKind === "runtime_interrupt_continuation"
+              ? "terminal_handoff_runtime_interrupt_continuation"
+              : "terminal_handoff_dependency_recovery",
         });
       } else if (capacityContinuationMode || cleanExplicitContinuation) {
         await assertProjectPreStartAdmissionLaunchBinding({
@@ -469,7 +503,9 @@ export async function projectControlStartStoredJobView(
       const startAdmissionWorkspaceMode = reviewedContinuation
         ? ("reviewed_dirty_continuation" as const)
         : terminalRecovery
-          ? ("terminal_handoff_dependency_recovery" as const)
+          ? terminalHandoffRecoveryKind === "runtime_interrupt_continuation"
+            ? ("terminal_handoff_runtime_interrupt_continuation" as const)
+            : ("terminal_handoff_dependency_recovery" as const)
           : (capacityContinuationMode ??
             (cleanExplicitContinuation
               ? ("clean_explicit_continuation" as const)

@@ -337,7 +337,7 @@ export class SafeExecutionRunner {
         effectiveOriginalPrompt = controlledStartup.originalPrompt;
       }
 
-      const maxAttemptNumber =
+      let maxAttemptNumber =
         existing && hasStartupControl
           ? firstAttemptNumber + policy.maxAttempts - 1
           : policy.maxAttempts;
@@ -459,6 +459,11 @@ export class SafeExecutionRunner {
           const runtimeInterrupt = runtimeInterruptClassification(
             attemptAbort.controller.signal.reason,
           );
+          // A runtime-owned interrupt_then_continue is a control-plane handoff,
+          // not a provider/account failure. Preserve its journal record and
+          // internal attempt number, but grant the queued continuation the
+          // provider attempt that the interrupt displaced.
+          if (runtimeInterrupt) maxAttemptNumber += 1;
           const classification = withFailureDetails(
             runtimeInterrupt ??
               input.classifyError?.(error) ??

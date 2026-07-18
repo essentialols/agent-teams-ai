@@ -4,8 +4,15 @@ import { join } from "node:path";
 
 import type { CodexGoalJobManifest } from "../../codex-goal-jobs";
 import type { CodexGoalStatus } from "../../codex-goal-ops";
-import { readVerifiedProducerHandoff } from "./codex-goal-project-verifier-handoff";
+import {
+  readRuntimeInterruptedProducerHandoff,
+  readVerifiedProducerHandoff,
+} from "./codex-goal-project-verifier-handoff";
 import type { ReviewedWorkerOutputSnapshotterPort } from "../../reviewed-worker-output";
+
+export type TerminalHandoffRecoveryKind =
+  | "dependency_bootstrap"
+  | "runtime_interrupt_continuation";
 
 export type VerifiedTerminalHandoffRecovery = {
   readonly manifestPath: string;
@@ -37,6 +44,31 @@ export function terminalHandoffDependencyRecoveryRequested(input: {
   );
 }
 
+export function terminalHandoffRuntimeInterruptContinuationRequested(input: {
+  readonly status: Pick<
+    CodexGoalStatus,
+    | "workspaceDirty"
+    | "resultExists"
+    | "resultStatus"
+    | "resultReason"
+    | "recommendedAction"
+  >;
+  readonly reviewedOutputId?: string;
+  readonly forceStart: boolean;
+  readonly workerAlive: boolean;
+}): boolean {
+  return (
+    input.status.workspaceDirty === true &&
+    !input.reviewedOutputId &&
+    input.forceStart &&
+    !input.workerAlive &&
+    input.status.resultExists === true &&
+    input.status.resultStatus === "partial" &&
+    input.status.resultReason === "runtime_interrupted" &&
+    input.status.recommendedAction === "inspect_dirty_failure"
+  );
+}
+
 /**
  * Binds a same-job recovery to the terminal handoff that the runtime already
  * published. This does not approve the output: it only proves that the dirty
@@ -46,12 +78,15 @@ export async function verifyTerminalHandoffRecovery(input: {
   readonly producer: CodexGoalJobManifest;
   readonly workspacePath: string;
   readonly snapshotter: ReviewedWorkerOutputSnapshotterPort;
+  readonly kind?: TerminalHandoffRecoveryKind;
   readonly expected?: VerifiedTerminalHandoffRecovery;
 }): Promise<VerifiedTerminalHandoffRecovery> {
   await assertNoReviewDecision(input.producer);
-  const handoff = await readVerifiedProducerHandoff({
-    producer: input.producer,
-  });
+  const handoff = input.kind === "runtime_interrupt_continuation"
+    ? await readRuntimeInterruptedProducerHandoff({
+        producer: input.producer,
+      })
+    : await readVerifiedProducerHandoff({ producer: input.producer });
   const current = await input.snapshotter.capture({
     workspacePath: input.workspacePath,
   });

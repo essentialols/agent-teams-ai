@@ -822,13 +822,18 @@ describe("builtin project pre-start admission", () => {
       scope: fixture.scope,
       workspaceMode: "terminal_handoff_dependency_recovery",
     });
+    await authorizeProjectPreStartAdmissionLaunch({
+      manifest,
+      scope: fixture.scope,
+      workspaceMode: "terminal_handoff_runtime_interrupt_continuation",
+    });
 
     const receipt = JSON.parse(
       await readFile(plan.descriptor.receiptPath, "utf8"),
     ) as Record<string, unknown>;
     expect(receipt).toMatchObject({
       status: "launch_authorized",
-      launchAuthorizationCount: 3,
+      launchAuthorizationCount: 4,
     });
   });
 

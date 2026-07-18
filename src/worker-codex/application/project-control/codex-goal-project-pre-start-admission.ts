@@ -22,6 +22,7 @@ import {
   materializeBuiltinWorkerLaunchSpec,
   validateBuiltinWorkerLaunchSpec,
 } from "./codex-goal-project-builtin-pre-start-admission";
+import { isProjectPreStartAdmissionDirtyContinuationMode } from "./codex-goal-project-pre-start-admission-types";
 import type { ProjectPreStartAdmissionLaunchWorkspaceMode } from "./codex-goal-project-pre-start-admission-types";
 export type {
   ProjectPreStartAdmissionDirtyContinuationMode,
@@ -277,8 +278,7 @@ export async function assertProjectPreStartAdmissionLaunchBinding(input: {
   const verifiedInputPatch = verifiedInputPatchFromReceipt(receipt, contract);
   const adoptionInput = isAdoptionManifest(input.manifest);
   const dirtyContinuation =
-    input.workspaceMode === "reviewed_dirty_continuation" ||
-    input.workspaceMode === "terminal_handoff_dependency_recovery";
+    isProjectPreStartAdmissionDirtyContinuationMode(input.workspaceMode);
   const admittedInputPatchContinuation =
     input.workspaceMode === "admitted_input_patch_continuation";
   const cleanCapacityContinuation =

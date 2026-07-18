@@ -99,6 +99,7 @@ export type ManagedRunPersistContext =
       readonly runId: string;
       readonly job: ManagedRunRecoveryJob;
       readonly attempt: number;
+      readonly runtimeControlledInterrupt?: boolean;
   }
   | {
       readonly kind: "resume";
@@ -201,7 +202,12 @@ export class FileBackendCodexManagedRunCoordinator {
     context?: ManagedRunPersistContext,
   ): Promise<ManagedRunWorkerResult> {
     if (result.status === "failed") {
-      this.options.recordFailure(result.failure);
+      if (
+        context?.kind !== "run" ||
+        context.runtimeControlledInterrupt !== true
+      ) {
+        this.options.recordFailure(result.failure);
+      }
       throw new SubscriptionWorkerError(
         "subscription_worker_run_failed",
         result.failure.safeMessage,

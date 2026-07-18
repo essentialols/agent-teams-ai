@@ -354,16 +354,15 @@ describe("CommandPolicyRunner", () => {
       now: () => new Date("2026-05-31T00:05:00.000Z"),
       monotonicMs: () => performance.now(),
     };
-    const appServers = [
-      new FakeAppServerFactory({
-        holdTurnOpen: true,
-        writeFileOnTurn: {
-          relativePath: "wip.txt",
-          content: "partial implementation\n",
-        },
-      }),
-      new FakeAppServerFactory(),
-    ];
+    const interruptedAppServer = new FakeAppServerFactory({
+      holdTurnOpen: true,
+      writeFileOnTurn: {
+        relativePath: "wip.txt",
+        content: "partial implementation\n",
+      },
+    });
+    const continuationAppServer = new FakeAppServerFactory();
+    let appServerStart = 0;
     const controlInbox = new WorkerControlService({
       store: new LocalFileWorkerControlInboxStore({ rootDir }),
       clock,
@@ -379,15 +378,21 @@ describe("CommandPolicyRunner", () => {
       workspacePath,
       controlInbox,
       activeAttemptRegistry,
-      accounts: appServers.map((appServer, index) => ({
-        codexAuthJson: codexAuthJson(`interrupt-account-${index + 1}`),
+      accounts: [{
+        codexAuthJson: codexAuthJson("interrupt-account-1"),
         worker: {
-          providerInstanceId: `codex-interrupt-account-${index + 1}`,
+          providerInstanceId: "codex-interrupt-account-1",
           stateRootDir: rootDir,
           codexBinaryPath: "codex",
-          encryptionKey: new Uint8Array(32).fill(index + 40),
+          encryptionKey: new Uint8Array(32).fill(40),
           executionEngine: "app-server-goal",
-          appServerProcessFactory: appServer.create,
+          appServerProcessFactory: (input) => {
+            const factory = appServerStart === 0
+              ? interruptedAppServer
+              : continuationAppServer;
+            appServerStart += 1;
+            return factory.create(input);
+          },
           runner: new StaticRunner({
             exitCode: 0,
             stdout: "",
@@ -398,7 +403,7 @@ describe("CommandPolicyRunner", () => {
           },
           clock,
         },
-      })),
+      }],
       clock,
     });
 
@@ -412,7 +417,7 @@ describe("CommandPolicyRunner", () => {
       });
 
       await waitUntil(async () => {
-        if (appServers[0]!.prompts.length === 0) return false;
+        if (interruptedAppServer.prompts.length === 0) return false;
         await access(join(workspacePath, "wip.txt"));
         return true;
       });
@@ -430,15 +435,22 @@ describe("CommandPolicyRunner", () => {
 
       const result = await resultPromise;
       if (result.status !== "completed") {
-        throw new Error(`expected completed: ${result.reason}:${result.safeMessage}`);
+        throw new Error(
+          `expected completed: ${result.reason}:${result.safeMessage}:` +
+            JSON.stringify(result.failureDetails),
+        );
       }
       expect(result.attempts).toHaveLength(2);
+      expect(result.attempts.map((attempt) => attempt.attemptNumber)).toEqual([
+        1,
+        2,
+      ]);
       expect(result.attempts[0]?.failureReason).toBe("runtime_interrupted");
       expect(result.attempts[0]?.workspaceDirtyAfter).toBe(true);
-      expect(appServers[0]!.prompts).toEqual([
+      expect(interruptedAppServer.prompts).toEqual([
         "Implement the interruptible safe task.",
       ]);
-      const continuationPrompt = appServers[1]!.prompts[0] ?? "";
+      const continuationPrompt = continuationAppServer.prompts[0] ?? "";
       expect(continuationPrompt).toContain("Continue the same task");
       expect(continuationPrompt).toContain(
         "Previous attempt stopped because: runtime_interrupted",

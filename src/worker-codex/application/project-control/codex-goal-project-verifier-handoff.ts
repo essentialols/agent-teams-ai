@@ -28,7 +28,21 @@ export async function readVerifiedProducerHandoff(input: {
 }): Promise<VerifiedProducerHandoff> {
   return readProducerHandoff({
     producer: input.producer,
-    allowProviderOutputInvalid: false,
+    acceptedTerminalResult: "completed",
+  });
+}
+
+/**
+ * Reads the exact handoff of a strict partial result stopped by the runtime's
+ * own interrupt_then_continue control. It remains bound to the same producer
+ * job, task and workspace and does not make the output reviewable.
+ */
+export async function readRuntimeInterruptedProducerHandoff(input: {
+  readonly producer: CodexGoalJobManifest;
+}): Promise<VerifiedProducerHandoff> {
+  return readProducerHandoff({
+    producer: input.producer,
+    acceptedTerminalResult: "runtime_interrupted",
   });
 }
 
@@ -43,13 +57,16 @@ export async function readVerifiableProducerHandoff(input: {
 }): Promise<VerifiedProducerHandoff> {
   return readProducerHandoff({
     producer: input.producer,
-    allowProviderOutputInvalid: true,
+    acceptedTerminalResult: "provider_output_invalid",
   });
 }
 
 async function readProducerHandoff(input: {
   readonly producer: CodexGoalJobManifest;
-  readonly allowProviderOutputInvalid: boolean;
+  readonly acceptedTerminalResult:
+    | "completed"
+    | "provider_output_invalid"
+    | "runtime_interrupted";
 }): Promise<VerifiedProducerHandoff> {
   const producerJobRoot = await canonicalDirectory(input.producer.jobRootDir);
   const producerWorkspace = await canonicalDirectory(
@@ -58,8 +75,14 @@ async function readProducerHandoff(input: {
   const resultHandoff = await currentResultHandoff({
     producer: input.producer,
     producerJobRoot,
-    allowProviderOutputInvalid: input.allowProviderOutputInvalid,
+    acceptedTerminalResult: input.acceptedTerminalResult,
   });
+  if (
+    input.acceptedTerminalResult === "runtime_interrupted" &&
+    !resultHandoff
+  ) {
+    throw new Error("project_control_verifier_handoff_result_invalid");
+  }
   const manifestPath = await realpath(
     resultHandoff?.manifestPath ??
       join(producerJobRoot, `${input.producer.taskId}.handoff.manifest.json`),
@@ -121,7 +144,10 @@ async function readProducerHandoff(input: {
 async function currentResultHandoff(input: {
   readonly producer: CodexGoalJobManifest;
   readonly producerJobRoot: string;
-  readonly allowProviderOutputInvalid: boolean;
+  readonly acceptedTerminalResult:
+    | "completed"
+    | "provider_output_invalid"
+    | "runtime_interrupted";
 }): Promise<
   | {
       readonly resultPath: string;
@@ -145,15 +171,24 @@ async function currentResultHandoff(input: {
     throw new Error("project_control_verifier_handoff_result_unowned");
   }
   const result = await readRuntimeResultBrief(resultPath);
-  const completed = result.status === "done";
+  const completed =
+    input.acceptedTerminalResult !== "runtime_interrupted" &&
+    result.status === "done";
   const verifiableProviderOutputFailure =
-    input.allowProviderOutputInvalid &&
+    input.acceptedTerminalResult === "provider_output_invalid" &&
     (result.status === "failed" || result.status === "partial") &&
     result.lastFailureReason === "provider_output_invalid" &&
     result.handoffArtifactError === undefined;
+  const continuableRuntimeInterrupt =
+    input.acceptedTerminalResult === "runtime_interrupted" &&
+    result.status === "partial" &&
+    result.lastFailureReason === "runtime_interrupted" &&
+    result.handoffArtifactError === undefined;
   if (
     result.strict !== true ||
-    (!completed && !verifiableProviderOutputFailure) ||
+    (!completed &&
+      !verifiableProviderOutputFailure &&
+      !continuableRuntimeInterrupt) ||
     !result.manifestPath ||
     !result.manifestSha256 ||
     !/^[0-9a-f]{64}$/i.test(result.manifestSha256)

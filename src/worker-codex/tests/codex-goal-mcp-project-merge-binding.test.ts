@@ -417,7 +417,10 @@ describe("project merge-bound refill", () => {
           ...request,
           newBranch: "test/different-branch",
         }),
-      ).rejects.toThrow("project_control_existing_worktree_branch_mismatch");
+      ).resolves.toMatchObject({
+        ok: false,
+        error: "project_control_existing_worktree_branch_mismatch",
+      });
       expect(await readFile(join(workerRoot, "prompt.md"), "utf8")).toBe(
         promptBefore,
       );
@@ -426,9 +429,10 @@ describe("project merge-bound refill", () => {
           ...request,
           model: "different-model",
         }),
-      ).rejects.toThrow(
-        "project_control_merge_rebind_existing_job_mismatch:model",
-      );
+      ).resolves.toMatchObject({
+        ok: false,
+        error: "project_control_merge_rebind_existing_job_mismatch:model",
+      });
       expect(await readFile(join(workerRoot, "prompt.md"), "utf8")).toBe(
         promptBefore,
       );
@@ -445,13 +449,19 @@ describe("project merge-bound refill", () => {
       );
       await expect(
         callToolJson(client, "codex_goal_project_refill_worker", request),
-      ).rejects.toThrow("project_control_merge_rebind_worker_still_running");
+      ).resolves.toMatchObject({
+        ok: false,
+        error: "project_control_merge_rebind_worker_still_running",
+      });
       await rm(join(workerRoot, `${workerId}.progress.json`));
 
       await writeFile(join(workerWorkspace, "unexpected.txt"), "dirty\n");
       await expect(
         callToolJson(client, "codex_goal_project_refill_worker", request),
-      ).rejects.toThrow("project_control_existing_worktree_dirty");
+      ).resolves.toMatchObject({
+        ok: false,
+        error: "project_control_existing_worktree_dirty",
+      });
       await rm(join(workerWorkspace, "unexpected.txt"));
 
       const result = await callToolJson(

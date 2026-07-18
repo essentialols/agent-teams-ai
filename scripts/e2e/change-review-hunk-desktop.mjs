@@ -20,6 +20,7 @@ const fixtureRoot = path.resolve(
     path.join(os.tmpdir(), 'agent-teams-change-review-desktop-e2e')
 );
 const devMcpMode = process.argv.includes('--dev-mcp');
+const singleWindowMode = process.argv.includes('--single-window');
 const keepFixture = process.env.AGENT_TEAMS_CHANGES_E2E_KEEP === '1';
 const skipBuild = process.env.AGENT_TEAMS_CHANGES_E2E_SKIP_BUILD === '1';
 const selectTeamButton = `Array.from(document.querySelectorAll('button'))
@@ -195,6 +196,10 @@ async function startApp(port, fixture) {
   await client.send('Runtime.enable');
   await client.send('Page.enable');
   await client.send('Page.bringToFront');
+  await ensureSandboxNavigation();
+}
+
+async function ensureSandboxNavigation() {
   await client.waitFor(
     `(${sandboxKanbanTaskCard}) || (${selectTeamButton})`,
     'sandbox team navigation'
@@ -213,6 +218,23 @@ async function startApp(port, fixture) {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+async function reloadRenderer() {
+  if (!client) throw new Error('Cannot reload Changes before CDP is connected');
+  const loaded = client.waitForEvent('Page.loadEventFired', 60_000);
+  await client.send('Page.reload', { ignoreCache: true });
+  await loaded;
+  await ensureSandboxNavigation();
+}
+
+async function restartApp(port, fixture) {
+  if (singleWindowMode) {
+    await reloadRenderer();
+    return;
+  }
+  await stopApp();
+  await startApp(port, fixture);
 }
 
 function isProcessGroupAlive(processGroupId) {
@@ -344,9 +366,19 @@ class CdpClient {
     this.socket = socket;
     this.nextId = 1;
     this.pending = new Map();
+    this.eventWaiters = new Map();
     socket.on('message', (raw) => {
       const message = JSON.parse(raw.toString());
-      if (!message.id) return;
+      if (!message.id) {
+        const waiters = this.eventWaiters.get(message.method);
+        if (!waiters) return;
+        this.eventWaiters.delete(message.method);
+        for (const waiter of waiters) {
+          clearTimeout(waiter.timer);
+          waiter.resolve(message.params);
+        }
+        return;
+      }
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
@@ -356,6 +388,13 @@ class CdpClient {
     socket.on('close', () => {
       for (const pending of this.pending.values()) pending.reject(new Error('CDP closed'));
       this.pending.clear();
+      for (const waiters of this.eventWaiters.values()) {
+        for (const waiter of waiters) {
+          clearTimeout(waiter.timer);
+          waiter.reject(new Error('CDP closed'));
+        }
+      }
+      this.eventWaiters.clear();
     });
   }
 
@@ -373,6 +412,23 @@ class CdpClient {
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  waitForEvent(method, timeoutMs = 30_000) {
+    return new Promise((resolve, reject) => {
+      const waiters = this.eventWaiters.get(method) ?? new Set();
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          waiters.delete(waiter);
+          if (waiters.size === 0) this.eventWaiters.delete(method);
+          reject(new Error(`Timed out waiting for CDP event ${method}`));
+        }, timeoutMs),
+      };
+      waiters.add(waiter);
+      this.eventWaiters.set(method, waiters);
     });
   }
 
@@ -576,6 +632,9 @@ async function assertViewportFits() {
 }
 
 async function main() {
+  if (singleWindowMode && !devMcpMode) {
+    throw new Error('--single-window is supported only with --dev-mcp');
+  }
   const fixture = seedFixture();
   await mkdir(fixtureRoot, { recursive: true });
   const port = await findAvailablePort(Number(process.env.AGENT_TEAMS_CHANGES_E2E_PORT) || 9410);
@@ -714,8 +773,7 @@ async function main() {
   );
   await waitForDiskLines(fixture.changedFile, 'after-0', 'after-1');
 
-  await stopApp();
-  await startApp(port, fixture);
+  await restartApp(port, fixture);
   await openReview();
   await client.waitFor(
     `document.querySelector('button[aria-label^="Review history: 1 undo, 1 redo"]')`,
@@ -755,8 +813,7 @@ async function main() {
   // Keep this mode focused on the new durable Restore workflow; the production-preview
   // path below continues to exercise the complete hunk and guarded-close matrix.
   if (devMcpMode) {
-    await stopApp();
-    await startApp(port, fixture);
+    await restartApp(port, fixture);
     await openReview();
     await client.waitFor(
       `document.body?.innerText.includes('12 pending') &&
@@ -766,8 +823,9 @@ async function main() {
     await assertDiskLines(fixture.changedFile, 'after-0', 'after-1');
     await assertViewportFits();
     process.stdout.write(
-      'Changes desktop E2E passed (dev:mcp): Accept All -> Reject file -> Restore back -> ' +
-        'restart -> Restore forward -> Undo to start -> restart -> exact disk/history\n'
+      `Changes desktop E2E passed (dev:mcp${singleWindowMode ? ', single-window' : ''}): ` +
+        'Accept All -> Reject file -> Restore back -> hydrate -> Restore forward -> ' +
+        'Undo to start -> hydrate -> exact disk/history\n'
     );
     return;
   }
@@ -787,8 +845,7 @@ async function main() {
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'Redo result');
   await waitForDiskLines(fixture.changedFile, 'before-0', 'after-1');
 
-  await stopApp();
-  await startApp(port, fixture);
+  await restartApp(port, fixture);
   await openReview();
   await client.waitFor(
     `document.body?.innerText.includes('#E2E-101')`,
@@ -843,8 +900,7 @@ async function main() {
   await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
   await assertViewportFits();
 
-  await stopApp();
-  await startApp(port, fixture);
+  await restartApp(port, fixture);
   await openReview();
   assert.equal(await client.evaluate(`Boolean(${buttonWithText('Redo')})`), false);
   assert.equal(

@@ -1,4 +1,12 @@
-import { lstat, mkdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
@@ -22,6 +30,7 @@ import {
 import {
   collectCodexGoalStatus,
   resolveCodexGoalWorkerLiveness,
+  type CodexGoalStatus,
 } from "./codex-goal-ops";
 import {
   type CodexGoalProjectCreateWorktreeInput,
@@ -67,9 +76,11 @@ import {
   resolveProjectSourceReference,
   resolveProjectSourceRevision,
 } from "./application/project-control/codex-goal-project-source-revision";
+import { execGitStdout } from "./application/project-control/codex-goal-project-git";
 import {
   finalizeProjectMergeBoundSource,
   parseProjectMergeBindingRequest,
+  readExistingProjectMergeBinding,
 } from "./application/project-control/codex-goal-project-merge-binding";
 import { assertProjectRefillInputPatchSource } from "./application/project-control/codex-goal-project-input-patch-policy";
 import {
@@ -80,10 +91,15 @@ import {
   assertReadablePrompt,
   createOrReuseProjectJob,
   createOrReuseProjectWorktree,
+  projectRefillJobMismatches,
+  projectRefillLaunchArtifactTransactionPending,
   readTextFileIfExists,
+  reconcileProjectRefillLaunchArtifactTransaction,
+  replaceProjectRefillLaunchArtifacts,
   rollbackProjectRefillPartial,
 } from "./application/project-control/codex-goal-project-refill";
 import {
+  assertProjectPreStartAdmissionLaunchBinding,
   assertProjectPreStartAdmissionSourceRevision,
   planProjectPreStartAdmission,
   prepareProjectPreStartAdmission,
@@ -171,6 +187,7 @@ export async function projectControlRefillWorkerView(
     throw new Error("project_control_child_danger_full_access_denied");
   }
   let promptBody = requiredRawString(args.promptBody, "promptBody");
+  const unboundPromptBody = promptBody;
   const sourceWorkspacePath = projectControlPathArg(
     args,
     args.sourceWorkspacePath,
@@ -347,6 +364,19 @@ export async function projectControlRefillWorkerView(
       ? { projectPreStartAdmission: preStartAdmission.descriptor }
       : {}),
   };
+  const mergeRebindExisting = mergeBinding
+    ? await projectMergeRebindExistingJob({
+        registryRootDir: controller.registryRootDir,
+        expected: createManifest,
+      })
+    : undefined;
+  const mergeAlreadyBound =
+    mergeBinding && !mergeRebindExisting
+      ? await projectExactExistingMergeBoundJob({
+          registryRootDir: controller.registryRootDir,
+          expected: createManifest,
+        })
+      : undefined;
   assertProjectControlCreateManifestPaths({
     scope: controller.scope,
     registryRootDir: controller.registryRootDir,
@@ -474,6 +504,11 @@ export async function projectControlRefillWorkerView(
   let expectedCanonicalWorkspacePath: string;
   let prompt: { readonly promptPath: string; readonly bytes: number };
   let dependencyPreflight: DependencyPreflightResult | undefined;
+  let rebindTransaction:
+    | Awaited<ReturnType<typeof replaceProjectRefillLaunchArtifacts>>
+    | undefined;
+  let recoveredMergeAlreadyBound = false;
+  let mergeBoundRetryStartRequired = false;
   try {
     const worktreeResult = await createOrReuseProjectWorktree({
       broker: worktreeBroker,
@@ -483,42 +518,130 @@ export async function projectControlRefillWorkerView(
     worktree = worktreeResult.result;
     worktreeCreated = worktreeResult.created;
 
-    const existingPrompt = await readTextFileIfExists(
-      createManifest.promptPath,
-    );
-    if (existingPrompt !== null && existingPrompt !== promptBody) {
-      throw new Error("project_control_existing_prompt_mismatch");
-    }
-    if (existingPrompt === null) {
-      await mkdir(dirname(createManifest.promptPath), {
-        recursive: true,
-        mode: 0o700,
+    if (mergeRebindExisting) {
+      if (!preStartAdmission) {
+        throw new Error("project_control_merge_rebind_admission_required");
+      }
+      const expectedCanonicalWorkspacePath =
+        await projectControlCanonicalWorkspacePath(
+          createManifest.workspacePath,
+          controller.scope,
+        );
+      await withValidatedProjectWorkspaceLock({
+        locks: projectControlWorkspaceLocks(controller.registryRootDir),
+        scope: controller.scope,
+        requestedWorkspacePath: createManifest.workspacePath,
+        expectedCanonicalWorkspacePath,
+        owner:
+          `project-merge-rebind:${controller.controller.jobId}:` +
+          createManifest.jobId,
+        effect: async () => {
+          await reconcileProjectRefillLaunchArtifactTransaction({
+            manifest: mergeRebindExisting,
+            scope: controller.scope,
+          });
+          if (
+            await readExistingProjectMergeBinding(createManifest.jobRootDir)
+          ) {
+            recoveredMergeAlreadyBound = true;
+            return;
+          }
+          const lockedExisting = await readCodexGoalJob({
+            registryRootDir: controller.registryRootDir,
+            jobId: createManifest.jobId,
+          });
+          const lockedMismatches = projectRefillJobMismatches(
+            lockedExisting,
+            createManifest,
+          );
+          if (lockedMismatches.length > 0) {
+            throw new Error(
+              `project_control_merge_rebind_existing_job_mismatch:${lockedMismatches.join(",")}`,
+            );
+          }
+          if (!newBranch || !merge) {
+            throw new Error("project_control_merge_rebind_branch_required");
+          }
+          const [lockedBranch, lockedHead] = await Promise.all([
+            execGitStdout([
+              "-C",
+              createManifest.workspacePath,
+              "symbolic-ref",
+              "--short",
+              "HEAD",
+            ]),
+            execGitStdout([
+              "-C",
+              createManifest.workspacePath,
+              "rev-parse",
+              "--verify",
+              "HEAD^{commit}",
+            ]),
+          ]);
+          if (lockedBranch.trim() !== newBranch) {
+            throw new Error("project_control_merge_rebind_branch_mismatch");
+          }
+          if (lockedHead.trim() !== merge.expectedTargetCommit) {
+            throw new Error("project_control_merge_rebind_head_mismatch");
+          }
+          await assertTerminalCleanProjectMergeRebind({
+            manifest: lockedExisting,
+            scope: controller.scope,
+          });
+          rebindTransaction = await replaceProjectRefillLaunchArtifacts({
+            existing: lockedExisting,
+            expected: createManifest,
+            expectedExistingPromptBody: unboundPromptBody,
+            promptBody,
+            admission: preStartAdmission,
+            scope: controller.scope,
+            ...(producerInputPatch
+              ? {
+                  verifiedInputPatchArtifactSha256: producerInputPatch.sha256,
+                  verifiedInputPatchStagedSha256:
+                    producerInputPatch.stagedSha256,
+                }
+              : {}),
+          });
+        },
       });
-      await writeFile(createManifest.promptPath, promptBody, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-      promptWritten = true;
+    } else if (!mergeAlreadyBound) {
+      const existingPrompt = await readTextFileIfExists(
+        createManifest.promptPath,
+      );
+      if (existingPrompt !== null && existingPrompt !== promptBody) {
+        throw new Error("project_control_existing_prompt_mismatch");
+      }
+      if (existingPrompt === null) {
+        await mkdir(dirname(createManifest.promptPath), {
+          recursive: true,
+          mode: 0o700,
+        });
+        await writeFile(createManifest.promptPath, promptBody, {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+        promptWritten = true;
+      }
+      if (preStartAdmission) {
+        const prepared = await prepareProjectPreStartAdmission({
+          plan: preStartAdmission,
+          manifest: createManifest,
+          scope: controller.scope,
+          ...(producerInputPatch
+            ? {
+                verifiedInputPatchArtifactSha256: producerInputPatch.sha256,
+                verifiedInputPatchStagedSha256: producerInputPatch.stagedSha256,
+              }
+            : {}),
+        });
+        admissionCreatedPaths = prepared.createdPaths;
+      }
     }
     prompt = await assertReadablePrompt({
       promptPath: createManifest.promptPath,
       expectedBody: promptBody,
     });
-
-    if (preStartAdmission) {
-      const prepared = await prepareProjectPreStartAdmission({
-        plan: preStartAdmission,
-        manifest: createManifest,
-        scope: controller.scope,
-        ...(producerInputPatch
-          ? {
-              verifiedInputPatchArtifactSha256: producerInputPatch.sha256,
-              verifiedInputPatchStagedSha256: producerInputPatch.stagedSha256,
-            }
-          : {}),
-      });
-      admissionCreatedPaths = prepared.createdPaths;
-    }
 
     const createBroker = deps.codexProjectControlBroker({
       registryRootDir: controller.registryRootDir,
@@ -549,28 +672,66 @@ export async function projectControlRefillWorkerView(
       manifest.workspacePath,
       controller.scope,
     );
-    await validateProjectRefillPreStartAdmission({
-      registryRootDir: controller.registryRootDir,
-      controllerJobId: controller.controller.jobId,
-      scope: controller.scope,
-      manifest,
-      expectedCanonicalWorkspacePath,
-      admittedInputPatch: Boolean(producerInputPatch),
-    });
+    if (mergeAlreadyBound || recoveredMergeAlreadyBound) {
+      await assertProjectPreStartAdmissionLaunchBinding({
+        manifest,
+        scope: controller.scope,
+        workspaceMode: "clean_explicit_continuation",
+      });
+      mergeBoundRetryStartRequired =
+        await projectMergeBoundRetryStartRequired(manifest);
+    } else {
+      await validateProjectRefillPreStartAdmission({
+        registryRootDir: controller.registryRootDir,
+        controllerJobId: controller.controller.jobId,
+        scope: controller.scope,
+        manifest,
+        expectedCanonicalWorkspacePath,
+        admittedInputPatch: Boolean(producerInputPatch),
+      });
+    }
+    await rebindTransaction?.commit();
   } catch (error) {
-    await removeProjectPreStartAdmissionPaths(admissionCreatedPaths);
-    await removeReviewedOutputAggregateArtifacts(aggregateArtifactCreatedPaths);
-    const rolledBack = await rollbackProjectRefillPartial({
-      expectedSourceRealPath: createWorktreeInput.expectedSourceRealPath,
-      workspacePath: createManifest.workspacePath,
-      promptPath: createManifest.promptPath,
-      registryRootDir: controller.registryRootDir,
-      jobId: createManifest.jobId,
-      worktreeCreated,
-      promptWritten,
-    });
+    const cleanupErrors: unknown[] = [];
+    try {
+      await rebindTransaction?.rollback();
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    try {
+      await removeProjectPreStartAdmissionPaths(admissionCreatedPaths);
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    try {
+      await removeReviewedOutputAggregateArtifacts(
+        aggregateArtifactCreatedPaths,
+      );
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    let rolledBack: readonly string[] = [];
+    try {
+      rolledBack = await rollbackProjectRefillPartial({
+        expectedSourceRealPath: createWorktreeInput.expectedSourceRealPath,
+        workspacePath: createManifest.workspacePath,
+        promptPath: createManifest.promptPath,
+        registryRootDir: controller.registryRootDir,
+        jobId: createManifest.jobId,
+        worktreeCreated,
+        promptWritten,
+      });
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
     if (error instanceof Error && rolledBack.length > 0) {
       error.message = `${error.message}; rollback=${rolledBack.join(",")}`;
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        "project_control_refill_and_rollback_failed",
+      );
     }
     throw error;
   }
@@ -582,7 +743,11 @@ export async function projectControlRefillWorkerView(
   });
   let start: ProjectControlOperationResult | undefined;
   let accountReservation: CodexProjectAccountReservation | undefined;
-  if (booleanValue(args.startWorker) !== false) {
+  if (
+    booleanValue(args.startWorker) !== false &&
+    (!(mergeAlreadyBound || recoveredMergeAlreadyBound) ||
+      mergeBoundRetryStartRequired)
+  ) {
     await assertReadablePrompt({ promptPath: manifest.promptPath });
     const launch = await goalLaunchInput(codexGoalJobToArgs(manifest));
     const started = await withValidatedProjectWorkspaceLock({
@@ -624,9 +789,19 @@ export async function projectControlRefillWorkerView(
             scope: controller.scope,
             startLaunch: reservedLaunch,
             startManifest: manifest,
-            ...(producerInputPatch
-              ? { startAdmissionWorkspaceMode: "admitted_input_patch" as const }
-              : {}),
+            ...(mergeRebindExisting ||
+            mergeAlreadyBound ||
+            recoveredMergeAlreadyBound
+              ? {
+                  startAdmissionWorkspaceMode:
+                    "clean_explicit_continuation" as const,
+                }
+              : producerInputPatch
+                ? {
+                    startAdmissionWorkspaceMode:
+                      "admitted_input_patch" as const,
+                  }
+                : {}),
             startWorkspaceLease: workspace,
             startSkipDoctor: booleanValue(args.skipDoctor) ?? false,
           });
@@ -913,6 +1088,203 @@ async function removeReviewedOutputAggregateArtifacts(
   for (const path of [...paths].reverse()) await rm(path, { force: true });
   const root = paths[0] ? dirname(paths[0]) : undefined;
   if (root) await rmdir(root).catch(() => undefined);
+}
+
+async function projectMergeRebindExistingJob(input: {
+  readonly registryRootDir: string;
+  readonly expected: CodexGoalJobManifestInput;
+}): Promise<CodexGoalJobManifest | undefined> {
+  let existing: CodexGoalJobManifest;
+  try {
+    existing = await readCodexGoalJob({
+      registryRootDir: input.registryRootDir,
+      jobId: input.expected.jobId,
+    });
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+  if (await readExistingProjectMergeBinding(existing.jobRootDir)) {
+    if (
+      !(await projectRefillLaunchArtifactTransactionPending(
+        existing.jobRootDir,
+      ))
+    ) {
+      return undefined;
+    }
+  }
+  const mismatches = projectRefillJobMismatches(existing, input.expected);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `project_control_merge_rebind_existing_job_mismatch:${mismatches.join(",")}`,
+    );
+  }
+  return existing;
+}
+
+async function projectExactExistingMergeBoundJob(input: {
+  readonly registryRootDir: string;
+  readonly expected: CodexGoalJobManifestInput;
+}): Promise<CodexGoalJobManifest | undefined> {
+  let existing: CodexGoalJobManifest;
+  try {
+    existing = await readCodexGoalJob({
+      registryRootDir: input.registryRootDir,
+      jobId: input.expected.jobId,
+    });
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+  if (!(await readExistingProjectMergeBinding(existing.jobRootDir))) {
+    return undefined;
+  }
+  const mismatches = projectRefillJobMismatches(existing, input.expected);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `project_control_merge_rebind_existing_job_mismatch:${mismatches.join(",")}`,
+    );
+  }
+  return existing;
+}
+
+export async function projectMergeBoundRetryStartRequired(
+  manifest: CodexGoalJobManifest,
+): Promise<boolean> {
+  const receiptPath = manifest.projectPreStartAdmission?.receiptPath;
+  if (!receiptPath) {
+    throw new Error("project_control_merge_rebind_existing_admission_required");
+  }
+  let receipt: unknown;
+  try {
+    const body = await readFile(receiptPath);
+    if (body.byteLength > 64 * 1024) throw new Error("size_limit_exceeded");
+    receipt = JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new Error("project_control_pre_start_receipt_invalid");
+  }
+  if (
+    typeof receipt !== "object" ||
+    receipt === null ||
+    Array.isArray(receipt)
+  ) {
+    throw new Error("project_control_pre_start_receipt_invalid");
+  }
+  const status = (receipt as Readonly<Record<string, unknown>>).status;
+  if (status === "validated_not_launched") return true;
+  if (status === "launch_authorized") return false;
+  throw new Error("project_control_pre_start_receipt_invalid");
+}
+
+const terminalMergeRebindResultStatuses = new Set([
+  "done",
+  "blocked",
+  "failed",
+  "partial",
+]);
+
+async function assertTerminalCleanProjectMergeRebind(input: {
+  readonly manifest: CodexGoalJobManifest;
+  readonly scope: ProjectAccessScope;
+}): Promise<void> {
+  const launch = await goalLaunchInput(codexGoalJobToArgs(input.manifest));
+  const status = await collectCodexGoalStatus(
+    codexGoalStatusInputFromLaunch(launch),
+  );
+  const progressStale =
+    status.progressHeartbeatAgeMs !== undefined &&
+    status.progressHeartbeatAgeMs > 10 * 60_000;
+  const strictTerminalResult = status.resultPath
+    ? await isStrictTerminalMergeRebindResult(status.resultPath)
+    : false;
+  assertProjectMergeRebindRuntimeState({
+    status,
+    progressStale,
+    strictTerminalResult,
+  });
+  await assertProjectPreStartAdmissionLaunchBinding({
+    manifest: input.manifest,
+    scope: input.scope,
+    workspaceMode: "clean_explicit_continuation",
+  });
+}
+
+export function assertProjectMergeRebindRuntimeState(input: {
+  readonly status: CodexGoalStatus;
+  readonly progressStale: boolean;
+  readonly strictTerminalResult: boolean;
+}): void {
+  if (
+    input.status.tmuxAlive === true ||
+    input.status.progressProcessAlive === true ||
+    resolveCodexGoalWorkerLiveness({
+      status: input.status,
+      progressStale: input.progressStale,
+    }).alive
+  ) {
+    throw new Error("project_control_merge_rebind_worker_still_running");
+  }
+  if (!input.strictTerminalResult) {
+    throw new Error("project_control_merge_rebind_terminal_result_required");
+  }
+  if (input.status.workspaceDirty !== false) {
+    throw new Error("project_control_merge_rebind_clean_workspace_required");
+  }
+}
+
+async function isStrictTerminalMergeRebindResult(
+  path: string,
+): Promise<boolean> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return false;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Readonly<Record<string, unknown>>;
+  return (
+    terminalMergeRebindResultStatuses.has(
+      typeof result.status === "string" ? result.status : "",
+    ) &&
+    stringArray(result.changedFiles) &&
+    stringArray(result.evidence) &&
+    stringArray(result.blockers) &&
+    new Set([
+      "wait",
+      "wait_with_limit",
+      "continue",
+      "recover",
+      "stop",
+      "preserve_patch",
+      "switch_account",
+      "ask_user",
+      "launch_next_slice",
+      "review_completed",
+    ]).has(typeof result.nextAction === "string" ? result.nextAction : "")
+  );
+}
+
+function stringArray(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
 }
 
 async function resolveProducerHandoffForVerifier(input: {

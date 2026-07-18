@@ -73,6 +73,32 @@ function formatActionTime(createdAt: string): string | null {
   });
 }
 
+function areRestorePreviewsEqual(
+  previous: ReviewHistoryRestorePreview | null,
+  next: ReviewHistoryRestorePreview
+): boolean {
+  if (!previous || previous.direction !== next.direction) return false;
+  if (
+    previous.actions.length !== next.actions.length ||
+    previous.actions.some((action, index) => action.id !== next.actions[index]?.id)
+  ) {
+    return false;
+  }
+  return (
+    previous.diskTransitions.length === next.diskTransitions.length &&
+    previous.diskTransitions.every((transition, index) => {
+      const candidate = next.diskTransitions[index];
+      return (
+        candidate?.filePath === transition.filePath &&
+        candidate.kind === transition.kind &&
+        candidate.lineStatsStatus === transition.lineStatsStatus &&
+        candidate.linesAdded === transition.linesAdded &&
+        candidate.linesRemoved === transition.linesRemoved
+      );
+    })
+  );
+}
+
 const ToneIcon = ({ tone }: { tone: ReviewActionTone }): React.ReactElement => {
   if (tone === 'accept') return <Check className="size-3.5 text-green-400" />;
   if (tone === 'reject') return <X className="size-3.5 text-red-400" />;
@@ -228,6 +254,7 @@ export const ReviewActionHistoryPopover = ({
   const [restoreRunning, setRestoreRunning] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const cancelRestoreRef = useRef<HTMLButtonElement | null>(null);
+  const restoreRunningRef = useRef(false);
   const undoActions = useMemo(
     () => takeRecentReviewActions(undoHistory, undoVisibleLimit),
     [undoHistory, undoVisibleLimit]
@@ -267,18 +294,45 @@ export const ReviewActionHistoryPopover = ({
       !restoreRequest ||
       restoreRequest.preparationError ||
       !onRestoreToTarget ||
-      restoreRunning
+      restoreRunningRef.current
     ) {
       return;
     }
+    restoreRunningRef.current = true;
     setRestoreRunning(true);
     setRestoreError(null);
     try {
+      if (getRestorePreview) {
+        let latestPreview: ReviewHistoryRestorePreview;
+        try {
+          latestPreview = getRestorePreview(restoreRequest.target);
+        } catch (error) {
+          setRestoreRequest({
+            ...restoreRequest,
+            preview: null,
+            preparationError: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+        if (!areRestorePreviewsEqual(restoreRequest.preview, latestPreview)) {
+          setRestoreRequest({
+            ...restoreRequest,
+            actionCount: latestPreview.actions.length,
+            preview: latestPreview,
+            preparationError: null,
+          });
+          setRestoreError(
+            'Review history changed. Check the updated impact, then confirm Restore again.'
+          );
+          return;
+        }
+      }
       await onRestoreToTarget(restoreRequest.target);
       setRestoreRequest(null);
     } catch (error) {
       setRestoreError(error instanceof Error ? error.message : String(error));
     } finally {
+      restoreRunningRef.current = false;
       setRestoreRunning(false);
     }
   };
@@ -447,7 +501,7 @@ export const ReviewActionHistoryPopover = ({
       <AlertDialog
         open={restoreRequest !== null}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && !restoreRunning) setRestoreRequest(null);
+          if (!nextOpen && !restoreRunningRef.current) setRestoreRequest(null);
         }}
       >
         <AlertDialogContent

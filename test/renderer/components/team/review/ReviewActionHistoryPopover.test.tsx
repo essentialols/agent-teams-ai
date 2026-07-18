@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ReviewActionHistoryPopover } from '../../../../../src/renderer/components/team/review/ReviewActionHistoryPopover';
+import {
+  ReviewActionHistoryPopover,
+  type ReviewHistoryRestorePreview,
+} from '../../../../../src/renderer/components/team/review/ReviewActionHistoryPopover';
 
 import type { ReviewUndoAction } from '@shared/types';
 
@@ -254,6 +257,118 @@ describe('ReviewActionHistoryPopover', () => {
       (button) => button.textContent === 'Restore'
     );
     expect(confirm?.disabled).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it('refreshes a stale impact and requires confirmation again before Restore', async () => {
+    const root = createRoot(container);
+    const older = makeAction(1);
+    const current = makeAction(2);
+    const added = makeAction(3);
+    const onRestoreToTarget = vi.fn().mockResolvedValue(undefined);
+    let preview: ReviewHistoryRestorePreview = {
+      direction: 'undo',
+      actions: [current],
+      diskTransitions: [
+        {
+          filePath: '/repo/file.ts',
+          kind: 'update',
+          lineStatsStatus: 'exact',
+          linesAdded: 1,
+          linesRemoved: 1,
+        },
+      ],
+    };
+    const getRestorePreview = vi.fn(() => preview);
+    act(() => {
+      root.render(
+        <ReviewActionHistoryPopover
+          undoHistory={[older, current]}
+          redoHistory={[]}
+          onRestoreToTarget={onRestoreToTarget}
+          getRestorePreview={getRestorePreview}
+        />
+      );
+    });
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-review-history-restore="action-1"]')
+        ?.click()
+    );
+    preview = {
+      direction: 'undo',
+      actions: [current, added],
+      diskTransitions: [
+        {
+          filePath: '/repo/new.ts',
+          kind: 'create',
+          lineStatsStatus: 'exact',
+          linesAdded: 4,
+          linesRemoved: 0,
+        },
+      ],
+    };
+
+    const findConfirm = () =>
+      [...(document.querySelector('[role="alertdialog"]')?.querySelectorAll('button') ?? [])].find(
+        (button) => button.textContent === 'Restore' || button.textContent === 'Retry restore'
+      );
+    await act(async () => {
+      findConfirm()?.click();
+      await Promise.resolve();
+    });
+    expect(onRestoreToTarget).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Review history changed.');
+    expect(document.body.textContent).toContain('undo 2 review actions');
+    expect(document.body.textContent).toContain('/repo/new.ts');
+    expect(document.body.textContent).toContain('+4');
+
+    await act(async () => {
+      findConfirm()?.click();
+      await Promise.resolve();
+    });
+    expect(onRestoreToTarget).toHaveBeenCalledTimes(1);
+    expect(getRestorePreview).toHaveBeenCalledTimes(3);
+    act(() => root.unmount());
+  });
+
+  it('coalesces duplicate confirmation events while Restore is running', async () => {
+    const root = createRoot(container);
+    const older = makeAction(1);
+    const current = makeAction(2);
+    let finishRestore: (() => void) | undefined;
+    const pendingRestore = new Promise<void>((resolve) => {
+      finishRestore = resolve;
+    });
+    const onRestoreToTarget = vi.fn(() => pendingRestore);
+    act(() => {
+      root.render(
+        <ReviewActionHistoryPopover
+          undoHistory={[older, current]}
+          redoHistory={[]}
+          onRestoreToTarget={onRestoreToTarget}
+        />
+      );
+    });
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-review-history-restore="action-1"]')
+        ?.click()
+    );
+    const confirm = [
+      ...(document.querySelector('[role="alertdialog"]')?.querySelectorAll('button') ?? []),
+    ].find((button) => button.textContent === 'Restore');
+    act(() => {
+      confirm?.click();
+      confirm?.click();
+    });
+    expect(onRestoreToTarget).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishRestore?.();
+      await pendingRestore;
+    });
     act(() => root.unmount());
   });
 });

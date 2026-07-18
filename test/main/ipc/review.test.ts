@@ -1902,6 +1902,27 @@ describe('review IPC path confinement', () => {
     ).resolves.toEqual([]);
 
     applier.saveEditedFile.mockClear();
+    await writeFile(projectFile, 'external-drift\n', 'utf8');
+    const drifted = await ipcMain.invoke(REVIEW_RESTORE_HISTORY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+      target: { kind: 'after-action', stack: 'redo', actionId: thirdAction.id },
+      expectedDecisionRevision: 2,
+    });
+    expect(drifted).toEqual({
+      success: false,
+      error: 'File changed since review update; durable mutation state is ambiguous',
+    });
+    expect(applier.saveEditedFile).not.toHaveBeenCalled();
+    await expect(
+      ipcMain.invoke(
+        REVIEW_LOAD_DECISIONS,
+        'safe-team',
+        persistenceScope.scopeKey,
+        persistenceScope.scopeToken
+      )
+    ).resolves.toMatchObject({ success: true, data: { revision: 2 } });
+
     const stale = await ipcMain.invoke(REVIEW_RESTORE_HISTORY, {
       scope: { teamName: 'safe-team', memberName: 'worker' },
       decisionPersistenceScope: persistenceScope,

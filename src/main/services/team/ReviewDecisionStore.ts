@@ -1040,20 +1040,26 @@ export class ReviewDecisionStore {
         reviewRedoHistory: data.reviewRedoHistory ?? [],
       };
       if (data.expectedRevision !== undefined && data.expectedRevision !== currentRevision) {
-        if (
-          data.mutationId &&
-          current?.lastMutationId === data.mutationId &&
-          isDeepStrictEqual(
-            {
-              hunkDecisions: current.hunkDecisions,
-              fileDecisions: current.fileDecisions,
-              hunkContextHashesByFile: current.hunkContextHashesByFile,
-              reviewActionHistory: current.reviewActionHistory,
-              reviewRedoHistory: current.reviewRedoHistory,
-            },
-            targetSnapshot
-          )
-        ) {
+        const currentSnapshot = current && {
+          hunkDecisions: current.hunkDecisions,
+          fileDecisions: current.fileDecisions,
+          hunkContextHashesByFile: current.hunkContextHashesByFile,
+          reviewActionHistory: current.reviewActionHistory,
+          reviewRedoHistory: current.reviewRedoHistory,
+        };
+        const exactSnapshotMatches =
+          currentSnapshot !== null && isDeepStrictEqual(currentSnapshot, targetSnapshot);
+        const committedMutationRetry =
+          data.mutationId !== undefined && current?.lastMutationId === data.mutationId;
+        // Generic Accept/Reject and clear requests do not have a mutation id. A single
+        // revision advance with the exact full snapshot is the only safe evidence that
+        // this request committed and merely lost its IPC response. Larger gaps may hide
+        // intervening writers even if the scope later returned to equivalent state.
+        const committedGenericRetry =
+          data.mutationId === undefined &&
+          currentRevision === data.expectedRevision + 1 &&
+          exactSnapshotMatches;
+        if ((committedMutationRetry && exactSnapshotMatches) || committedGenericRetry) {
           return currentRevision;
         }
         throw new Error('Review decisions changed; refusing stale state overwrite');

@@ -234,6 +234,68 @@ describe('ReviewDecisionStore', () => {
     ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
   });
 
+  it('makes only an exact single-revision generic retry idempotent after response loss', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeToken = 'task:123:req:generic-response-loss:src:one';
+    const action = {
+      id: 'accept-hunk-response-loss',
+      createdAt: '2026-07-18T12:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: '/repo/file.ts', originalIndex: 0 },
+    };
+    const redoEntry = {
+      action: { ...action, id: 'redo-hunk-response-loss' },
+      decisionSnapshot: {
+        hunkDecisions: { 'file:1': 'rejected' as const },
+        fileDecisions: {},
+      },
+    };
+    const target = {
+      scopeToken,
+      hunkDecisions: { 'file:0': 'accepted' as const, 'file:1': 'rejected' as const },
+      fileDecisions: { file: 'accepted' as const },
+      hunkContextHashesByFile: { file: { 0: 'hash-0', 1: 'hash-1' } },
+      reviewActionHistory: [action],
+      reviewRedoHistory: [redoEntry],
+      expectedRevision: 0,
+    };
+
+    await expect(store.save('demo', 'task-123', target)).resolves.toBe(1);
+    await expect(
+      store.save('demo', 'task-123', {
+        ...target,
+        hunkDecisions: { 'file:1': 'rejected', 'file:0': 'accepted' },
+        hunkContextHashesByFile: { file: { 1: 'hash-1', 0: 'hash-0' } },
+      })
+    ).resolves.toBe(1);
+    await expect(store.load('demo', 'task-123', scopeToken)).resolves.toMatchObject({
+      revision: 1,
+      reviewActionHistory: [action],
+      reviewRedoHistory: [redoEntry],
+    });
+
+    await expect(
+      store.save('demo', 'task-123', {
+        ...target,
+        hunkContextHashesByFile: { file: { 0: 'different', 1: 'hash-1' } },
+      })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+    await expect(
+      store.save('demo', 'task-123', { ...target, reviewRedoHistory: [] })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+    await expect(
+      store.save('demo', 'task-123', { ...target, expectedRevision: 2 })
+    ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
+
+    await expect(store.save('demo', 'task-123', { ...target, expectedRevision: 1 })).resolves.toBe(
+      2
+    );
+    await expect(store.save('demo', 'task-123', target)).rejects.toThrow(
+      'Review decisions changed; refusing stale state overwrite'
+    );
+  });
+
   it('migrates a legacy revision zero snapshot through the first CAS write', async () => {
     const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
     const store = new ReviewDecisionStore();

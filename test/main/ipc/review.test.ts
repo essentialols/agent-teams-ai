@@ -335,6 +335,35 @@ describe('review IPC path confinement', () => {
     );
     expect(saved).toEqual({ success: true, data: { revision: 1 } });
 
+    const responseLostRetry = await ipcMain.invoke(
+      REVIEW_SAVE_DECISIONS,
+      'safe-team',
+      'agent-worker',
+      'agent:worker:content:history',
+      { [`${projectFile}:0`]: 'accepted' },
+      {},
+      null,
+      [action],
+      0
+    );
+    expect(responseLostRetry).toEqual({ success: true, data: { revision: 1 } });
+
+    const divergentRetry = await ipcMain.invoke(
+      REVIEW_SAVE_DECISIONS,
+      'safe-team',
+      'agent-worker',
+      'agent:worker:content:history',
+      { [`${projectFile}:0`]: 'rejected' },
+      {},
+      null,
+      [action],
+      0
+    );
+    expect(divergentRetry).toEqual({
+      success: false,
+      error: 'Review decisions changed; refusing stale state overwrite',
+    });
+
     const loaded = await ipcMain.invoke(
       REVIEW_LOAD_DECISIONS,
       'safe-team',
@@ -350,6 +379,71 @@ describe('review IPC path confinement', () => {
         reviewActionHistory: [action],
         reviewRedoHistory: [],
         revision: 1,
+      },
+    });
+  });
+
+  it('makes an exact clear retry idempotent without deleting newer review state', async () => {
+    const scopeToken = 'agent:worker:content:clear-response-loss';
+    const firstAction = {
+      id: 'clear-response-loss-first',
+      createdAt: '2026-07-18T12:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: projectFile, originalIndex: 0 },
+    };
+    await expect(
+      ipcMain.invoke(
+        REVIEW_SAVE_DECISIONS,
+        'safe-team',
+        'agent-worker',
+        scopeToken,
+        { [`${projectFile}:0`]: 'accepted' },
+        {},
+        null,
+        [firstAction],
+        0
+      )
+    ).resolves.toEqual({ success: true, data: { revision: 1 } });
+
+    await expect(
+      ipcMain.invoke(REVIEW_CLEAR_DECISIONS, 'safe-team', 'agent-worker', scopeToken, 1)
+    ).resolves.toEqual({ success: true, data: { revision: 2 } });
+    await expect(
+      ipcMain.invoke(REVIEW_CLEAR_DECISIONS, 'safe-team', 'agent-worker', scopeToken, 1)
+    ).resolves.toEqual({ success: true, data: { revision: 2 } });
+
+    const newerAction = {
+      ...firstAction,
+      id: 'clear-response-loss-newer',
+      action: { filePath: projectFile, originalIndex: 1 },
+    };
+    await expect(
+      ipcMain.invoke(
+        REVIEW_SAVE_DECISIONS,
+        'safe-team',
+        'agent-worker',
+        scopeToken,
+        { [`${projectFile}:1`]: 'rejected' },
+        {},
+        null,
+        [newerAction],
+        2
+      )
+    ).resolves.toEqual({ success: true, data: { revision: 3 } });
+    await expect(
+      ipcMain.invoke(REVIEW_CLEAR_DECISIONS, 'safe-team', 'agent-worker', scopeToken, 1)
+    ).resolves.toEqual({
+      success: false,
+      error: 'Review decisions changed; refusing stale state overwrite',
+    });
+    await expect(
+      ipcMain.invoke(REVIEW_LOAD_DECISIONS, 'safe-team', 'agent-worker', scopeToken)
+    ).resolves.toMatchObject({
+      success: true,
+      data: {
+        hunkDecisions: { [`${projectFile}:1`]: 'rejected' },
+        reviewActionHistory: [{ id: newerAction.id }],
+        revision: 3,
       },
     });
   });

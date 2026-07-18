@@ -253,6 +253,24 @@ export class ReviewMutationJournalStore {
     });
   }
 
+  async unblock(record: ReviewMutationJournalRecord): Promise<ReviewMutationJournalRecord> {
+    const current = this.parseRecord(
+      await this.readRecord(this.getRecordPath(record)),
+      record.id,
+      record.teamName,
+      record.persistenceScope
+    );
+    if (!current.blocked) return current;
+    const unblocked: ReviewMutationJournalRecord = {
+      ...current,
+      blocked: undefined,
+      failure: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeRecord(unblocked);
+    return unblocked;
+  }
+
   async remove(record: ReviewMutationJournalRecord): Promise<void> {
     await unlinkPathDurably(this.getRecordPath(record)).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;

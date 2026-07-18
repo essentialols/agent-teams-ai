@@ -99,6 +99,7 @@ import {
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
+  REVIEW_RETRY_MUTATION_RECOVERY,
   REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
@@ -322,6 +323,8 @@ import type {
   RejectResult,
   ReplaceMembersRequest,
   RetryFailedOpenCodeSecondaryLanesResult,
+  RetryReviewMutationRecoveryRequest,
+  RetryReviewMutationRecoveryResult,
   ReviewFileScope,
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
@@ -1519,6 +1522,12 @@ const electronAPI: ElectronAPI = {
     },
     executeMutation: async (request: ExecuteReviewMutationRequest) => {
       return invokeIpcWithResult<ExecuteReviewMutationResult>(REVIEW_EXECUTE_MUTATION, request);
+    },
+    retryMutationRecovery: async (request: RetryReviewMutationRecoveryRequest) => {
+      return invokeIpcWithResult<RetryReviewMutationRecoveryResult>(
+        REVIEW_RETRY_MUTATION_RECOVERY,
+        request
+      );
     },
     // Phase 2
     checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {

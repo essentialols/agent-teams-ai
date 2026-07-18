@@ -28,6 +28,8 @@ import type {
   FileChangeWithContent,
   HunkDecision,
   RejectResult,
+  RetryReviewMutationRecoveryRequest,
+  RetryReviewMutationRecoveryResult,
   ReviewFileScope,
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
@@ -765,6 +767,9 @@ export interface ReviewAPI {
   ) => Promise<FileChangeWithContent>;
   applyDecisions: (request: ApplyReviewRequest) => Promise<ApplyReviewResult>;
   executeMutation: (request: ExecuteReviewMutationRequest) => Promise<ExecuteReviewMutationResult>;
+  retryMutationRecovery: (
+    request: RetryReviewMutationRecoveryRequest
+  ) => Promise<RetryReviewMutationRecoveryResult>;
   // Phase 2
   checkConflict: (
     scope: ReviewFileScope,

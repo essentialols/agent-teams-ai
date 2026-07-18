@@ -3136,6 +3136,42 @@ export const ChangeReviewDialog = ({
     return registerAppCloseParticipant(participantId, async () => flushReviewStateForClose());
   }, [decisionHydrationKey, flushReviewStateForClose, open, scopeKey, teamName]);
 
+  const handleRetrySavedReviewState = useCallback(async (): Promise<void> => {
+    if (!decisionScopeToken || reviewMutationBusy) return;
+    setUndoInFlight(true);
+    try {
+      if (decisionHydrationFailed) {
+        await api.review.retryMutationRecovery({
+          scope: reviewScope,
+          decisionPersistenceScope: {
+            scopeKey: decisionScopeKey,
+            scopeToken: decisionScopeToken,
+          },
+        });
+        await loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
+      }
+      if (draftHistoryHydrationFailed) {
+        setDraftHistoryRetryNonce((value) => value + 1);
+      }
+    } catch (error) {
+      useStore.setState({
+        applyError: `Unable to resume the saved review update: ${String(error)}`,
+      });
+    } finally {
+      setUndoInFlight(false);
+    }
+  }, [
+    decisionHydrationFailed,
+    decisionScopeKey,
+    decisionScopeToken,
+    draftHistoryHydrationFailed,
+    loadDecisionsFromDisk,
+    reviewMutationBusy,
+    reviewScope,
+    setUndoInFlight,
+    teamName,
+  ]);
+
   const handleDiscardSavedDecisionState = useCallback(async (): Promise<void> => {
     if (!decisionScopeToken || !decisionHydrationKey || reviewMutationBusy) return;
     closingRef.current = true;
@@ -3873,14 +3909,7 @@ export const ChangeReviewDialog = ({
                 variant="outline"
                 size="sm"
                 disabled={reviewMutationBusy}
-                onClick={() => {
-                  if (decisionScopeToken && decisionHydrationFailed) {
-                    void loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
-                  }
-                  if (draftHistoryHydrationFailed) {
-                    setDraftHistoryRetryNonce((value) => value + 1);
-                  }
-                }}
+                onClick={() => void handleRetrySavedReviewState()}
               >
                 Retry
               </Button>

@@ -17,6 +17,7 @@ import {
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
+  REVIEW_RETRY_MUTATION_RECOVERY,
   REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
@@ -459,7 +460,7 @@ describe('review IPC path confinement', () => {
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
   });
 
-  it('explicitly discards a failed mutation journal with the exact saved-decision scope', async () => {
+  it('refuses to discard a failed disk mutation that may be partially applied', async () => {
     const { ReviewMutationJournalStore } =
       await import('@main/services/team/ReviewMutationJournalStore');
     const journal = new ReviewMutationJournalStore();
@@ -510,8 +511,14 @@ describe('review IPC path confinement', () => {
       persistenceScope.scopeKey,
       persistenceScope.scopeToken
     );
-    expect(clear).toEqual({ success: true, data: { revision: 0 } });
-    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+    expect(clear).toEqual({
+      success: false,
+      error:
+        'Cannot discard a disk mutation that may be partially applied. Retry recovery instead.',
+    });
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toMatchObject([
+      { id: prepared.id, blocked: true },
+    ]);
   });
 
   it('commits disk Undo and Redo after JSON strips optional action fields', async () => {
@@ -1672,6 +1679,62 @@ describe('review IPC path confinement', () => {
     });
   });
 
+  it('recovers a decision-only external reload after a crash at WAL prepare', async () => {
+    const persistenceScope = {
+      scopeKey: 'agent-worker',
+      scopeToken: 'agent:worker:content:external-reload-crash',
+    };
+    const store = new ReviewDecisionStore();
+    await store.save('safe-team', persistenceScope.scopeKey, {
+      scopeToken: persistenceScope.scopeToken,
+      hunkDecisions: { [`${projectFile}:0`]: 'rejected' },
+      fileDecisions: { [projectFile]: 'rejected' },
+      hunkContextHashesByFile: { [projectFile]: { 0: 'old-hash' } },
+      reviewActionHistory: [],
+      reviewRedoHistory: [],
+      expectedRevision: 0,
+    });
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const journal = new ReviewMutationJournalStore();
+    await journal.prepare({
+      teamName: 'safe-team',
+      persistenceScope,
+      reviewScope: { teamName: 'safe-team', memberName: 'worker' },
+      kind: 'reload-external',
+      decisions: [],
+      fileContents: [],
+      diskSteps: [],
+      persistedState: {
+        hunkDecisions: {},
+        fileDecisions: {},
+        hunkContextHashesByFile: {},
+        reviewActionHistory: [],
+        reviewRedoHistory: [],
+      },
+      expectedDecisionRevision: 1,
+    });
+
+    const recovered = await ipcMain.invoke(
+      REVIEW_LOAD_DECISIONS,
+      'safe-team',
+      persistenceScope.scopeKey,
+      persistenceScope.scopeToken
+    );
+
+    expect(recovered).toMatchObject({
+      success: true,
+      data: {
+        hunkDecisions: {},
+        fileDecisions: {},
+        reviewActionHistory: [],
+        reviewRedoHistory: [],
+        revision: 2,
+      },
+    });
+    await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
+  });
+
   it('recovers a prepared decision-only Undo through the production IPC path', async () => {
     const persistenceScope = {
       scopeKey: 'agent-worker',
@@ -2637,7 +2700,6 @@ describe('review IPC path confinement', () => {
       decisionStatuses: ['applied', 'pending'],
       blocked: true,
     });
-    await journal.checkpoint({ ...blocked, blocked: undefined, failure: undefined });
     applier.applyReviewDecisions.mockClear();
     applier.applyReviewDecisions.mockResolvedValue({
       applied: 1,
@@ -2646,6 +2708,14 @@ describe('review IPC path confinement', () => {
       errors: [],
     });
 
+    const retried = await ipcMain.invoke(REVIEW_RETRY_MUTATION_RECOVERY, {
+      scope: { teamName: 'safe-team', memberName: 'worker' },
+      decisionPersistenceScope: persistenceScope,
+    });
+    expect(retried).toEqual({
+      success: true,
+      data: { decisionRevision: 1, retried: true },
+    });
     const recovered = await ipcMain.invoke(
       REVIEW_LOAD_DECISIONS,
       'safe-team',

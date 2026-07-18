@@ -419,6 +419,17 @@ export interface ExecuteReviewMutationResult {
   committedReviewAction?: ReviewUndoAction;
 }
 
+/** Explicitly resumes one failed durable mutation in its exact review scope. */
+export interface RetryReviewMutationRecoveryRequest {
+  scope: ReviewFileScope;
+  decisionPersistenceScope: ReviewDecisionPersistenceScope;
+}
+
+export interface RetryReviewMutationRecoveryResult {
+  decisionRevision: number;
+  retried: boolean;
+}
+
 /** Exact main-process disk transition used to bind durable Undo history. */
 export interface ApplyReviewDiskTransition {
   filePath: string;

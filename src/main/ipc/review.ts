@@ -56,6 +56,7 @@ import {
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
   REVIEW_RESTORE_REJECTED_RENAME,
+  REVIEW_RETRY_MUTATION_RECOVERY,
   REVIEW_SAVE_DECISIONS,
   REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
@@ -93,6 +94,8 @@ import type {
   FileReviewDecision,
   HunkDecision,
   RejectResult,
+  RetryReviewMutationRecoveryRequest,
+  RetryReviewMutationRecoveryResult,
   ReviewDecisionPersistenceScope,
   ReviewDiskUndoSnapshot,
   ReviewFileScope,
@@ -887,6 +890,7 @@ export function registerReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(REVIEW_PREVIEW_REJECT, handlePreviewReject);
   ipcMain.handle(REVIEW_APPLY_DECISIONS, handleApplyDecisions);
   ipcMain.handle(REVIEW_EXECUTE_MUTATION, handleExecuteReviewMutation);
+  ipcMain.handle(REVIEW_RETRY_MUTATION_RECOVERY, handleRetryReviewMutationRecovery);
   ipcMain.handle(REVIEW_GET_FILE_CONTENT, handleGetFileContent);
   // Editable diff
   ipcMain.handle(REVIEW_SAVE_EDITED_FILE, handleSaveEditedFile);
@@ -920,6 +924,7 @@ export function removeReviewHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(REVIEW_PREVIEW_REJECT);
   ipcMain.removeHandler(REVIEW_APPLY_DECISIONS);
   ipcMain.removeHandler(REVIEW_EXECUTE_MUTATION);
+  ipcMain.removeHandler(REVIEW_RETRY_MUTATION_RECOVERY);
   ipcMain.removeHandler(REVIEW_GET_FILE_CONTENT);
   // Editable diff
   ipcMain.removeHandler(REVIEW_SAVE_EDITED_FILE);
@@ -3326,7 +3331,9 @@ function assertRecoverableJournalContent(
     return;
   }
   if (
-    (record.kind === 'undo' || record.kind === 'redo') &&
+    (record.kind === 'undo' ||
+      record.kind === 'redo' ||
+      record.kind === 'reload-external') &&
     record.decisions.length === 0 &&
     record.fileContents.length === 0 &&
     record.persistedState
@@ -3379,7 +3386,9 @@ async function recoverReviewMutationJournal(
     if (
       !record.diskSteps?.length &&
       record.decisions.length === 0 &&
-      (record.kind === 'undo' || record.kind === 'redo')
+      (record.kind === 'undo' ||
+        record.kind === 'redo' ||
+        record.kind === 'reload-external')
     ) {
       await reviewMutationCoordinator.resume(record, {
         applyDisk: applyDirectReviewMutationDisk,
@@ -3437,6 +3446,45 @@ async function recoverReviewMutationJournal(
       commitDecisions: commitReviewMutationDecisions,
     });
   }
+}
+
+async function handleRetryReviewMutationRecovery(
+  _event: IpcMainInvokeEvent,
+  requestValue: unknown
+): Promise<IpcResult<RetryReviewMutationRecoveryResult>> {
+  return wrapReviewHandler('retryMutationRecovery', async () => {
+    if (!requestValue || typeof requestValue !== 'object' || Array.isArray(requestValue)) {
+      throw new Error('Invalid review mutation recovery request');
+    }
+    const request = requestValue as RetryReviewMutationRecoveryRequest;
+    const { scope } = await resolveReviewPathAuthorization(request.scope, {
+      requireIdentity: true,
+    });
+    const persistenceScope = parseDecisionPersistenceScope(
+      request.decisionPersistenceScope,
+      scope
+    );
+    if (!persistenceScope) {
+      throw new Error('Review mutation recovery requires an exact decision scope');
+    }
+
+    return withReviewDecisionPersistenceLock(scope.teamName, persistenceScope, async () => {
+      const records = await reviewMutationJournal.list(scope.teamName, persistenceScope);
+      if (records.length > 1) {
+        throw new Error('Multiple review mutations require manual recovery');
+      }
+      const record = records[0];
+      const retried = Boolean(record?.blocked);
+      if (record?.blocked) await reviewMutationJournal.unblock(record);
+      await recoverReviewMutationJournal(scope.teamName, persistenceScope);
+      const committed = await reviewDecisionStore.load(
+        scope.teamName,
+        persistenceScope.scopeKey,
+        persistenceScope.scopeToken
+      );
+      return { decisionRevision: committed?.revision ?? 0, retried };
+    });
+  });
 }
 
 async function handleLoadDecisions(
@@ -3555,6 +3603,16 @@ async function handleClearDecisions(
     return withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
       if (expectedRevision === undefined) {
         // Only the explicit "discard unreadable state" UI uses this recovery escape hatch.
+        const pending = await reviewMutationJournal.list(teamName, persistenceScope);
+        if (
+          pending.some(
+            (record) => record.decisions.length > 0 || (record.diskSteps?.length ?? 0) > 0
+          )
+        ) {
+          throw new Error(
+            'Cannot discard a disk mutation that may be partially applied. Retry recovery instead.'
+          );
+        }
         await reviewMutationJournal.clearScope(teamName, persistenceScope);
         await reviewDecisionStore.clear(teamName, scopeKey, scopeToken);
         return { revision: 0 };

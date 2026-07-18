@@ -1371,6 +1371,9 @@ export class HttpAPIClient implements ElectronAPI {
     executeMutation: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
+    retryMutationRecovery: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
     // Phase 2 stubs
     checkConflict: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');

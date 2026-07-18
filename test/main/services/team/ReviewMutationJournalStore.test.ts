@@ -130,6 +130,22 @@ describe('ReviewMutationJournalStore', () => {
     await expect(store.list('demo', persistenceScope)).resolves.toEqual([]);
   });
 
+  it('durably unblocks the same failed record for an explicit retry', async () => {
+    const { ReviewMutationJournalStore } =
+      await import('@main/services/team/ReviewMutationJournalStore');
+    const store = new ReviewMutationJournalStore();
+    const prepared = await store.prepare(makeInput());
+    await store.markFailed(prepared, new Error('transient disk failure'));
+    const [blocked] = await store.list('demo', persistenceScope);
+
+    const unblocked = await store.unblock(blocked);
+
+    expect(unblocked).toMatchObject({ id: prepared.id, phase: 'prepared' });
+    expect(unblocked.blocked).toBeUndefined();
+    expect(unblocked.failure).toBeUndefined();
+    await expect(store.list('demo', persistenceScope)).resolves.toEqual([unblocked]);
+  });
+
   it('refuses to create a second operation before the pending WAL is drained', async () => {
     const { ReviewMutationJournalStore } =
       await import('@main/services/team/ReviewMutationJournalStore');

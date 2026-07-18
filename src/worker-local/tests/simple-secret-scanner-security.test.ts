@@ -162,14 +162,14 @@ describe("SimpleSecretScanner security", () => {
     });
   });
 
-  it("fully scans text files above one MiB within a bounded configured limit", async () => {
+  it("fully scans text files above one MiB within the bounded default", async () => {
     const workspacePath = await createGitFixture();
     const relativePath = "src/large-generated.test.ts";
     const safePrefix = "x".repeat(1024 * 1024 + 64);
     await writeFile(join(workspacePath, relativePath), safePrefix, "utf8");
     await git(workspacePath, ["add", relativePath]);
     await git(workspacePath, ["commit", "-m", "test: add large safe file"]);
-    const scanner = new SimpleSecretScanner({ maxFileBytes: 2 * 1024 * 1024 });
+    const scanner = new SimpleSecretScanner();
 
     await expect(scanner.scanFiles({
       workspacePath,
@@ -212,7 +212,7 @@ describe("SimpleSecretScanner security", () => {
       "x".repeat(2 * 1024 * 1024 + 1),
       "utf8",
     );
-    const scanner = new SimpleSecretScanner({ maxFileBytes: 2 * 1024 * 1024 });
+    const scanner = new SimpleSecretScanner();
 
     await expect(scanner.scanFiles({
       workspacePath,

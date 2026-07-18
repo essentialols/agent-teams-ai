@@ -76,7 +76,7 @@ describe('PendingRepliesBlock', () => {
     });
   });
 
-  it('moves an offline message from queued to delivering and delivered', async () => {
+  it('moves an offline message from queued to delivering and awaiting reply', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-09T10:00:00.000Z'));
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -134,7 +134,9 @@ describe('PendingRepliesBlock', () => {
       );
       await Promise.resolve();
     });
-    expect(host.textContent).toContain('Delivered');
+    expect(host.textContent).toContain('awaiting reply');
+    expect(host.textContent).not.toContain('Delivered');
+    expect(host.querySelector('[aria-label="delivered"]')).not.toBeNull();
 
     await act(async () => {
       root.unmount();

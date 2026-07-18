@@ -79,11 +79,15 @@ vi.mock('@features/runtime-provider-management/renderer', () => ({
     open,
     disabled,
     projectPath,
+    onProviderChanged,
   }: {
     runtimeId: string;
     open: boolean;
     disabled?: boolean;
     projectPath?: string | null;
+    onProviderChanged?: (
+      changeKind: 'connection' | 'credential_removed' | 'configuration' | 'oauth_cancelled'
+    ) => Promise<void> | void;
   }) =>
     React.createElement(
       'section',
@@ -94,7 +98,23 @@ vi.mock('@features/runtime-provider-management/renderer', () => ({
         'data-disabled': String(Boolean(disabled)),
         'data-project-path': projectPath ?? '',
       },
-      `Runtime provider management: ${runtimeId}`
+      `Runtime provider management: ${runtimeId}`,
+      React.createElement(
+        'button',
+        {
+          'data-testid': 'runtime-provider-connected',
+          onClick: () => onProviderChanged?.('connection'),
+        },
+        'Provider connected'
+      ),
+      React.createElement(
+        'button',
+        {
+          'data-testid': 'runtime-provider-configured',
+          onClick: () => onProviderChanged?.('configuration'),
+        },
+        'Provider configured'
+      )
     ),
 }));
 
@@ -343,6 +363,9 @@ function createAnthropicProvider(
   overrides?: Partial<CliProviderStatus['connection']> & {
     authenticated?: boolean;
     authMethod?: string | null;
+    selectedBackendId?: string | null;
+    resolvedBackendId?: string | null;
+    backend?: CliProviderStatus['backend'];
   }
 ): CliProviderStatus {
   return {
@@ -360,11 +383,11 @@ function createAnthropicProvider(
       oneShot: true,
       extensions: createDefaultCliExtensionCapabilities(),
     },
-    selectedBackendId: null,
-    resolvedBackendId: null,
+    selectedBackendId: overrides?.selectedBackendId ?? null,
+    resolvedBackendId: overrides?.resolvedBackendId ?? null,
     availableBackends: [],
     externalRuntimeDiagnostics: [],
-    backend: null,
+    backend: overrides?.backend ?? null,
     connection: {
       supportsOAuth: true,
       supportsApiKey: true,
@@ -668,7 +691,139 @@ describe('ProviderRuntimeSettingsDialog', () => {
         authMode: 'api_key',
       },
     });
-    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic');
+    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic', 'provider_change');
+  });
+
+  it('surfaces detected Bedrock on the Auto card and can switch to it from API key mode', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onRefreshProvider = vi.fn(() => Promise.resolve(undefined));
+    storeState.appConfig.providerConnections.anthropic.authMode = 'api_key';
+
+    await act(async () => {
+      root.render(
+        React.createElement(ProviderRuntimeSettingsDialog, {
+          open: true,
+          onOpenChange: vi.fn(),
+          providers: [
+            createAnthropicProvider({
+              authenticated: false,
+              authMethod: null,
+              configuredAuthMode: 'api_key',
+              selectedBackendId: 'bedrock',
+              resolvedBackendId: 'bedrock',
+              backend: {
+                kind: 'bedrock',
+                label: 'Amazon Bedrock',
+                endpointLabel: 'AWS region us-east-1',
+                authMethodDetail: 'aws_credentials',
+              },
+            }),
+          ],
+          initialProviderId: 'anthropic',
+          onSelectBackend: vi.fn(),
+          onRefreshProvider,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const autoButton = findButtonByText(host, 'Auto (Amazon Bedrock)');
+    expect(autoButton.textContent).not.toContain('Selected');
+    expect(findButtonByText(host, 'API key').textContent).toContain('Selected');
+
+    await act(async () => {
+      autoButton.click();
+      await Promise.resolve();
+    });
+
+    expect(storeState.updateConfig).toHaveBeenCalledWith('providerConnections', {
+      anthropic: {
+        authMode: 'auto',
+      },
+    });
+    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic', 'provider_change');
+  });
+
+  it('shows Bedrock as the currently resolved backend when Auto is selected', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(ProviderRuntimeSettingsDialog, {
+          open: true,
+          onOpenChange: vi.fn(),
+          providers: [
+            createAnthropicProvider({
+              configuredAuthMode: 'auto',
+              selectedBackendId: 'bedrock',
+              resolvedBackendId: 'bedrock',
+              backend: {
+                kind: 'bedrock',
+                label: 'Amazon Bedrock',
+                endpointLabel: 'AWS region us-east-1',
+                authMethodDetail: 'aws_credentials',
+              },
+            }),
+          ],
+          initialProviderId: 'anthropic',
+          onSelectBackend: vi.fn(),
+          onRefreshProvider: vi.fn(() => Promise.resolve(undefined)),
+        })
+      );
+      await Promise.resolve();
+    });
+
+    expect(findButtonByText(host, 'Auto (currently: Amazon Bedrock)').textContent).toContain(
+      'Selected'
+    );
+  });
+
+  it('does not present a configured compatible endpoint as an Auto route', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    storeState.appConfig.providerConnections.anthropic.compatibleEndpoint = {
+      enabled: true,
+      baseUrl: 'http://localhost:1234',
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(ProviderRuntimeSettingsDialog, {
+          open: true,
+          onOpenChange: vi.fn(),
+          providers: [
+            createAnthropicProvider({
+              configuredAuthMode: 'auto',
+              resolvedBackendId: 'anthropic-compatible',
+              backend: {
+                kind: 'anthropic-compatible',
+                label: 'Local gateway',
+              },
+              compatibleEndpoint: {
+                enabled: true,
+                baseUrl: 'http://localhost:1234',
+                tokenConfigured: true,
+                tokenSource: 'stored',
+                tokenSourceLabel: 'Stored in app',
+              },
+            }),
+          ],
+          initialProviderId: 'anthropic',
+          onSelectBackend: vi.fn(),
+          onRefreshProvider: vi.fn(() => Promise.resolve(undefined)),
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const autoButton = findButtonByText(host, 'Auto');
+    expect(autoButton.textContent).not.toContain('Local gateway');
+    expect(host.textContent).toContain('Local / compatible endpoint');
   });
 
   it('shows Anthropic API key usage when API key mode is selected even if the local CLI has a subscription session', async () => {
@@ -723,7 +878,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
-    const onRefreshProvider = vi.fn(() => Promise.resolve(undefined));
+    const onRefreshProvider = vi.fn(() => Promise.resolve(false));
 
     await act(async () => {
       root.render(
@@ -775,7 +930,8 @@ describe('ProviderRuntimeSettingsDialog', () => {
         value: 'sk-ant-test-key',
       })
     );
-    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic');
+    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic', 'provider_change');
+    expect(host.textContent).toContain('API key saved, but failed to refresh provider status.');
   });
 
   it('enables and saves an Anthropic-compatible endpoint with encrypted token storage', async () => {
@@ -835,7 +991,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
         },
       },
     });
-    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic');
+    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic', 'provider_change');
     expect(tokenInput!.value).toBe('');
   });
 
@@ -884,7 +1040,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
       },
     });
     expect(host.textContent).toContain('Endpoint saved. Auth token is not configured.');
-    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic');
+    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic', 'provider_change');
   });
 
   it('rejects Anthropic-compatible endpoint URLs with embedded credentials', async () => {
@@ -1028,7 +1184,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
       },
     });
     expect(storeState.deleteApiKey).not.toHaveBeenCalled();
-    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic');
+    expect(onRefreshProvider).toHaveBeenCalledWith('anthropic', 'provider_change');
   });
 
   it('shows native-only Codex connection copy and API-key management without login actions', async () => {
@@ -1149,7 +1305,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
       includeRateLimits: true,
       forceRefreshToken: true,
     });
-    expect(onRefreshProvider).toHaveBeenCalledWith('codex');
+    expect(onRefreshProvider).toHaveBeenCalledWith('codex', 'provider_change');
   });
 
   it('disables Codex custom provider without deleting its saved key or profile fields', async () => {
@@ -1226,7 +1382,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
       },
     });
     expect(storeState.deleteApiKey).not.toHaveBeenCalled();
-    expect(onRefreshProvider).toHaveBeenCalledWith('codex');
+    expect(onRefreshProvider).toHaveBeenCalledWith('codex', 'provider_change');
   });
 
   it('explains the missing Codex ChatGPT login without mixing it up with the detected API key', async () => {
@@ -1689,7 +1845,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
     });
 
     expect(codexAccountHookState.cancelChatgptLogin).toHaveBeenCalledTimes(1);
-    expect(onRefreshProvider).toHaveBeenCalledWith('codex');
+    expect(onRefreshProvider).toHaveBeenCalledWith('codex', 'provider_change');
   });
 
   it('surfaces a pending Codex ChatGPT login as a waiting alert instead of a missing-account warning', async () => {
@@ -1803,7 +1959,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
     });
 
     expect(codexAccountHookState.logout).toHaveBeenCalledTimes(1);
-    expect(onRefreshProvider).toHaveBeenCalledWith('codex');
+    expect(onRefreshProvider).toHaveBeenCalledWith('codex', 'provider_change');
   });
 
   it('renders Codex rate limits when available from the live account snapshot', async () => {
@@ -2179,6 +2335,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
+    const onRefreshProvider = vi.fn(() => Promise.resolve(undefined));
 
     await act(async () => {
       root.render(
@@ -2189,7 +2346,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
           initialProviderId: 'opencode',
           projectPath: '/tmp/project-a',
           onSelectBackend: vi.fn(),
-          onRefreshProvider: vi.fn(() => Promise.resolve(undefined)),
+          onRefreshProvider,
         })
       );
       await Promise.resolve();
@@ -2205,6 +2362,14 @@ describe('ProviderRuntimeSettingsDialog', () => {
     expect(host.textContent).not.toContain('managed teammate agent');
     expect(host.textContent).not.toContain('behavior abc123');
     expect(host.textContent).not.toContain('Desktop currently exposes status only.');
+
+    await act(async () => {
+      (host.querySelector('[data-testid="runtime-provider-connected"]') as HTMLButtonElement).click();
+      (host.querySelector('[data-testid="runtime-provider-configured"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(onRefreshProvider).toHaveBeenNthCalledWith(1, 'opencode', 'provider_setup');
+    expect(onRefreshProvider).toHaveBeenNthCalledWith(2, 'opencode', 'provider_change');
   });
 
   it('summarizes OpenCode readiness without dumping duplicate provider ids', async () => {

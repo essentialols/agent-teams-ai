@@ -198,6 +198,7 @@ describe('TeamProvisioningMemberLifecycle Anthropic helper cleanup', () => {
       'member materialization failed'
     );
 
+    expect(host.buildProvisioningEnv).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(helperDirectory)).toBe(false);
   });
 
@@ -220,6 +221,7 @@ describe('TeamProvisioningMemberLifecycle Anthropic helper cleanup', () => {
       })
     ).rejects.toThrow('member materialization failed');
 
+    expect(host.buildProvisioningEnv).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(helperDirectory)).toBe(false);
     expect(sendKeysToTmuxPaneForCurrentPlatform).not.toHaveBeenCalled();
   });

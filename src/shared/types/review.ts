@@ -222,18 +222,89 @@ export type HunkDecision = 'accepted' | 'rejected' | 'pending';
 /** Решение по файлу */
 export interface FileReviewDecision {
   filePath: string;
+  /** Stable renderer decision key (changeKey for grouped ledger changes, otherwise filePath). */
+  reviewKey?: string;
   fileDecision: HunkDecision;
   hunkDecisions: Record<number, HunkDecision>;
+  /** Main-issued token for the exact full-content snapshot displayed by the renderer. */
+  contentSnapshotToken?: string;
   /** Optional stable hunk fingerprints (index → contextHash). Used to map decisions when indices drift. */
   hunkContextHashes?: Record<number, string>;
-  /**
-   * Optional context to apply decisions without re-resolving content in main process.
-   * When present, main can use these values directly (safer in task mode where memberName may be unknown).
-   */
-  snippets?: SnippetDiff[];
-  originalFullContent?: string | null;
-  modifiedFullContent?: string | null;
-  isNewFile?: boolean;
+}
+
+export interface ReviewDecisionPersistenceScope {
+  scopeKey: string;
+  scopeToken: string;
+}
+
+/** Exact renderer state committed by main only after the related disk mutation. */
+export interface ReviewPersistedStateSnapshot {
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
+  reviewActionHistory: ReviewUndoAction[];
+  reviewRedoHistory: ReviewRedoAction[];
+}
+
+/** Complete inverse decision state carried by a durable review action. */
+export interface ReviewDecisionSnapshot {
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+}
+
+export type ReviewDiskRestoreMode =
+  | 'content'
+  | 'create-file'
+  | 'delete-file'
+  | 'restore-rejected-rename'
+  | 'reapply-rejected-rename';
+
+/** Exact disk pre/post-image required to retry an interrupted review Undo safely. */
+export interface ReviewDiskUndoSnapshot {
+  filePath: string;
+  beforeContent: string;
+  afterContent: string | null;
+  file?: FileChangeSummary;
+  fileIndex?: number;
+  restoreConflict?: string;
+  restoreMode?: ReviewDiskRestoreMode;
+  renameExpectation?: ReviewRenameRecoveryExpectation;
+}
+
+export interface ReviewDiskUndoAction {
+  snapshot: ReviewDiskUndoSnapshot;
+  originalIndex?: number;
+  file?: FileChangeSummary;
+  decisionSnapshot?: ReviewDecisionSnapshot;
+}
+
+interface ReviewUndoActionBase {
+  /** Stable identity used to prevent a stale async Undo from popping a newer action. */
+  id: string;
+  createdAt: string;
+}
+
+/** Self-contained, ordered Accept/Reject history persisted with the decision snapshot. */
+export type ReviewUndoAction =
+  | (ReviewUndoActionBase & {
+      kind: 'bulk';
+      decisionSnapshot: ReviewDecisionSnapshot;
+      diskSnapshots: ReviewDiskUndoSnapshot[];
+    })
+  | (ReviewUndoActionBase & { kind: 'disk'; action: ReviewDiskUndoAction })
+  | (ReviewUndoActionBase & {
+      kind: 'hunk';
+      action: { filePath: string; originalIndex: number };
+    });
+
+/** Durable forward state captured when an Accept/Reject action is undone. */
+export interface ReviewRedoAction {
+  /** The original action moves back to the Undo stack after Redo commits. */
+  action: ReviewUndoAction;
+  /** Exact decision state produced by the original action. */
+  decisionSnapshot: ReviewDecisionSnapshot;
+  /** Stable hunk fingerprints from the original post-action state. */
+  hunkContextHashesByFile?: Record<string, Record<number, string>>;
 }
 
 /** Запрос на применение review */
@@ -241,7 +312,67 @@ export interface ApplyReviewRequest {
   teamName: string;
   taskId?: string;
   memberName?: string;
+  /** Exact durable decision scope used to close disk/decision crash windows. */
+  decisionPersistenceScope?: ReviewDecisionPersistenceScope;
+  /**
+   * Full post-operation state. Main persists it only after every requested disk
+   * effect reaches its postimage. Required for durable mutations.
+   */
+  persistedState?: ReviewPersistedStateSnapshot;
+  /** CAS guard for the exact decision snapshot the renderer hydrated. */
+  expectedDecisionRevision?: number;
   decisions: FileReviewDecision[];
+}
+
+export type ReviewDirectDiskMutationStep =
+  | {
+      id: string;
+      type: 'write';
+      filePath: string;
+      expectedContent: string | null;
+      content: string;
+    }
+  | {
+      id: string;
+      type: 'delete';
+      filePath: string;
+      expectedContent: string;
+    }
+  | {
+      id: string;
+      type: 'restore-rejected-rename' | 'reapply-rejected-rename';
+      filePath: string;
+      expectation: ReviewRenameRecoveryExpectation;
+    };
+
+/** Main-authoritative Restore/Rename/Undo transaction. */
+export interface ExecuteReviewMutationRequest {
+  scope: ReviewFileScope;
+  decisionPersistenceScope: ReviewDecisionPersistenceScope;
+  kind: 'restore' | 'rename' | 'undo' | 'redo';
+  diskSteps: ReviewDirectDiskMutationStep[];
+  persistedState: ReviewPersistedStateSnapshot;
+  /** CAS guard preventing an old renderer from overwriting newer durable state. */
+  expectedDecisionRevision: number;
+  /** Required for Undo so a stale renderer cannot pop a newer durable action. */
+  expectedTopActionId?: string;
+  /** Required for Redo so a stale renderer cannot replay a different durable branch. */
+  expectedTopRedoActionId?: string;
+}
+
+/** Authoritative team/task scope used by main to resolve a review file root. */
+export interface ReviewFileScope {
+  teamName: string;
+  taskId?: string;
+  memberName?: string;
+}
+
+/** Immutable ledger identity used to reject stale rename recovery requests. */
+export interface ReviewRenameRecoveryExpectation {
+  eventId: string;
+  beforeHash: string | null;
+  afterHash: string | null;
+  relation: LedgerChangeRelation;
 }
 
 /** Результат применения review */
@@ -254,10 +385,14 @@ export interface ApplyReviewResult {
     error: string;
     code?: 'conflict' | 'unavailable' | 'manual-review-required' | 'io-error';
   }[];
+  /** Revision committed together with the disk mutation. */
+  decisionRevision?: number;
 }
 
 /** Полный file content для CodeMirror */
 export interface FileChangeWithContent extends FileChangeSummary {
+  /** Opaque main-process identity for this exact displayed content generation. */
+  reviewSnapshotToken?: string;
   originalFullContent: string | null;
   modifiedFullContent: string | null;
   contentSource:

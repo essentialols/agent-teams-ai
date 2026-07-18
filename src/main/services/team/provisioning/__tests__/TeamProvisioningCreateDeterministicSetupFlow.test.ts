@@ -17,6 +17,19 @@ interface MixedLane {
   memberName: string;
 }
 
+const anthropicApiKeyHelper = {
+  teamName: 'setup-team',
+  directory: '/repo/.agent-teams/helpers/anthropic',
+  helperPath: '/repo/.agent-teams/helpers/anthropic/helper.sh',
+  keyPath: '/repo/.agent-teams/helpers/anthropic/key',
+  settingsPath: '/repo/.agent-teams/helpers/anthropic/settings.json',
+  settingsObject: { apiKeyHelper: '/repo/.agent-teams/helpers/anthropic/helper.sh' },
+  settingsArgs: ['--settings', '/repo/.agent-teams/helpers/anthropic/settings.json'],
+  envPatch: {
+    CLAUDE_TEAM_ANTHROPIC_API_KEY_HELPER: '/repo/.agent-teams/helpers/anthropic/helper.sh',
+  },
+};
+
 const disabledWorkspaceTrustFlags: WorkspaceTrustFeatureFlags = {
   enabled: false,
   claudePty: false,
@@ -121,7 +134,7 @@ function buildPorts(
       authSource: 'codex_runtime' as const,
       geminiRuntimeAuth: null,
       providerArgs: ['--provider-base'],
-      anthropicApiKeyHelper: { directory: '/repo/.agent-teams/helpers/anthropic' } as never,
+      anthropicApiKeyHelper,
     })),
     materializeEffectiveTeamMemberSpecs: vi.fn(async (params) => params.members),
     resolveOpenCodeMemberWorkspacesForRuntime: vi.fn(async (params) => params.members),
@@ -137,6 +150,7 @@ function buildPorts(
         MEMBER_SYNC: '1',
       },
       usesAnthropicApiKeyHelper: true,
+      ...({ anthropicApiKeyHelper } as const),
     })),
     resolveAndValidateLaunchIdentity: vi.fn(async () => buildLaunchIdentity()),
     createMixedSecondaryLaneStates: vi.fn((plan) =>

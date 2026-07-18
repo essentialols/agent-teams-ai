@@ -25,6 +25,15 @@ const log = createLogger('EditorFileWatcher');
 const STARTUP_IGNORE_CHANGE_MS = 3000;
 const MAX_EMITTED_EVENTS_PER_FLUSH = 300;
 
+export interface EditorFileWatcherOptions {
+  /**
+   * The editor opens files before it starts watching them, so its initial change
+   * noise can be ignored. Review starts from an already-visible snapshot and must
+   * observe every subsequent write, including one immediately after subscription.
+   */
+  ignoreStartupChanges?: boolean;
+}
+
 // =============================================================================
 // Service
 // =============================================================================
@@ -39,8 +48,13 @@ export class EditorFileWatcher {
   // Higher debounce = fewer IPC events during large bursts (checkout/build/format).
   private readonly debounceMs = 350;
   private ignoreChangeUntilMs = 0;
-  private watchedFilesKey = '';
+  private watchedFiles = new Set<string>();
   private watchedDirsKey = '';
+  private readonly ignoreStartupChanges: boolean;
+
+  constructor(options: EditorFileWatcherOptions = {}) {
+    this.ignoreStartupChanges = options.ignoreStartupChanges ?? true;
+  }
 
   /**
    * Initialize watcher context for a project root.
@@ -51,8 +65,10 @@ export class EditorFileWatcher {
   start(projectRoot: string, onChange: (event: EditorFileChangeEvent) => void): void {
     this.stop();
     this.projectRoot = projectRoot;
-    this.ignoreChangeUntilMs = Date.now() + STARTUP_IGNORE_CHANGE_MS;
-    this.watchedFilesKey = '';
+    this.ignoreChangeUntilMs = this.ignoreStartupChanges
+      ? Date.now() + STARTUP_IGNORE_CHANGE_MS
+      : 0;
+    this.watchedFiles.clear();
     this.watchedDirsKey = '';
 
     log.info('Starting file watcher (open files only) for:', projectRoot);
@@ -73,17 +89,22 @@ export class EditorFileWatcher {
       .filter((p) => isPathWithinRoot(p, this.projectRoot!));
 
     normalized.sort((a, b) => a.localeCompare(b));
-    const key = normalized.join('\n');
-    if (key === this.watchedFilesKey) return;
-    this.watchedFilesKey = key;
-
-    // Close existing watcher first (if any)
+    const nextWatchedFiles = new Set(normalized);
     if (this.watcher) {
-      void this.watcher.close();
-      this.watcher = null;
+      const added = normalized.filter((filePath) => !this.watchedFiles.has(filePath));
+      const removed = [...this.watchedFiles].filter((filePath) => !nextWatchedFiles.has(filePath));
+      if (added.length === 0 && removed.length === 0) return;
+      // Add first so unchanged and newly-visible files remain continuously covered.
+      if (added.length > 0) this.watcher.add(added);
+      if (removed.length > 0) {
+        this.watcher.unwatch(removed);
+      }
+      this.watchedFiles = nextWatchedFiles;
+      return;
     }
 
     if (normalized.length === 0) {
+      this.watchedFiles.clear();
       return;
     }
 
@@ -94,6 +115,7 @@ export class EditorFileWatcher {
       ignorePermissionErrors: true,
       followSymlinks: false,
     });
+    this.watchedFiles = nextWatchedFiles;
 
     const emitSafe = (type: EditorFileChangeEvent['type'], filePath: string): void => {
       if (type === 'change' && Date.now() < this.ignoreChangeUntilMs) {
@@ -181,7 +203,7 @@ export class EditorFileWatcher {
     this.pendingEvents.clear();
     this.onChangeCallback = null;
     this.ignoreChangeUntilMs = 0;
-    this.watchedFilesKey = '';
+    this.watchedFiles.clear();
     this.watchedDirsKey = '';
     if (this.watcher) {
       log.info('Stopping file watcher');

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { buildProviderAwareCliEnv } from '@main/services/runtime/providerAwareCliEnv';
 import { ClaudeBinaryResolver } from '@main/services/team/ClaudeBinaryResolver';
 import { execCli, killProcessTree, spawnCli } from '@main/utils/childProcess';
+import { getHomeDir } from '@main/utils/pathDecoder';
 import { resolveInteractiveShellEnvBestEffort } from '@main/utils/shellEnv';
 
 import {
@@ -42,7 +43,9 @@ import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 const PROBE_COMMAND_TIMEOUT_MS = 90_000;
 const COMMAND_TIMEOUT_MS = PROBE_COMMAND_TIMEOUT_MS;
-const OAUTH_COMMAND_TIMEOUT_MS = 6 * 60_000;
+// Outlive the runtime's provider callback window while remaining bounded and
+// cancellable from the UI.
+const OAUTH_COMMAND_TIMEOUT_MS = 17 * 60_000;
 const OAUTH_CANCEL_FORCE_KILL_DELAY_MS = 2_000;
 const COMMAND_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 const SPAWN_OUTPUT_TRUNCATED_MARKER = '...[truncated runtime provider command output]';
@@ -976,11 +979,19 @@ function runtimeProviderCommandOptions<T extends { env: NodeJS.ProcessEnv }>(
   options: T,
   projectPath: string | null
 ): T & { cwd?: string; maxBuffer: number } {
+  const fallbackHome = [options.env.HOME, options.env.USERPROFILE, getHomeDir()]
+    .map((candidate) => candidate?.trim())
+    .find((candidate): candidate is string => {
+      if (!candidate) return false;
+      const resolved = path.resolve(candidate);
+      return resolved !== path.parse(resolved).root;
+    });
   const commandOptions = {
     ...options,
     maxBuffer: COMMAND_MAX_BUFFER_BYTES,
   };
-  return projectPath ? { ...commandOptions, cwd: projectPath } : commandOptions;
+  const cwd = projectPath ?? fallbackHome;
+  return cwd ? { ...commandOptions, cwd } : commandOptions;
 }
 
 interface BoundedSpawnOutputBuffer {

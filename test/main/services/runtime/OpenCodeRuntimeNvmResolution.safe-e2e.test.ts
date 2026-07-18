@@ -118,6 +118,8 @@ describePosix('OpenCode nvm runtime resolution safe e2e', () => {
 describeWindows('OpenCode nvm-windows runtime resolution safe e2e', () => {
   let tempDir: string | null = null;
   let originalAppData: string | undefined;
+  let originalNvmHome: string | undefined;
+  let originalNvmSymlink: string | undefined;
   let originalPath: string | undefined;
 
   beforeEach(async () => {
@@ -127,8 +129,12 @@ describeWindows('OpenCode nvm-windows runtime resolution safe e2e', () => {
     clearShellEnvCache();
 
     originalAppData = process.env.APPDATA;
+    originalNvmHome = process.env.NVM_HOME;
+    originalNvmSymlink = process.env.NVM_SYMLINK;
     originalPath = process.env.PATH;
-    process.env.APPDATA = tempDir;
+    process.env.APPDATA = path.join(tempDir, 'empty-appdata');
+    process.env.NVM_HOME = path.join(tempDir, 'custom-nvm');
+    delete process.env.NVM_SYMLINK;
     process.env.PATH = '';
   });
 
@@ -138,6 +144,8 @@ describeWindows('OpenCode nvm-windows runtime resolution safe e2e', () => {
     setAppDataBasePath(null);
 
     restoreEnvValue('APPDATA', originalAppData);
+    restoreEnvValue('NVM_HOME', originalNvmHome);
+    restoreEnvValue('NVM_SYMLINK', originalNvmSymlink);
     restoreEnvValue('PATH', originalPath);
 
     if (tempDir) {
@@ -147,7 +155,7 @@ describeWindows('OpenCode nvm-windows runtime resolution safe e2e', () => {
   });
 
   it('selects the native OpenCode executable behind an nvm cmd shim', async () => {
-    const versionDir = path.join(tempDir!, 'nvm', 'v20.20.0');
+    const versionDir = path.join(process.env.NVM_HOME!, 'v20.20.0');
     const shimPath = path.join(versionDir, 'opencode.cmd');
     const nativeBinaryPath = path.join(
       versionDir,

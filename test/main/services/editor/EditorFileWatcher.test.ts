@@ -7,11 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Mock chokidar
 const mockOn = vi.fn().mockReturnThis();
 const mockClose = vi.fn().mockResolvedValue(undefined);
+const mockAdd = vi.fn().mockReturnThis();
+const mockUnwatch = vi.fn().mockReturnThis();
 
 vi.mock('chokidar', () => ({
   watch: vi.fn(() => ({
     on: mockOn,
     close: mockClose,
+    add: mockAdd,
+    unwatch: mockUnwatch,
   })),
 }));
 
@@ -32,7 +36,6 @@ vi.mock('@shared/utils/logger', () => ({
 
 import { watch } from 'chokidar';
 
-import { isPathWithinRoot } from '../../../../src/main/utils/pathValidation';
 import { EditorFileWatcher } from '../../../../src/main/services/editor/EditorFileWatcher';
 
 // =============================================================================
@@ -48,6 +51,8 @@ describe('EditorFileWatcher', () => {
     vi.useFakeTimers();
     vi.resetAllMocks();
     mockOn.mockReturnThis();
+    mockAdd.mockReturnThis();
+    mockUnwatch.mockReturnThis();
     watcher = new EditorFileWatcher();
   });
 
@@ -102,6 +107,23 @@ describe('EditorFileWatcher', () => {
       });
     });
 
+    it('can observe a change immediately when startup suppression is disabled', () => {
+      const reviewWatcher = new EditorFileWatcher({ ignoreStartupChanges: false });
+      const onChange = vi.fn();
+      reviewWatcher.start('/Users/test/project', onChange);
+      reviewWatcher.setWatchedFiles(['/Users/test/project/src/index.ts']);
+
+      const changeHandler = mockOn.mock.calls.find((c) => c[0] === 'change')?.[1];
+      changeHandler?.('/Users/test/project/src/index.ts');
+      vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS);
+
+      expect(onChange).toHaveBeenCalledWith({
+        type: 'change',
+        path: '/Users/test/project/src/index.ts',
+      });
+      reviewWatcher.stop();
+    });
+
     it('emits create event for add', () => {
       const onChange = vi.fn();
       watcher.start('/Users/test/project', onChange);
@@ -153,6 +175,19 @@ describe('EditorFileWatcher', () => {
       expect(mockClose).toHaveBeenCalledTimes(1);
       expect(watch).toHaveBeenCalledTimes(1);
     });
+
+    it('updates watched files incrementally without a global subscription gap', () => {
+      watcher.start('/Users/test/project', vi.fn());
+      watcher.setWatchedFiles(['/Users/test/project/a.ts']);
+
+      watcher.setWatchedFiles(['/Users/test/project/a.ts', '/Users/test/project/b.ts']);
+      watcher.setWatchedFiles(['/Users/test/project/b.ts']);
+
+      expect(watch).toHaveBeenCalledTimes(1);
+      expect(mockAdd).toHaveBeenCalledWith(['/Users/test/project/b.ts']);
+      expect(mockUnwatch).toHaveBeenCalledWith(['/Users/test/project/a.ts']);
+      expect(mockClose).not.toHaveBeenCalled();
+    });
   });
 
   describe('stop', () => {
@@ -167,9 +202,10 @@ describe('EditorFileWatcher', () => {
     });
 
     it('is safe to call multiple times', () => {
-      watcher.stop();
-      watcher.stop();
-      // No error thrown
+      expect(() => {
+        watcher.stop();
+        watcher.stop();
+      }).not.toThrow();
     });
   });
 

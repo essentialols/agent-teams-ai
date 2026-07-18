@@ -55,6 +55,8 @@ export interface TeamProvisioningCleanupRunServiceHost<
   runtimeSnapshotCacheBoundary: TeamProvisioningCleanupRuntimeSnapshotCachePort;
   leadInboxRelayInFlight: CleanupRunPortsFactoryDeps<TRun>['leadInboxRelayInFlight'];
   relayedLeadInboxMessageIds: CleanupRunPortsFactoryDeps<TRun>['relayedLeadInboxMessageIds'];
+  leadRecoveryMessageIds: CleanupRunPortsFactoryDeps<TRun>['leadRecoveryMessageIds'];
+  successfulLeadRecoveryMessageIds: CleanupRunPortsFactoryDeps<TRun>['successfulLeadRecoveryMessageIds'];
   pendingCrossTeamFirstReplies: CleanupRunPortsFactoryDeps<TRun>['pendingCrossTeamFirstReplies'];
   recentCrossTeamLeadDeliveryMessageIds: CleanupRunPortsFactoryDeps<TRun>['recentCrossTeamLeadDeliveryMessageIds'];
   sameTeamNativeDelivery: CleanupRunPortsFactoryDeps<TRun>['recentSameTeamNativeFingerprints'];
@@ -110,6 +112,8 @@ export function createTeamProvisioningCleanupRunPortsDepsFromService<
       service.runtimeSnapshotCacheBoundary.invalidateMemberSpawnStatusesCache(teamName),
     leadInboxRelayInFlight: service.leadInboxRelayInFlight,
     relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
+    leadRecoveryMessageIds: service.leadRecoveryMessageIds,
+    successfulLeadRecoveryMessageIds: service.successfulLeadRecoveryMessageIds,
     pendingCrossTeamFirstReplies: service.pendingCrossTeamFirstReplies,
     recentCrossTeamLeadDeliveryMessageIds: service.recentCrossTeamLeadDeliveryMessageIds,
     recentSameTeamNativeFingerprints: service.sameTeamNativeDelivery,

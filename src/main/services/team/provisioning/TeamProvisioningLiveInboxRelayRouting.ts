@@ -53,6 +53,8 @@ export interface RelayInboxFileToLiveRecipientPorts {
   ): Promise<OpenCodeMemberInboxRelayResult>;
   relayLeadInboxMessages(teamName: string, options?: NativeLeadInboxRelayOptions): Promise<number>;
   wasRecentlyDeliveredToLead(teamName: string, messageId: string): boolean;
+  hasSuccessfulLeadRecoveryMessage(teamName: string, messageId: string): boolean;
+  isLeadRecoveryMessage(teamName: string, messageId: string): boolean;
   isTeamAlive(teamName: string): boolean;
 }
 
@@ -100,10 +102,25 @@ export async function relayInboxFileToLiveRecipientWithPorts(
         (relayed === 0 && ports.wasRecentlyDeliveredToLead(teamName, leadOptions.onlyMessageId)))
         ? leadOptions.onlyMessageId
         : undefined;
+    const responseProven = leadOptions?.onlyMessageId
+      ? ports.hasSuccessfulLeadRecoveryMessage(teamName, leadOptions.onlyMessageId)
+      : false;
+    const isRecoveryMessage = leadOptions?.onlyMessageId
+      ? ports.isLeadRecoveryMessage(teamName, leadOptions.onlyMessageId)
+      : false;
     return {
       kind: LiveInboxRelayKind.NativeLead,
       relayed,
       ...(recentlyDeliveredMessageId ? { recentlyDeliveredMessageId } : {}),
+      ...(leadOptions?.onlyMessageId && isRecoveryMessage
+        ? {
+            lastDelivery: {
+              delivered: relayed > 0 || responseProven,
+              accepted: relayed > 0 || responseProven,
+              responsePending: !responseProven,
+            },
+          }
+        : {}),
     };
   }
 

@@ -285,44 +285,25 @@
   box-shadow: var(--kanban-task-card-hover-shadow);
 }
 
+.kanban-task-card-flat {
+  box-shadow: inset 0 0 0 100vmax transparent;
+}
+
 .kanban-task-card-flat:hover,
 .kanban-task-card-flat:focus-visible {
-  box-shadow: none;
+  box-shadow: inset 0 0 0 100vmax color-mix(in srgb, var(--color-text) 4%, transparent);
 }
 
-.kanban-task-card-flat::before,
-.kanban-task-card-skeleton::before {
+.kanban-task-card-flat[data-task-separator='true']::after {
   position: absolute;
-  top: 0.75rem;
-  right: 0;
-  bottom: 0.75rem;
-  left: 0;
-  background-image: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--kanban-column-accent) 17%, transparent) 0%,
-    color-mix(in srgb, var(--kanban-column-accent) 6.5%, transparent) 34%,
-    color-mix(in srgb, var(--kanban-column-accent) 2.5%, transparent) 66%,
-    transparent 100%
-  );
-  background-position: left center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
+  bottom: calc(0.1875rem + 0.5px);
+  left: 50%;
+  width: 50%;
+  height: 1px;
+  transform: translateX(-50%);
+  background-color: color-mix(in srgb, var(--color-text-muted) 24%, transparent);
   content: '';
-  opacity: 0.65;
   pointer-events: none;
-  transition:
-    top 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    bottom 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    background-size 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 180ms ease-out;
-}
-
-.kanban-task-card-flat:hover::before,
-.kanban-task-card-flat:focus-visible::before {
-  top: 0;
-  bottom: 0;
-  background-size: 145% 100%;
-  opacity: 1;
 }
 
 .kanban-task-card-flat:focus-visible {
@@ -332,12 +313,6 @@
 
 .kanban-task-card-flat-blocked {
   background-color: color-mix(in srgb, rgb(234, 179, 8) 5%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .kanban-task-card-flat::before {
-    transition: none;
-  }
 }
 
 .kanban-column-glow {

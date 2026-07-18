@@ -253,6 +253,7 @@ vi.mock('@renderer/store', () => {
 
 import { CliStatusBanner } from '@renderer/components/dashboard/CliStatusBanner';
 import { CliStatusSection } from '@renderer/components/settings/sections/CliStatusSection';
+import { ProvisioningProviderRuntimeSettingsDialog } from '@renderer/components/team/dialogs/ProvisioningProviderRuntimeSettingsDialog';
 
 async function flushLazyImports(): Promise<void> {
   await Promise.resolve();
@@ -1540,6 +1541,32 @@ describe('CLI status visibility during completed install state', () => {
                   },
                 },
               },
+              {
+                id: 'kiro/auto',
+                launchModel: 'kiro/auto',
+                displayName: 'auto',
+                hidden: false,
+                supportedReasoningEfforts: [],
+                defaultReasoningEffort: null,
+                inputModalities: ['text'],
+                supportsPersonality: true,
+                isDefault: false,
+                upgrade: false,
+                source: 'app-server',
+                badgeLabel: null,
+                metadata: {
+                  opencode: {
+                    providerId: 'kiro',
+                    modelId: 'auto',
+                    sourceLabel: 'Kiro',
+                    accessKind: 'credentialed',
+                    routeKind: 'configured_local',
+                    proofState: 'needs_probe',
+                    requiresExecutionProof: true,
+                    reason: null,
+                  },
+                },
+              },
             ],
             diagnostics: {
               configReadState: 'ready',
@@ -1815,7 +1842,7 @@ describe('CLI status visibility during completed install state', () => {
   it('preserves dashboard runtime backend refresh errors for the manage dialog', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     storeState.cliInstallerState = 'idle';
-    storeState.fetchCliProviderStatus = vi.fn(() => Promise.reject(new Error('refresh failed')));
+    storeState.fetchCliProviderStatus = vi.fn(() => Promise.resolve(false));
     storeState.cliStatus = createInstalledCliStatus({
       flavor: 'agent_teams_orchestrator',
       displayName: 'Multimodel runtime',
@@ -1859,7 +1886,9 @@ describe('CLI status visibility during completed install state', () => {
         codex: 'codex-native',
       },
     });
-    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('codex');
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('codex', {
+      checkReason: 'manual_refresh',
+    });
 
     await act(async () => {
       root.unmount();
@@ -2682,7 +2711,7 @@ describe('CLI status visibility during completed install state', () => {
   it('preserves settings runtime backend refresh errors for the manage dialog', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     storeState.cliInstallerState = 'idle';
-    storeState.fetchCliProviderStatus = vi.fn(() => Promise.reject(new Error('refresh failed')));
+    storeState.fetchCliProviderStatus = vi.fn(() => Promise.resolve(false));
 
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -2704,7 +2733,50 @@ describe('CLI status visibility during completed install state', () => {
         codex: 'api',
       },
     });
-    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('codex');
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('codex', {
+      checkReason: 'manual_refresh',
+    });
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('preserves provisioning runtime backend refresh failures for the manage dialog', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    storeState.fetchCliProviderStatus = vi.fn(() => Promise.resolve(false));
+    const onProviderRuntimeChanged = vi.fn();
+    const providers = [createCodexNativeRolloutProvider()] as unknown as React.ComponentProps<
+      typeof ProvisioningProviderRuntimeSettingsDialog
+    >['providers'];
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(ProvisioningProviderRuntimeSettingsDialog, {
+          openProviderId: 'codex',
+          onOpenProviderIdChange: vi.fn(),
+          providers,
+          onProviderRuntimeChanged,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const onSelectBackend = providerRuntimeSettingsDialogProps?.onSelectBackend;
+    expect(onSelectBackend).toBeTypeOf('function');
+    await expect(onSelectBackend?.('codex', 'api')).rejects.toThrow(
+      'Runtime updated, but failed to refresh provider status.'
+    );
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledWith('codex', {
+      silent: false,
+      checkReason: 'launch_preflight',
+    });
+    expect(onProviderRuntimeChanged).not.toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();

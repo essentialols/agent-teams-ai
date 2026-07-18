@@ -112,6 +112,7 @@ function createCallbacks(
     markUnconfirmedBootstrapMembersFailed: vi.fn(),
     stopPersistentTeamMembers: vi.fn(),
     persistLaunchStateSnapshot: vi.fn(async () => undefined),
+    observeRuntimeFailure: vi.fn(),
     ...overrides,
   };
 }
@@ -145,6 +146,7 @@ function createServiceAdapter(
     reevaluateMemberLaunchStatus: callbacks.reevaluateMemberLaunchStatus,
     invalidateRuntimeSnapshotCaches: callbacks.invalidateRuntimeSnapshotCaches,
     markUnconfirmedBootstrapMembersFailed: callbacks.markUnconfirmedBootstrapMembersFailed,
+    observeRuntimeFailure: callbacks.observeRuntimeFailure,
     persistLaunchStateSnapshot: callbacks.persistLaunchStateSnapshot,
   };
 }
@@ -169,10 +171,20 @@ describe('TeamProvisioningStreamEventPortsFactory', () => {
       createProgress({ state: 'finalizing', message: 'done' })
     );
     ports.resetLiveLeadTextBuffer(run);
+    ports.observeRuntimeFailure(run, {
+      phase: 'terminal',
+      detail: 'runtime stopped',
+      observedAt: '2026-01-01T00:00:01.000Z',
+    });
     ports.emitTeamChange({ type: 'inbox', teamName: 'atlas-hq', detail: 'user.json' });
 
     expect(callbacks.updateProgress).toHaveBeenCalledWith(run, 'finalizing', 'done');
     expect(callbacks.resetLiveLeadTextBuffer).toHaveBeenCalledWith(run);
+    expect(callbacks.observeRuntimeFailure).toHaveBeenCalledWith(run, {
+      phase: 'terminal',
+      detail: 'runtime stopped',
+      observedAt: '2026-01-01T00:00:01.000Z',
+    });
     expect(callbacks.emitTeamChange).toHaveBeenCalledWith({
       type: 'inbox',
       teamName: 'atlas-hq',
@@ -196,6 +208,13 @@ describe('TeamProvisioningStreamEventPortsFactory', () => {
     const run = createRun();
 
     ports.setLeadActivity(run, 'active');
+    ports.observeRuntimeFailure(run, {
+      phase: 'sdk_retrying',
+      detail: 'rate limited',
+      observedAt: '2026-01-01T00:00:02.000Z',
+      statusCode: 429,
+      retryAfterMs: 1_000,
+    });
     ports.emitTeamChange({ type: 'task', teamName: 'atlas-hq' });
     ports.pushLiveLeadProcessMessage('atlas-hq', {
       messageId: 'msg-1',
@@ -207,6 +226,13 @@ describe('TeamProvisioningStreamEventPortsFactory', () => {
     });
 
     expect(callbacks.setLeadActivity).toHaveBeenCalledWith(run, 'active');
+    expect(callbacks.observeRuntimeFailure).toHaveBeenCalledWith(run, {
+      phase: 'sdk_retrying',
+      detail: 'rate limited',
+      observedAt: '2026-01-01T00:00:02.000Z',
+      statusCode: 429,
+      retryAfterMs: 1_000,
+    });
     expect(emitTeamChange).toHaveBeenCalledWith({ type: 'task', teamName: 'atlas-hq' });
     expect(callbacks.pushLiveLeadProcessMessage).toHaveBeenCalledWith('atlas-hq', {
       messageId: 'msg-1',

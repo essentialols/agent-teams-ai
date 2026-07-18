@@ -54,6 +54,8 @@ function makePorts(
     persistedTranscriptClaudeLogs: { invalidate: vi.fn() },
     leadInboxRelayInFlight: new Map(),
     relayedLeadInboxMessageIds: new Map(),
+    leadRecoveryMessageIds: new Map(),
+    successfulLeadRecoveryMessageIds: new Map(),
     pendingCrossTeamFirstReplies: new Map(),
     recentCrossTeamLeadDeliveryMessageIds: new Map(),
     recentSameTeamNativeFingerprints: new Map(),
@@ -98,6 +100,8 @@ describe('TeamProvisioningTransientRunState', () => {
       },
       leadInboxRelayInFlight: new Map(),
       relayedLeadInboxMessageIds: new Map(),
+      leadRecoveryMessageIds: new Map(),
+      successfulLeadRecoveryMessageIds: new Map(),
       pendingCrossTeamFirstReplies: new Map(),
       recentCrossTeamLeadDeliveryMessageIds: new Map(),
       sameTeamNativeDelivery: new Map(),
@@ -205,6 +209,8 @@ describe('TeamProvisioningTransientRunState', () => {
     (ports.retainedClaudeLogsByTeam as Map<string, unknown>).set('alpha', {});
     (ports.leadInboxRelayInFlight as Map<string, unknown>).set('alpha', {});
     (ports.relayedLeadInboxMessageIds as Map<string, unknown>).set('alpha', {});
+    (ports.leadRecoveryMessageIds as Map<string, unknown>).set('alpha', {});
+    (ports.successfulLeadRecoveryMessageIds as Map<string, unknown>).set('alpha', {});
     (ports.pendingCrossTeamFirstReplies as Map<string, unknown>).set('alpha', {});
     (ports.recentCrossTeamLeadDeliveryMessageIds as Map<string, unknown>).set('alpha', {});
     (ports.recentSameTeamNativeFingerprints as Map<string, unknown>).set('alpha', {});
@@ -236,6 +242,10 @@ describe('TeamProvisioningTransientRunState', () => {
     expect(ports.openCodeRuntimeDeliveryAdvisory.cancelTeam).toHaveBeenCalledWith('alpha');
     expect(ports.pendingTimeouts.has('same-team-deferred:alpha')).toBe(false);
     expect(ports.pendingTimeouts.has('lead-inbox-follow-up:alpha')).toBe(false);
+    expect((ports.successfulLeadRecoveryMessageIds as Map<string, unknown>).has('alpha')).toBe(
+      false
+    );
+    expect((ports.leadRecoveryMessageIds as Map<string, unknown>).has('alpha')).toBe(false);
     expect(ports.pendingTimeouts.has('same-team-deferred:beta')).toBe(true);
     expect((ports.memberInboxRelayInFlight as Map<string, unknown>).has('alpha:dev')).toBe(false);
     expect((ports.memberInboxRelayInFlight as Map<string, unknown>).has('beta:dev')).toBe(true);

@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 
 
 import { useAppTranslation } from '@features/localization/renderer';
 import { recordRecentProjectOpenPaths } from '@features/recent-projects/renderer';
+import { classifyAnalyticsError, recordTeamStop } from '@renderer/analytics/productAnalytics';
 import { api, isElectronMode } from '@renderer/api';
 import { confirm } from '@renderer/components/common/ConfirmDialog';
 import { Badge } from '@renderer/components/ui/badge';
@@ -939,8 +940,20 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
     setStoppingTeamName(teamName);
     try {
       await api.teams.stop(teamName);
+      recordTeamStop({
+        source: 'list',
+        success: true,
+        runtimeActive: true,
+        errorClass: 'none',
+      });
       setAliveTeams((prev) => prev.filter((n) => n !== teamName));
     } catch (err) {
+      recordTeamStop({
+        source: 'list',
+        success: false,
+        runtimeActive: true,
+        errorClass: classifyAnalyticsError(err),
+      });
       console.error('Failed to stop team:', err);
     } finally {
       setStoppingTeamName(null);
@@ -1012,7 +1025,25 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
           isTeamAlive: true,
           request,
           members,
-          stopTeam: (nextTeamName) => api.teams.stop(nextTeamName),
+          stopTeam: async (nextTeamName) => {
+            try {
+              await api.teams.stop(nextTeamName);
+              recordTeamStop({
+                source: 'relaunch',
+                success: true,
+                runtimeActive: true,
+                errorClass: 'none',
+              });
+            } catch (error) {
+              recordTeamStop({
+                source: 'relaunch',
+                success: false,
+                runtimeActive: true,
+                errorClass: classifyAnalyticsError(error),
+              });
+              throw error;
+            }
+          },
           replaceMembers: (nextTeamName, nextRequest) =>
             api.teams.replaceMembers(nextTeamName, nextRequest),
           launchTeam,

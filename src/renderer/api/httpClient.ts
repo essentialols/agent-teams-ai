@@ -1368,6 +1368,9 @@ export class HttpAPIClient implements ElectronAPI {
     applyDecisions: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
+    executeMutation: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
     // Phase 2 stubs
     checkConflict: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
@@ -1383,6 +1386,15 @@ export class HttpAPIClient implements ElectronAPI {
     },
     // Editable diff stubs
     saveEditedFile: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    deleteEditedFile: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    restoreRejectedRename: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    reapplyRejectedRename: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
     watchFiles: async (): Promise<never> => {
@@ -1409,6 +1421,15 @@ export class HttpAPIClient implements ElectronAPI {
       throw new Error('Review is not available in browser mode');
     },
     clearDecisions: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    loadDraftHistory: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    saveDraftHistoryEntry: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    clearDraftHistory: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
     // Phase 4 stubs

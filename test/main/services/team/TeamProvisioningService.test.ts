@@ -280,6 +280,7 @@ import {
 } from './provisioningHarness';
 
 import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
+import type { OpenCodeTeamRuntimeMessageResult } from '@main/services/team/runtime';
 import type { TeamConfig, TeamMember, TeamProvisioningMemberInput } from '@shared/types/team';
 
 const EXPECTED_RUNTIME_PIDUSAGE_OPTIONS =
@@ -7796,16 +7797,25 @@ describe('TeamProvisioningService', () => {
       );
     });
 
-    it('serializes OpenCode runtime sends by lane', async () => {
+    it('serializes OpenCode runtime sends by member lane', async () => {
       const svc = new TeamProvisioningService();
       const harness = privateHarness(svc);
+      const sendSerialized = harness.sendOpenCodeMemberMessageToRuntimeSerialized.bind(
+        harness
+      ) as unknown as (input: {
+        teamName: string;
+        laneId: string;
+        memberName: string;
+        send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
+      }) => Promise<OpenCodeTeamRuntimeMessageResult>;
       const firstStarted = createDeferred<void>();
       const releaseFirst = createDeferred<void>();
       const secondStarted = vi.fn();
 
-      const first = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const first = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           firstStarted.resolve(undefined);
           await releaseFirst.promise;
@@ -7819,9 +7829,10 @@ describe('TeamProvisioningService', () => {
       });
       await firstStarted.promise;
 
-      const second = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const second = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           secondStarted();
           return {
@@ -7844,13 +7855,22 @@ describe('TeamProvisioningService', () => {
     it('continues queued OpenCode lane sends after a failed send', async () => {
       const svc = new TeamProvisioningService();
       const harness = privateHarness(svc);
+      const sendSerialized = harness.sendOpenCodeMemberMessageToRuntimeSerialized.bind(
+        harness
+      ) as unknown as (input: {
+        teamName: string;
+        laneId: string;
+        memberName: string;
+        send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
+      }) => Promise<OpenCodeTeamRuntimeMessageResult>;
       const firstStarted = createDeferred<void>();
       const releaseFirst = createDeferred<void>();
       const secondStarted = vi.fn();
 
-      const first = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const first = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           firstStarted.resolve(undefined);
           await releaseFirst.promise;
@@ -7859,9 +7879,10 @@ describe('TeamProvisioningService', () => {
       });
       await firstStarted.promise;
 
-      const second = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const second = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           secondStarted();
           return {
@@ -18025,6 +18046,7 @@ describe('TeamProvisioningService', () => {
       expect(runId).toEqual(expect.any(String));
       expect(spawnCli).not.toHaveBeenCalled();
       expect(ClaudeBinaryResolver.resolve).not.toHaveBeenCalled();
+      expect(adapterLaunch).toHaveBeenCalledTimes(2);
       expect(adapterLaunch).toHaveBeenCalledWith(
         expect.objectContaining({
           laneId: 'primary',
@@ -18034,15 +18056,20 @@ describe('TeamProvisioningService', () => {
           cwd: tempClaudeRoot,
           expectedMembers: [
             expect.objectContaining({
-              name: 'team-lead',
-              providerId: 'opencode',
-              model: 'big-pickle',
-            }),
-            expect.objectContaining({
               name: 'bob',
               providerId: 'opencode',
               model: 'minimax-m2.5-free',
             }),
+          ],
+        })
+      );
+      expect(adapterLaunch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          laneId: 'secondary:opencode:tom',
+          providerId: 'opencode',
+          model: 'nemotron-3-super-free',
+          cwd: tempClaudeRoot,
+          expectedMembers: [
             expect.objectContaining({
               name: 'tom',
               providerId: 'opencode',
@@ -18092,11 +18119,11 @@ describe('TeamProvisioningService', () => {
         launchState: 'confirmed_alive',
       });
       expect(publicStatuses.statuses.tom).toMatchObject({
-        status: 'online',
-        launchState: 'confirmed_alive',
+        status: 'spawning',
+        launchState: 'starting',
       });
-      expect(publicStatuses.teamLaunchState).toBe('clean_success');
-      expect(progress).toEqual(expect.arrayContaining(['validating', 'spawning', 'ready']));
+      expect(publicStatuses.teamLaunchState).toBe('partial_pending');
+      expect(progress).toEqual(expect.arrayContaining(['validating', 'spawning']));
     });
 
     it('keeps Codex in the primary CLI lane and starts OpenCode teammates as secondary runtime lanes', async () => {
@@ -18950,7 +18977,7 @@ describe('TeamProvisioningService', () => {
       expect(adapterLaunch).toHaveBeenCalledTimes(2);
       expect(adapterLaunch).toHaveBeenCalledWith(
         expect.objectContaining({
-          laneId: 'primary',
+          laneId: 'secondary:opencode:tom',
           cwd: tempClaudeRoot,
           expectedMembers: [
             expect.objectContaining({
@@ -18981,6 +19008,11 @@ describe('TeamProvisioningService', () => {
           laneId: 'secondary:opencode:bob',
           state: 'finished',
           member: expect.objectContaining({ name: 'bob', cwd: bobWorktree }),
+        }),
+        expect.objectContaining({
+          laneId: 'secondary:opencode:tom',
+          state: 'finished',
+          member: expect.objectContaining({ name: 'tom' }),
         }),
       ]);
     });
@@ -20870,14 +20902,14 @@ describe('TeamProvisioningService', () => {
 
   it('fails before spawning when deterministic launch exceeds the current primary teammate cap', async () => {
     allowConsoleLogs();
-    const members = Array.from({ length: 21 }, (_, index) => `member-${index + 1}`);
+    const members = Array.from({ length: 31 }, (_, index) => `member-${index + 1}`);
 
     await expect(
       startDeterministicLaunchCloseHarness({
         teamName: 'launch-too-many-primary-members',
         members,
       })
-    ).rejects.toThrow(/up to 20 primary teammates/);
+    ).rejects.toThrow(/up to 30 primary teammates/);
     expect(spawnCli).not.toHaveBeenCalled();
   });
 

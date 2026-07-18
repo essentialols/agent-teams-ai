@@ -23,9 +23,14 @@ import type {
   ApplyReviewResult,
   ChangeStats,
   ConflictCheckResult,
+  ExecuteReviewMutationRequest,
   FileChangeWithContent,
   HunkDecision,
   RejectResult,
+  ReviewFileScope,
+  ReviewRedoAction,
+  ReviewRenameRecoveryExpectation,
+  ReviewUndoAction,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
@@ -103,6 +108,10 @@ import type {
 import type { TerminalAPI } from './terminal';
 import type { TmuxAPI } from './tmux';
 import type { WaterfallData } from './visualization';
+import type {
+  ReviewDraftHistoryEntry,
+  ReviewDraftHistorySnapshot,
+} from '@features/change-review-history/contracts';
 import type { CodexAccountElectronApi } from '@features/codex-account/contracts';
 import type { CodexRuntimeAPI } from '@features/codex-runtime-installer/contracts';
 import type { MemberLogStreamApi } from '@features/member-log-stream/contracts';
@@ -753,16 +762,19 @@ export interface ReviewAPI {
     snippets?: SnippetDiff[]
   ) => Promise<FileChangeWithContent>;
   applyDecisions: (request: ApplyReviewRequest) => Promise<ApplyReviewResult>;
+  executeMutation: (request: ExecuteReviewMutationRequest) => Promise<{ decisionRevision: number }>;
   // Phase 2
-  checkConflict: (filePath: string, expectedModified: string) => Promise<ConflictCheckResult>;
-  rejectHunks: (
+  checkConflict: (
+    scope: ReviewFileScope,
     filePath: string,
-    original: string,
-    modified: string,
-    hunkIndices: number[],
-    snippets: SnippetDiff[]
+    expectedModified: string
+  ) => Promise<ConflictCheckResult>;
+  rejectHunks: (
+    scope: ReviewFileScope,
+    filePath: string,
+    hunkIndices: number[]
   ) => Promise<RejectResult>;
-  rejectFile: (filePath: string, original: string, modified: string) => Promise<RejectResult>;
+  rejectFile: (scope: ReviewFileScope, filePath: string) => Promise<RejectResult>;
   previewReject: (
     filePath: string,
     original: string,
@@ -772,9 +784,25 @@ export interface ReviewAPI {
   ) => Promise<{ preview: string; hasConflicts: boolean }>;
   // Editable diff
   saveEditedFile: (
+    scope: ReviewFileScope,
     filePath: string,
     content: string,
-    projectPath?: string
+    expectedCurrentContent: string | null
+  ) => Promise<{ success: boolean }>;
+  deleteEditedFile: (
+    scope: ReviewFileScope,
+    filePath: string,
+    expectedCurrentContent: string
+  ) => Promise<{ success: boolean }>;
+  restoreRejectedRename: (
+    scope: ReviewFileScope,
+    filePath: string,
+    expectation: ReviewRenameRecoveryExpectation
+  ) => Promise<{ success: boolean }>;
+  reapplyRejectedRename: (
+    scope: ReviewFileScope,
+    filePath: string,
+    expectation: ReviewRenameRecoveryExpectation
   ) => Promise<{ success: boolean }>;
   watchFiles: (projectPath: string, filePaths: string[]) => Promise<void>;
   unwatchFiles: () => Promise<void>;
@@ -792,6 +820,9 @@ export interface ReviewAPI {
      * filePath -> (hunkIndex -> contextHash)
      */
     hunkContextHashesByFile?: Record<string, Record<number, string>>;
+    reviewActionHistory: ReviewUndoAction[];
+    reviewRedoHistory: ReviewRedoAction[];
+    revision: number;
   } | null>;
   saveDecisions: (
     teamName: string,
@@ -799,9 +830,34 @@ export interface ReviewAPI {
     scopeToken: string,
     hunkDecisions: Record<string, HunkDecision>,
     fileDecisions: Record<string, HunkDecision>,
-    hunkContextHashesByFile?: Record<string, Record<number, string>>
+    hunkContextHashesByFile?: Record<string, Record<number, string>>,
+    reviewActionHistory?: ReviewUndoAction[],
+    expectedRevision?: number,
+    reviewRedoHistory?: ReviewRedoAction[]
+  ) => Promise<{ revision: number }>;
+  clearDecisions: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken?: string,
+    expectedRevision?: number
+  ) => Promise<{ revision: number }>;
+  loadDraftHistory: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string
+  ) => Promise<ReviewDraftHistorySnapshot | null>;
+  saveDraftHistoryEntry: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string,
+    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt'>
+  ) => Promise<ReviewDraftHistoryEntry>;
+  clearDraftHistory: (
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string,
+    filePath?: string
   ) => Promise<void>;
-  clearDecisions: (teamName: string, scopeKey: string, scopeToken?: string) => Promise<void>;
   onCmdN?: (callback: () => void) => (() => void) | undefined;
   // Phase 4
   getGitFileLog: (

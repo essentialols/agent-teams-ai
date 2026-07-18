@@ -20,6 +20,14 @@ Get-FileHash -Algorithm SHA256
 msiexec /i kiro.msi
 `;
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 describe('KiroCliCompanionService', () => {
   it('matches the official glibc and musl Linux archive thresholds', () => {
     expect(resolveKiroLinuxArchiveSuffix('x64', '2.34')).toBe('kirocli-x86_64-linux.zip');
@@ -147,6 +155,31 @@ describe('KiroCliCompanionService', () => {
     expect(status.error).toBe('Get-FileHash is not available');
   });
 
+  it('surfaces the official MSI exit code instead of the trailing manual-install hint', async () => {
+    const service = new KiroCliCompanionService({
+      platform: 'win32',
+      arch: 'x64',
+      fetchInstallerScript: async () => VALID_WINDOWS_INSTALLER,
+      fetchPackageSize: async () => 100 * 1024 * 1024,
+      getAvailableBytes: async () => 10 * 1024 * 1024 * 1024,
+      resolveBinary: async () => null,
+      runCommand: async () => ({
+        exitCode: 1,
+        stdout: [
+          'Installing Kiro CLI...',
+          'Installation failed with exit code 1603',
+          'You can try installing manually: C:\\Temp\\kiro-cli-installer.msi',
+        ].join('\n'),
+        stderr: '',
+      }),
+    });
+
+    const status = await service.installAndConnect();
+
+    expect(status.phase).toBe('needs-manual-step');
+    expect(status.error).toBe('Installation failed with exit code 1603');
+  });
+
   it('fails before downloading the package when free disk space is unsafe', async () => {
     const runCommand = vi.fn();
     const service = new KiroCliCompanionService({
@@ -210,6 +243,55 @@ describe('KiroCliCompanionService', () => {
     expect(whoamiAttempts).toBe(2);
     expect(sleep).toHaveBeenCalledWith(1_000);
     expect(status.phase).toBe('connected');
+  });
+
+  it('does not let a status refresh started before connect overwrite the connected result', async () => {
+    const firstBinaryProbe = deferred<string | null>();
+    const progress: string[] = [];
+    let binaryProbeCalls = 0;
+    let authenticated = false;
+    const service = new KiroCliCompanionService({
+      platform: 'darwin',
+      resolveBinary: () => {
+        binaryProbeCalls += 1;
+        return binaryProbeCalls === 1
+          ? firstBinaryProbe.promise
+          : Promise.resolve('/Users/test/.local/bin/kiro-cli');
+      },
+      runCommand: async (_command, args) => {
+        if (args[0] === 'login') {
+          authenticated = true;
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (args[0] === 'whoami') {
+          return authenticated
+            ? { exitCode: 0, stdout: '{"account":"test"}', stderr: '' }
+            : { exitCode: 1, stdout: '', stderr: 'Not logged in' };
+        }
+        return { exitCode: 0, stdout: 'kiro-cli 2.12.1', stderr: '' };
+      },
+      sleep: async () => {},
+      emitProgress: (status) => progress.push(status.phase),
+    });
+
+    const staleStatus = service.getStatus();
+    await vi.waitFor(() => expect(binaryProbeCalls).toBe(1));
+
+    await expect(service.installAndConnect()).resolves.toMatchObject({
+      phase: 'connected',
+      authenticated: true,
+    });
+    firstBinaryProbe.resolve(null);
+
+    await expect(staleStatus).resolves.toMatchObject({
+      phase: 'connected',
+      authenticated: true,
+    });
+    expect(service.getCurrentStatus()).toMatchObject({
+      phase: 'connected',
+      authenticated: true,
+    });
+    expect(progress).not.toContain('missing');
   });
 
   it.each([

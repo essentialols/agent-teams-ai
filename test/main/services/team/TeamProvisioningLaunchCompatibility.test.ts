@@ -32,7 +32,9 @@ describe('TeamProvisioningLaunchCompatibility', () => {
         providerId: 'opencode',
         members: [{ providerId: 'opencode' }],
       })
-    ).toThrow('OpenCode team launch is not enabled in the legacy Claude stream-json provisioning path');
+    ).toThrow(
+      'OpenCode team launch is not enabled in the legacy Claude stream-json provisioning path'
+    );
 
     expect(() =>
       assertOpenCodeNotLaunchedThroughLegacyProvisioning({
@@ -60,9 +62,9 @@ describe('TeamProvisioningLaunchCompatibility', () => {
   it('bounds deterministic bootstrap team size warnings and hard limits', () => {
     expect(buildLargeDeterministicBootstrapWarning(8)).toBeNull();
     expect(buildLargeDeterministicBootstrapWarning(9)).toContain('Large Codex team launch: 9');
-    expect(() => assertDeterministicBootstrapPrimaryMemberLimit(20)).not.toThrow();
-    expect(() => assertDeterministicBootstrapPrimaryMemberLimit(21)).toThrow(
-      'supports up to 20 primary teammates'
+    expect(() => assertDeterministicBootstrapPrimaryMemberLimit(30)).not.toThrow();
+    expect(() => assertDeterministicBootstrapPrimaryMemberLimit(31)).toThrow(
+      'supports up to 30 primary teammates'
     );
   });
 

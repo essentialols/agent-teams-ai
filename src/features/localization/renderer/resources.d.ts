@@ -2676,6 +2676,25 @@ export default interface Resources {
       };
     };
     notifications: {
+      recovery: {
+        title: 'Automatic agent recovery';
+        transient: {
+          label: 'Recover transient runtime errors';
+          description: 'Continue the failed lead or teammate turn after safe transient provider and network errors';
+        };
+        rateLimits: {
+          label: 'Recover rate limits with a reset time';
+          description: 'Continue after a trusted Retry-After or reset time, with a safety buffer';
+        };
+        delay: {
+          label: 'Initial retry delay (seconds)';
+          description: 'Base delay before the first recovery attempt (15-900 seconds)';
+        };
+        attempts: {
+          label: 'Maximum recovery attempts';
+          description: 'Accepted runtime turns per failure chain (1-5)';
+        };
+      };
       dev: {
         descriptionPrefix: 'Notifications may not work in development mode. macOS identifies the app as "Electron" (bundle ID';
         descriptionSuffix: ') instead of the production app name. Check System Settings > Notifications > Electron to verify permissions.';
@@ -5626,6 +5645,7 @@ export default interface Resources {
           applyRejections: 'Apply Rejections';
           applying: 'Applying...';
           auto: 'Auto';
+          redo: 'Redo';
           rejectAll: 'Reject All';
           undo: 'Undo';
         };
@@ -5663,6 +5683,7 @@ export default interface Resources {
           autoOn: 'Auto-mark files as viewed when scrolled to end (ON)';
           rejectAll: 'Reject all safely rejectable changes across all files';
           rejectAllDisabled: 'No pending files have a safe original baseline to reject.';
+          redo: 'Redo last undone review operation (Ctrl+Shift+Z)';
           undo: 'Undo last review operation (Ctrl+Z)';
         };
       };

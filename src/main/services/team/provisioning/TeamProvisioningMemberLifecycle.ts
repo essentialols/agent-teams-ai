@@ -222,6 +222,7 @@ async function cleanupPendingAnthropicApiKeyHelper(
   if (!helper) {
     return;
   }
+  // Cleanup stays best-effort so the original provisioning failure remains authoritative.
   await cleanupAnthropicTeamApiKeyHelperMaterial({
     directory: helper.directory,
     skipIfLiveProcessReferences: true,

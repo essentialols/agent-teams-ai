@@ -23,6 +23,7 @@ function createHost(): TeamProvisioningCreateDeterministicSetupFlowServiceHost {
       providerArgsByProvider: new Map(),
       envPatch: {},
       usesAnthropicApiKeyHelper: false,
+      ...({ anthropicApiKeyHelper: null } as const),
     })),
     resolveAndValidateLaunchIdentity: vi.fn(async () => null),
     createMixedSecondaryLaneStates: vi.fn(() => []),

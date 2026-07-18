@@ -57,12 +57,16 @@ const hoisted = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   getOpenCodeRuntimeDeliveryStatus: vi.fn(),
   retryFailedOpenCodeSecondaryLanes: vi.fn(),
+  createTask: vi.fn(),
+  saveTaskAttachment: vi.fn(),
+  addTaskComment: vi.fn(),
   restartMember: vi.fn(),
   skipMemberForLaunch: vi.fn(),
   requestReview: vi.fn(),
   updateKanban: vi.fn(),
   invalidateTaskChangeSummaries: vi.fn(),
   onProvisioningProgress: vi.fn(() => () => undefined),
+  capturePostHogEvent: vi.fn(),
 }));
 
 const originalWindowAnimationFrame =
@@ -95,6 +99,9 @@ vi.mock('@renderer/api', () => ({
       sendMessage: hoisted.sendMessage,
       getOpenCodeRuntimeDeliveryStatus: hoisted.getOpenCodeRuntimeDeliveryStatus,
       retryFailedOpenCodeSecondaryLanes: hoisted.retryFailedOpenCodeSecondaryLanes,
+      createTask: hoisted.createTask,
+      saveTaskAttachment: hoisted.saveTaskAttachment,
+      addTaskComment: hoisted.addTaskComment,
       restartMember: hoisted.restartMember,
       skipMemberForLaunch: hoisted.skipMemberForLaunch,
       requestReview: hoisted.requestReview,
@@ -105,6 +112,63 @@ vi.mock('@renderer/api', () => ({
       invalidateTaskChangeSummaries: hoisted.invalidateTaskChangeSummaries,
     },
   },
+}));
+
+vi.mock('@renderer/analytics/productAnalytics', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/renderer/analytics/productAnalytics')>();
+  return {
+    ...actual,
+    recordAttachmentAttachEnd: (input: Record<string, unknown>) => {
+      const mimeTypes = Array.isArray(input.mimeTypes) ? input.mimeTypes : [];
+      const mimeType = typeof mimeTypes[0] === 'string' ? mimeTypes[0] : '';
+      hoisted.capturePostHogEvent('attachment_management:attach_end', {
+        source: input.source,
+        success: input.success,
+        file_count_bucket: actual.bucketCount(input.fileCount as number | null),
+        size_bucket:
+          typeof input.totalSizeBytes === 'number' && input.totalSizeBytes > 0
+            ? '1_100kb'
+            : 'unknown',
+        file_type_family: mimeType === 'application/pdf' ? 'document' : 'unknown',
+        error_class: input.errorClass,
+      });
+    },
+    recordCrossTeamMessageSend: () => undefined,
+    recordTaskFirstOutput: (input: Record<string, unknown>) => {
+      hoisted.capturePostHogEvent('task_management:first_output', {
+        target_type: input.targetType,
+        duration_ms_bucket: actual.bucketDurationMs(input.durationMs as number | null),
+        provider: input.provider,
+        team_size_bucket: actual.bucketCount(input.teamSize as number | null),
+        has_attachments: input.hasAttachments,
+        has_task_refs: input.hasTaskRefs,
+      });
+    },
+    recordTeamDelete: () => undefined,
+    recordTeamLaunchStepEnd: (input: Record<string, unknown>) => {
+      const providerIds = Array.isArray(input.providerIds)
+        ? (input.providerIds as (string | null)[])
+        : [];
+      hoisted.capturePostHogEvent('team_management:launch_step_end', {
+        step: input.step,
+        success: input.success,
+        duration_ms_bucket: actual.bucketDurationMs(input.durationMs as number | null),
+        member_count_bucket: actual.bucketCount(input.memberCount as number | null),
+        provider_mix:
+          providerIds
+            .filter(Boolean)
+            .sort((left, right) => String(left).localeCompare(String(right)))
+            .join('+') || 'unknown',
+        error_class: input.errorClass,
+        partial_failure: input.partialFailure,
+      });
+    },
+  };
+});
+
+vi.mock('@renderer/posthog', () => ({
+  capturePostHogEvent: hoisted.capturePostHogEvent,
 }));
 
 vi.mock('../../../src/renderer/utils/unwrapIpc', async (importOriginal) => {
@@ -408,6 +472,25 @@ describe('teamSlice actions', () => {
     });
     hoisted.sendMessage.mockResolvedValue({ deliveredToInbox: true, messageId: 'm1' });
     hoisted.getOpenCodeRuntimeDeliveryStatus.mockResolvedValue(null);
+    hoisted.createTask.mockResolvedValue({
+      id: 'task-1',
+      subject: 'Task',
+      status: 'in_progress',
+      owner: 'alice',
+      createdAt: '2026-03-12T10:00:00.000Z',
+      updatedAt: '2026-03-12T10:00:00.000Z',
+      comments: [],
+      attachments: [],
+      historyEvents: [],
+    });
+    hoisted.saveTaskAttachment.mockResolvedValue(undefined);
+    hoisted.addTaskComment.mockResolvedValue({
+      id: 'comment-1',
+      author: 'user',
+      text: 'comment',
+      createdAt: '2026-03-12T10:00:00.000Z',
+      type: 'regular',
+    });
     hoisted.requestReview.mockResolvedValue(undefined);
     hoisted.updateKanban.mockResolvedValue(undefined);
     hoisted.createTeam.mockResolvedValue({ runId: 'run-1' });
@@ -450,6 +533,153 @@ describe('teamSlice actions', () => {
   afterEach(() => {
     restoreWindowAnimationFrame();
     vi.useRealTimers();
+  });
+
+  it('records task first output once through createTask and refresh without leaking prompt text', async () => {
+    const store = createSliceStore();
+    const initialTeamData = createTeamSnapshot({
+      members: [{ name: 'alice', providerId: 'xai' as TeamMemberSnapshot['providerId'] }],
+    });
+    const taskWithFirstOutput = {
+      id: 'task-1',
+      subject: 'Sensitive subject should not leak',
+      status: 'in_progress' as const,
+      owner: 'alice',
+      createdAt: '2026-03-12T10:00:00.000Z',
+      updatedAt: '2026-03-12T10:00:05.000Z',
+      comments: [
+        {
+          id: 'comment-1',
+          author: 'alice',
+          text: 'Sensitive teammate reply should not leak',
+          createdAt: '2026-03-12T10:00:05.000Z',
+          type: 'regular' as const,
+        },
+      ],
+      attachments: [],
+      historyEvents: [],
+    };
+    store.setState({
+      selectedTeamName: 'my-team',
+      selectedTeamData: initialTeamData,
+    });
+    hoisted.getData.mockResolvedValue(
+      createTeamSnapshot({
+        members: [{ name: 'alice', providerId: 'xai' as TeamMemberSnapshot['providerId'] }],
+        tasks: [taskWithFirstOutput],
+      })
+    );
+
+    await store.getState().createTeamTask('my-team', {
+      subject: 'Sensitive subject should not leak',
+      owner: 'alice',
+      prompt: 'Sensitive prompt should not leak',
+      promptTaskRefs: [{ taskId: 'task-0', displayId: 'task-0', teamName: 'my-team' }],
+    });
+    await store.getState().refreshTeamData('my-team');
+
+    const firstOutputCalls = hoisted.capturePostHogEvent.mock.calls.filter(
+      ([eventName]) => eventName === 'task_management:first_output'
+    );
+    expect(firstOutputCalls).toHaveLength(1);
+    expect(firstOutputCalls[0]).toEqual([
+      'task_management:first_output',
+      expect.objectContaining({
+        target_type: 'member',
+        provider: 'xai',
+        team_size_bucket: '1',
+        has_attachments: false,
+        has_task_refs: true,
+      }),
+    ]);
+    expect(JSON.stringify(hoisted.capturePostHogEvent.mock.calls)).not.toContain(
+      'Sensitive prompt'
+    );
+    expect(JSON.stringify(hoisted.capturePostHogEvent.mock.calls)).not.toContain(
+      'Sensitive teammate reply'
+    );
+  });
+
+  it('records task attachment metadata through saveTaskAttachment without leaking file names', async () => {
+    const store = createSliceStore();
+
+    await store.getState().saveTaskAttachment('my-team', 'task-1', {
+      name: 'secret-roadmap.pdf',
+      type: 'application/pdf',
+      base64: 'aGVsbG8=',
+    });
+
+    expect(hoisted.saveTaskAttachment).toHaveBeenCalledWith(
+      'my-team',
+      'task-1',
+      expect.any(String),
+      'secret-roadmap.pdf',
+      'application/pdf',
+      'aGVsbG8='
+    );
+    expect(hoisted.capturePostHogEvent).toHaveBeenCalledWith('attachment_management:attach_end', {
+      source: 'task',
+      success: true,
+      file_count_bucket: '1',
+      size_bucket: '1_100kb',
+      file_type_family: 'document',
+      error_class: 'none',
+    });
+    expect(JSON.stringify(hoisted.capturePostHogEvent.mock.calls)).not.toContain('secret-roadmap');
+  });
+
+  it('records launch step transitions from provisioning progress once per step', () => {
+    const store = createSliceStore();
+    store.setState({
+      selectedTeamName: 'my-team',
+      selectedTeamData: createTeamSnapshot({
+        members: [{ name: 'alice', providerId: 'xai' as TeamMemberSnapshot['providerId'] }],
+      }),
+      currentProvisioningRunIdByTeam: { 'my-team': 'run-analytics' },
+    });
+
+    store.getState().onProvisioningProgress({
+      runId: 'run-analytics',
+      teamName: 'my-team',
+      state: 'validating',
+      message: 'Validating',
+      startedAt: '2026-03-12T10:00:00.000Z',
+      updatedAt: '2026-03-12T10:00:00.000Z',
+    });
+    store.getState().onProvisioningProgress({
+      runId: 'run-analytics',
+      teamName: 'my-team',
+      state: 'spawning',
+      message: 'Spawning',
+      startedAt: '2026-03-12T10:00:00.000Z',
+      updatedAt: '2026-03-12T10:00:02.000Z',
+    });
+    store.getState().onProvisioningProgress({
+      runId: 'run-analytics',
+      teamName: 'my-team',
+      state: 'spawning',
+      message: 'Spawning',
+      startedAt: '2026-03-12T10:00:00.000Z',
+      updatedAt: '2026-03-12T10:00:02.000Z',
+    });
+
+    const launchStepCalls = hoisted.capturePostHogEvent.mock.calls.filter(
+      ([eventName]) => eventName === 'team_management:launch_step_end'
+    );
+    expect(launchStepCalls).toEqual([
+      [
+        'team_management:launch_step_end',
+        expect.objectContaining({
+          step: 'config_validation',
+          success: true,
+          duration_ms_bucket: '1_5s',
+          member_count_bucket: '1',
+          provider_mix: 'xai',
+          error_class: 'none',
+          partial_failure: false,
+        }),
+      ],
+    ]);
   });
 
   it('restores the selected messages panel mode from localStorage', () => {

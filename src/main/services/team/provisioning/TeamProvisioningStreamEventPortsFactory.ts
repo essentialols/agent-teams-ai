@@ -36,6 +36,21 @@ export type TeamProvisioningStreamEventPortsFactoryRun = TeamProvisioningStreamR
   RetainedLogsRunLike &
   LeadContextUsageRunLike;
 
+interface RuntimeFailureObservation {
+  phase: 'sdk_retrying' | 'terminal';
+  detail: string;
+  observedAt: string;
+  statusCode?: number;
+  retryAfterMs?: number;
+  causedByRecoveryMessageId?: string;
+}
+
+export type TeamProvisioningRuntimeFailureAwareStreamEventPorts<
+  TRun extends TeamProvisioningStreamEventPortsFactoryRun,
+> = TeamProvisioningStreamEventPorts<TRun> & {
+  observeRuntimeFailure(run: TRun, failure: RuntimeFailureObservation): void;
+};
+
 export interface TeamProvisioningStreamEventPortCallbacks<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
 > {
@@ -71,6 +86,7 @@ export interface TeamProvisioningStreamEventPortCallbacks<
   markUnconfirmedBootstrapMembersFailed: TeamProvisioningStreamEventPorts<TRun>['markUnconfirmedBootstrapMembersFailed'];
   stopPersistentTeamMembers: TeamProvisioningStreamEventPorts<TRun>['stopPersistentTeamMembers'];
   persistLaunchStateSnapshot: TeamProvisioningStreamEventPorts<TRun>['persistLaunchStateSnapshot'];
+  observeRuntimeFailure: TeamProvisioningRuntimeFailureAwareStreamEventPorts<TRun>['observeRuntimeFailure'];
 }
 
 export type TeamProvisioningStreamEventOutputRecoveryAdapter<
@@ -110,7 +126,8 @@ type StreamEventServicePortKey =
 
 export type TeamProvisioningStreamEventServiceAdapter<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
-> = Pick<TeamProvisioningStreamEventPorts<TRun>, StreamEventServicePortKey>;
+> = Pick<TeamProvisioningStreamEventPorts<TRun>, StreamEventServicePortKey> &
+  Pick<TeamProvisioningRuntimeFailureAwareStreamEventPorts<TRun>, 'observeRuntimeFailure'>;
 
 export type TeamProvisioningStreamEventPersistentRuntimeCleanupAdapter<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
@@ -130,7 +147,7 @@ export function createTeamProvisioningStreamEventPortsBoundary<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
 >(
   deps: TeamProvisioningStreamEventPortsBoundaryDeps<TRun>
-): TeamProvisioningStreamEventPorts<TRun> {
+): TeamProvisioningRuntimeFailureAwareStreamEventPorts<TRun> {
   return createTeamProvisioningStreamEventPorts({
     updateProgress: (run, state, message, extras) =>
       deps.updateProgress(run, state, message, extras),
@@ -182,6 +199,7 @@ export function createTeamProvisioningStreamEventPortsBoundary<
     stopPersistentTeamMembers: (teamName) =>
       deps.persistentRuntimeCleanup.stopPersistentTeamMembers(teamName),
     persistLaunchStateSnapshot: (run, phase) => deps.service.persistLaunchStateSnapshot(run, phase),
+    observeRuntimeFailure: (run, failure) => deps.service.observeRuntimeFailure(run, failure),
   });
 }
 
@@ -189,7 +207,7 @@ export function createTeamProvisioningStreamEventPorts<
   TRun extends TeamProvisioningStreamEventPortsFactoryRun,
 >(
   callbacks: TeamProvisioningStreamEventPortCallbacks<TRun>
-): TeamProvisioningStreamEventPorts<TRun> {
+): TeamProvisioningRuntimeFailureAwareStreamEventPorts<TRun> {
   return {
     updateProgress: callbacks.updateProgress,
     extractCliLogsFromRun,
@@ -235,5 +253,6 @@ export function createTeamProvisioningStreamEventPorts<
     markUnconfirmedBootstrapMembersFailed: callbacks.markUnconfirmedBootstrapMembersFailed,
     stopPersistentTeamMembers: callbacks.stopPersistentTeamMembers,
     persistLaunchStateSnapshot: callbacks.persistLaunchStateSnapshot,
+    observeRuntimeFailure: callbacks.observeRuntimeFailure,
   };
 }

@@ -1,9 +1,14 @@
-import { execFile, execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 export interface WindowsProcessTableRow {
   pid: number;
   ppid: number;
   command: string;
+}
+
+export interface ListWindowsProcessTableOptions {
+  /** Run an independent fresh probe without reading, joining, or populating the shared cache. */
+  bypassCache?: boolean;
 }
 
 interface RawWindowsProcessRow {
@@ -69,20 +74,8 @@ export function parseWindowsProcessTableJson(stdout: string): WindowsProcessTabl
   return result;
 }
 
-export async function listWindowsProcessTable(
-  timeoutMs = 4_000
-): Promise<WindowsProcessTableRow[]> {
-  const cached = cachedProcessTable;
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.rows.map((row) => ({ ...row }));
-  }
-
-  if (processTableRequest) {
-    const rows = await processTableRequest;
-    return rows.map((row) => ({ ...row }));
-  }
-
-  const request = new Promise<WindowsProcessTableRow[]>((resolve, reject) => {
+function readWindowsProcessTableUncached(timeoutMs: number): Promise<WindowsProcessTableRow[]> {
+  return new Promise((resolve, reject) => {
     execFile(
       'powershell.exe',
       PROCESS_TABLE_ARGS,
@@ -105,6 +98,28 @@ export async function listWindowsProcessTable(
       }
     );
   });
+}
+
+export async function listWindowsProcessTable(
+  timeoutMs = 4_000,
+  options: ListWindowsProcessTableOptions = {}
+): Promise<WindowsProcessTableRow[]> {
+  if (options.bypassCache === true) {
+    const rows = await readWindowsProcessTableUncached(timeoutMs);
+    return rows.map((row) => ({ ...row }));
+  }
+
+  const cached = cachedProcessTable;
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.rows.map((row) => ({ ...row }));
+  }
+
+  if (processTableRequest) {
+    const rows = await processTableRequest;
+    return rows.map((row) => ({ ...row }));
+  }
+
+  const request = readWindowsProcessTableUncached(timeoutMs);
   processTableRequest = request;
 
   try {

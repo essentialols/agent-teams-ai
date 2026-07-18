@@ -86,6 +86,8 @@ export interface TeamProvisioningLeadInboxRelayServiceHost<TRun extends LeadInbo
   persistSentMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['persistSentMessage'];
   teamChangeEmitter?: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['emitTeamChange'];
   scheduleLeadInboxFollowUpRelay: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['scheduleLeadInboxFollowUpRelay'];
+  rememberLeadRecoveryMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['rememberLeadRecoveryMessage'];
+  rememberSuccessfulLeadRecoveryMessage: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['rememberSuccessfulLeadRecoveryMessage'];
   relayedLeadInboxMessageIds: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['relayedLeadInboxMessageIds'];
   trimRelayedSet: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['trimRelayedSet'];
   pendingCrossTeamFirstReplies: TeamProvisioningLeadInboxRelayPortsFactoryDeps<TRun>['pendingCrossTeamFirstReplies'];
@@ -143,6 +145,10 @@ export function createTeamProvisioningLeadInboxRelayFlowPorts<TRun extends LeadI
     persistSentMessage: (teamName, message) => deps.persistSentMessage(teamName, message),
     emitTeamChange: (event) => deps.emitTeamChange(event),
     scheduleLeadInboxFollowUpRelay: (teamName) => deps.scheduleLeadInboxFollowUpRelay(teamName),
+    rememberLeadRecoveryMessage: (teamName, messageId) =>
+      deps.rememberLeadRecoveryMessage(teamName, messageId),
+    rememberSuccessfulLeadRecoveryMessage: (teamName, messageId) =>
+      deps.rememberSuccessfulLeadRecoveryMessage(teamName, messageId),
     relayedLeadInboxMessageIds: deps.relayedLeadInboxMessageIds,
     trimRelayedSet: (relayedIds) => deps.trimRelayedSet(relayedIds),
     pendingCrossTeamFirstReplies: deps.pendingCrossTeamFirstReplies,
@@ -197,6 +203,10 @@ export function createTeamProvisioningLeadInboxRelayPortsDepsFromService<
     persistSentMessage: (teamName, message) => service.persistSentMessage(teamName, message),
     emitTeamChange: (event) => service.teamChangeEmitter?.(event),
     scheduleLeadInboxFollowUpRelay: (teamName) => service.scheduleLeadInboxFollowUpRelay(teamName),
+    rememberLeadRecoveryMessage: (teamName, messageId) =>
+      service.rememberLeadRecoveryMessage(teamName, messageId),
+    rememberSuccessfulLeadRecoveryMessage: (teamName, messageId) =>
+      service.rememberSuccessfulLeadRecoveryMessage(teamName, messageId),
     relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
     trimRelayedSet: (relayedIds) => service.trimRelayedSet(relayedIds),
     pendingCrossTeamFirstReplies: service.pendingCrossTeamFirstReplies,

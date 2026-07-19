@@ -140,6 +140,45 @@ describe('TeamProvisioningRuntimeRecipientResolution', () => {
       ).toBe('codex');
     });
 
+    it('inherits the request provider and model from the configured lead', () => {
+      expect(
+        resolveRuntimeRecipientProviderIdFromSources({
+          memberName: 'dev',
+          config: {
+            name: 'team-a',
+            members: [
+              { name: 'team-lead', providerId: 'opencode', model: 'opencode/big-pickle' },
+              { name: 'dev' },
+            ],
+          },
+          metaMembers: [{ name: 'dev' }],
+        })
+      ).toBe('opencode');
+      expect(
+        resolveRuntimeRecipientProviderIdFromSources({
+          memberName: 'dev',
+          config: {
+            name: 'team-a',
+            members: [{ name: 'team-lead', model: 'gpt-5.4' }, { name: 'dev' }],
+          },
+          metaMembers: [],
+        })
+      ).toBe('codex');
+      expect(
+        resolveRuntimeRecipientProviderIdFromSources({
+          memberName: 'dev',
+          config: {
+            name: 'team-a',
+            members: [
+              { name: 'team-lead', providerId: 'opencode' },
+              { name: 'dev', providerId: 'anthropic' },
+            ],
+          },
+          metaMembers: [],
+        })
+      ).toBe('anthropic');
+    });
+
     it('resolves the synthetic solo target only for OpenCode solo rosters', () => {
       const config: TeamConfig = {
         name: 'solo-team',

@@ -16,6 +16,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 const SQLITE_BUSY_TIMEOUT_MS = 2_000;
 const PROCESS_START_CACHE_TTL_MS = 5_000;
 const PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1_000);
+const LOGICAL_SCOPE_LOCK_TOKEN = 'review-persistence-logical-scope:v1';
 
 interface ReviewPersistenceScopeLockOptions {
   acquireTimeoutMs?: number;
@@ -359,6 +360,24 @@ export async function withReviewPersistenceScopeLock<T>(
   if (operationFailed) throw operationError;
   if (releaseError) throw releaseError;
   return result as T;
+}
+
+/**
+ * Serializes retention and recovery discovery across every exact fingerprint of one
+ * logical task/agent scope. Callers should acquire this before the exact-scope lock.
+ */
+export async function withReviewPersistenceLogicalScopeLock<T>(
+  teamName: string,
+  scopeKey: string,
+  operation: () => Promise<T>,
+  options: ReviewPersistenceScopeLockOptions = {}
+): Promise<T> {
+  return withReviewPersistenceScopeLock(
+    teamName,
+    { scopeKey, scopeToken: LOGICAL_SCOPE_LOCK_TOKEN },
+    operation,
+    options
+  );
 }
 
 export function closeReviewPersistenceScopeLockDatabasesForTests(): void {

@@ -336,6 +336,67 @@ describe('ReviewDecisionStore', () => {
     await expect(readdir(scopeDir)).resolves.toHaveLength(16);
   });
 
+  it('does not prune the canonical side of an unresolved older-scope conflict', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeKey = 'task-prune-conflict';
+    const conflictedToken = 'task:prune:req:conflicted';
+    await store.save('demo', scopeKey, {
+      scopeToken: conflictedToken,
+      hunkDecisions: { 'file:0': 'accepted' },
+      fileDecisions: {},
+      expectedRevision: 0,
+    });
+    await expect(
+      store.save('demo', scopeKey, {
+        scopeToken: conflictedToken,
+        hunkDecisions: { 'file:0': 'rejected' },
+        fileDecisions: {},
+        expectedRevision: 0,
+      })
+    ).rejects.toThrow('Review decisions changed');
+    await utimes(
+      exactScopeFilePath('demo', scopeKey, conflictedToken),
+      new Date('2020-01-01T00:00:00.000Z'),
+      new Date('2020-01-01T00:00:00.000Z')
+    );
+
+    for (let index = 0; index < 17; index++) {
+      await store.save('demo', scopeKey, {
+        scopeToken: `task:prune:req:new-${index}`,
+        hunkDecisions: { [`new:${index}`]: 'accepted' },
+        fileDecisions: {},
+        expectedRevision: 0,
+      });
+    }
+
+    await expect(store.load('demo', scopeKey, conflictedToken)).resolves.toMatchObject({
+      hunkDecisions: { 'file:0': 'accepted' },
+    });
+    const [candidate] = await store.loadConflictCandidates(
+      'demo',
+      scopeKey,
+      conflictedToken
+    );
+    expect(candidate).toBeDefined();
+    await store.resolveConflictCandidate(
+      'demo',
+      scopeKey,
+      conflictedToken,
+      candidate!.id,
+      'keep-current',
+      1
+    );
+    await store.save('demo', scopeKey, {
+      scopeToken: 'task:prune:req:new-after-resolution',
+      hunkDecisions: { newest: 'accepted' },
+      fileDecisions: {},
+      expectedRevision: 0,
+    });
+
+    await expect(store.load('demo', scopeKey, conflictedToken)).resolves.toBeNull();
+  });
+
   it('rejects stale CAS writes and makes a committed mutation retry idempotent', async () => {
     const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
     const store = new ReviewDecisionStore();

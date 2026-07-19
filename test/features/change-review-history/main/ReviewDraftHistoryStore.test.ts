@@ -12,6 +12,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -93,6 +94,82 @@ describe('ReviewDraftHistoryStore', () => {
     });
     expect(snapshot?.entries['/repo/b.ts']?.editorState.doc).toBe('two');
     await expect(restarted.load('demo', 'task-123', 'scope-b')).resolves.toBeNull();
+  });
+
+  it('does not prune the canonical side of an unresolved older-scope draft conflict', async () => {
+    const { ReviewDraftHistoryStore } = await import(
+      '@features/change-review-history/main'
+    );
+    const store = new ReviewDraftHistoryStore();
+    const scopeKey = 'task-prune-conflict';
+    const conflictedToken = 'scope-conflicted';
+    const canonical = await store.saveEntry('demo', scopeKey, conflictedToken, {
+      filePath: '/repo/a.ts',
+      codec: 'codemirror-history-v1',
+      expectedRevision: 0,
+      expectedGeneration: null,
+      revision: 1,
+      diskBaseline: 'A',
+      editorState: editorState('AB', ['B']),
+    });
+    await expect(
+      store.saveEntry('demo', scopeKey, conflictedToken, {
+        filePath: '/repo/a.ts',
+        codec: 'codemirror-history-v1',
+        expectedRevision: 0,
+        expectedGeneration: null,
+        revision: 1,
+        diskBaseline: 'A',
+        editorState: editorState('AC', ['C']),
+      })
+    ).rejects.toThrow('Review draft history changed');
+    await utimes(
+      storedPath('demo', scopeKey, conflictedToken),
+      new Date('2020-01-01T00:00:00.000Z'),
+      new Date('2020-01-01T00:00:00.000Z')
+    );
+
+    for (let index = 0; index < 17; index++) {
+      await store.saveEntry('demo', scopeKey, `scope-new-${index}`, {
+        filePath: '/repo/a.ts',
+        codec: 'codemirror-history-v1',
+        expectedRevision: 0,
+        expectedGeneration: null,
+        revision: 1,
+        diskBaseline: 'A',
+        editorState: editorState(`new-${index}`, []),
+      });
+    }
+
+    await expect(store.load('demo', scopeKey, conflictedToken)).resolves.toMatchObject({
+      entries: { '/repo/a.ts': { editorState: { doc: 'AB' } } },
+    });
+    const [candidate] = await store.loadConflictCandidates(
+      'demo',
+      scopeKey,
+      conflictedToken
+    );
+    expect(candidate).toBeDefined();
+    await store.resolveConflictCandidate(
+      'demo',
+      scopeKey,
+      conflictedToken,
+      candidate!.id,
+      'keep-current',
+      1,
+      canonical.generation
+    );
+    await store.saveEntry('demo', scopeKey, 'scope-new-after-resolution', {
+      filePath: '/repo/a.ts',
+      codec: 'codemirror-history-v1',
+      expectedRevision: 0,
+      expectedGeneration: null,
+      revision: 1,
+      diskBaseline: 'A',
+      editorState: editorState('newest', []),
+    });
+
+    await expect(store.load('demo', scopeKey, conflictedToken)).resolves.toBeNull();
   });
 
   it('round-trips an actual CodeMirror history payload through a process restart', async () => {

@@ -45,6 +45,24 @@ describe('ReviewPersistenceScopeLock', () => {
     expect(maxActive).toBe(1);
   });
 
+  it('serializes different fingerprints of one logical scope', async () => {
+    const { withReviewPersistenceLogicalScopeLock } =
+      await import('@main/services/team/ReviewPersistenceScopeLock');
+    let active = 0;
+    let maxActive = 0;
+    const run = (delayMs: number) =>
+      withReviewPersistenceLogicalScopeLock('demo', 'task-task-1', async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        active -= 1;
+      });
+
+    await Promise.all([run(40), run(10), run(10)]);
+
+    expect(maxActive).toBe(1);
+  });
+
   it('releases the exact lease after an operation error', async () => {
     const { withReviewPersistenceScopeLock } =
       await import('@main/services/team/ReviewPersistenceScopeLock');

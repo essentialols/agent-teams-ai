@@ -28,7 +28,10 @@ import {
   type ReviewMutationJournalRecord,
   ReviewMutationJournalStore,
 } from '@main/services/team/ReviewMutationJournalStore';
-import { withReviewPersistenceScopeLock } from '@main/services/team/ReviewPersistenceScopeLock';
+import {
+  withReviewPersistenceLogicalScopeLock,
+  withReviewPersistenceScopeLock,
+} from '@main/services/team/ReviewPersistenceScopeLock';
 import { TeamConfigReader } from '@main/services/team/TeamConfigReader';
 import {
   cleanupAtomicCreateTempLinks,
@@ -170,8 +173,7 @@ async function withReviewDecisionPersistenceLock<T>(
   persistenceScope: ReviewDecisionPersistenceScope,
   operation: () => Promise<T>
 ): Promise<T> {
-  const scopeHash = createHash('sha256').update(persistenceScope.scopeToken).digest('hex');
-  const key = `${teamName}:${persistenceScope.scopeKey}:${scopeHash}`;
+  const key = `${teamName}:${persistenceScope.scopeKey}`;
   const previous = reviewDecisionPersistenceQueues.get(key) ?? Promise.resolve();
   let release = (): void => undefined;
   const current = new Promise<void>((resolve) => {
@@ -185,7 +187,11 @@ async function withReviewDecisionPersistenceLock<T>(
 
   await previous.catch(() => undefined);
   try {
-    return await withReviewPersistenceScopeLock(teamName, persistenceScope, operation);
+    return await withReviewPersistenceLogicalScopeLock(
+      teamName,
+      persistenceScope.scopeKey,
+      () => withReviewPersistenceScopeLock(teamName, persistenceScope, operation)
+    );
   } finally {
     release();
     if (reviewDecisionPersistenceQueues.get(key) === queueTail) {

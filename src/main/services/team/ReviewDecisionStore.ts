@@ -35,6 +35,7 @@ const MAX_STORED_KEY_LENGTH = 32_768;
 const MAX_STORED_REVIEW_ACTIONS = 100_000;
 const MAX_RETAINED_DECISION_SCOPES = 16;
 const MAX_RETAINED_CONFLICT_CANDIDATES = 8;
+const MAX_RETAINED_LOGICAL_SCOPE_CONFLICT_CANDIDATES = 32;
 const EXACT_SCOPE_FILE_PATTERN = /^[a-f0-9]{64}\.json$/;
 const EXACT_SCOPE_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -239,13 +240,50 @@ export class ReviewDecisionStore {
     scopeToken: string
   ): string {
     const scopeHash = createHash('sha256').update(scopeToken).digest('hex');
+    return this.getConflictCandidateDirByScopeHash(teamName, scopeKey, scopeHash);
+  }
+
+  private getConflictScopeDir(teamName: string, scopeKey: string): string {
     return path.join(
       this.getLegacyDirPath(teamName),
       'conflicts',
       'v1',
-      encodeURIComponent(scopeKey),
-      scopeHash
+      encodeURIComponent(scopeKey)
     );
+  }
+
+  private getConflictCandidateDirByScopeHash(
+    teamName: string,
+    scopeKey: string,
+    scopeHash: string
+  ): string {
+    if (!EXACT_SCOPE_HASH_PATTERN.test(scopeHash)) {
+      throw new Error('Invalid review decision conflict scope hash');
+    }
+    return path.join(this.getConflictScopeDir(teamName, scopeKey), scopeHash);
+  }
+
+  private async inspectConflictScopes(
+    teamName: string,
+    scopeKey: string
+  ): Promise<{ scopeHashes: Set<string>; candidatePaths: Set<string> }> {
+    const rootPath = this.getConflictScopeDir(teamName, scopeKey);
+    if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), rootPath))) {
+      return { scopeHashes: new Set(), candidatePaths: new Set() };
+    }
+    const scopeEntries = await fs.promises.readdir(rootPath);
+    const scopeHashes = new Set<string>();
+    const candidatePaths = new Set<string>();
+    for (const scopeHash of scopeEntries.filter((entry) => EXACT_SCOPE_HASH_PATTERN.test(entry))) {
+      const scopeDir = this.getConflictCandidateDirByScopeHash(teamName, scopeKey, scopeHash);
+      if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), scopeDir))) continue;
+      const entries = await fs.promises.readdir(scopeDir);
+      for (const entry of entries.filter((name) => EXACT_SCOPE_FILE_PATTERN.test(name))) {
+        scopeHashes.add(scopeHash);
+        candidatePaths.add(path.join(scopeDir, entry));
+      }
+    }
+    return { scopeHashes, candidatePaths };
   }
 
   private getConflictCandidatePath(
@@ -651,6 +689,19 @@ export class ReviewDecisionStore {
     ) {
       throw new Error(
         `Too many unresolved review recovery copies (${MAX_RETAINED_CONFLICT_CANDIDATES}). Resolve one before saving another branch.`
+      );
+    }
+    const logicalScopeCandidates = (await this.inspectConflictScopes(teamName, scopeKey))
+      .candidatePaths;
+    const retainedLogicalScopeCandidates = [...logicalScopeCandidates].filter(
+      (candidatePath) => candidatePath !== replacementPath
+    );
+    if (
+      !retainedLogicalScopeCandidates.includes(protectedPath) &&
+      retainedLogicalScopeCandidates.length >= MAX_RETAINED_LOGICAL_SCOPE_CONFLICT_CANDIDATES
+    ) {
+      throw new Error(
+        `Too many unresolved review recovery copies for this task or agent (${MAX_RETAINED_LOGICAL_SCOPE_CONFLICT_CANDIDATES}). Resolve one before saving another branch.`
       );
     }
   }
@@ -1352,10 +1403,16 @@ export class ReviewDecisionStore {
     );
     if (existingFiles.length <= MAX_RETAINED_DECISION_SCOPES) return;
 
-    const pendingMutationHashes = await this.getPendingMutationScopeHashes(teamName, scopeKey);
+    const [pendingMutationHashes, conflictScopes] = await Promise.all([
+      this.getPendingMutationScopeHashes(teamName, scopeKey),
+      this.inspectConflictScopes(teamName, scopeKey),
+    ]);
     const protectedPaths = new Set([
       protectedPath,
       ...[...pendingMutationHashes].map((scopeHash) => path.join(dirPath, `${scopeHash}.json`)),
+      ...[...conflictScopes.scopeHashes].map((scopeHash) =>
+        path.join(dirPath, `${scopeHash}.json`)
+      ),
     ]);
     const protectedExistingCount = existingFiles.filter((entry) =>
       protectedPaths.has(entry.filePath)

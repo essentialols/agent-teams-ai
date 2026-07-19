@@ -34,6 +34,7 @@ const MAX_HISTORY_ENTRIES = 512;
 const MAX_GENERATION_LENGTH = 128;
 const MAX_EXACT_SCOPES_PER_LOGICAL_SCOPE = 16;
 const MAX_CONFLICT_CANDIDATES_PER_SCOPE = 32;
+const MAX_CONFLICT_CANDIDATES_PER_LOGICAL_SCOPE = 64;
 const MAX_JSON_DEPTH = 100;
 const MAX_JSON_NODES = 1_000_000;
 
@@ -244,6 +245,14 @@ export class ReviewDraftHistoryStore {
     scopeKey: string,
     scopeToken: string
   ): string {
+    return this.getConflictCandidateDirByScopeHash(
+      teamName,
+      scopeKey,
+      getScopeTokenHash(scopeToken)
+    );
+  }
+
+  private getConflictScopeDir(teamName: string, scopeKey: string): string {
     return path.join(
       getTeamsBasePath(),
       teamName,
@@ -251,9 +260,42 @@ export class ReviewDraftHistoryStore {
       'draft-history',
       'conflicts',
       'v1',
-      encodeURIComponent(scopeKey),
-      getScopeTokenHash(scopeToken)
+      encodeURIComponent(scopeKey)
     );
+  }
+
+  private getConflictCandidateDirByScopeHash(
+    teamName: string,
+    scopeKey: string,
+    scopeHash: string
+  ): string {
+    if (!/^[a-f0-9]{64}$/.test(scopeHash)) {
+      throw new Error('Invalid review draft history conflict scope hash');
+    }
+    return path.join(this.getConflictScopeDir(teamName, scopeKey), scopeHash);
+  }
+
+  private async inspectConflictScopes(
+    teamName: string,
+    scopeKey: string
+  ): Promise<{ scopeHashes: Set<string>; candidatePaths: Set<string> }> {
+    const rootPath = this.getConflictScopeDir(teamName, scopeKey);
+    if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), rootPath))) {
+      return { scopeHashes: new Set(), candidatePaths: new Set() };
+    }
+    const scopeEntries = await fs.promises.readdir(rootPath);
+    const scopeHashes = new Set<string>();
+    const candidatePaths = new Set<string>();
+    for (const scopeHash of scopeEntries.filter((entry) => /^[a-f0-9]{64}$/.test(entry))) {
+      const scopeDir = this.getConflictCandidateDirByScopeHash(teamName, scopeKey, scopeHash);
+      if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), scopeDir))) continue;
+      const entries = await fs.promises.readdir(scopeDir);
+      for (const entry of entries.filter((name) => /^[a-f0-9]{64}\.json$/.test(name))) {
+        scopeHashes.add(scopeHash);
+        candidatePaths.add(path.join(scopeDir, entry));
+      }
+    }
+    return { scopeHashes, candidatePaths };
   }
 
   private getConflictCandidatePath(
@@ -449,14 +491,29 @@ export class ReviewDraftHistoryStore {
           }
         })
     );
-    const stale = candidates
-      .filter((entry): entry is { filePath: string; mtimeMs: number } => entry !== null)
+    const conflictScopes = await this.inspectConflictScopes(teamName, scopeKey);
+    const protectedPaths = new Set([
+      protectedPath,
+      ...[...conflictScopes.scopeHashes].map((scopeHash) =>
+        path.join(scopeDir, `${scopeHash}.json`)
+      ),
+    ]);
+    const existing = candidates.filter(
+      (entry): entry is { filePath: string; mtimeMs: number } => entry !== null
+    );
+    const protectedExistingCount = existing.filter((entry) =>
+      protectedPaths.has(entry.filePath)
+    ).length;
+    const unprotectedRetention = Math.max(
+      0,
+      MAX_EXACT_SCOPES_PER_LOGICAL_SCOPE - protectedExistingCount
+    );
+    const stale = existing
+      .filter((entry) => !protectedPaths.has(entry.filePath))
       .sort((left, right) => {
-        if (left.filePath === protectedPath) return -1;
-        if (right.filePath === protectedPath) return 1;
         return right.mtimeMs - left.mtimeMs;
       })
-      .slice(MAX_EXACT_SCOPES_PER_LOGICAL_SCOPE);
+      .slice(unprotectedRetention);
     await Promise.all(
       stale.map((entry) => unlinkPathDurably(entry.filePath).catch(() => undefined))
     );
@@ -657,6 +714,19 @@ export class ReviewDraftHistoryStore {
     ) {
       throw new Error(
         `Too many unresolved manual-edit recovery copies (${MAX_CONFLICT_CANDIDATES_PER_SCOPE}). Resolve one before saving another branch.`
+      );
+    }
+    const logicalScopeCandidates = (await this.inspectConflictScopes(teamName, scopeKey))
+      .candidatePaths;
+    const retainedLogicalScopeCandidates = [...logicalScopeCandidates].filter(
+      (candidatePath) => candidatePath !== replacementPath
+    );
+    if (
+      !retainedLogicalScopeCandidates.includes(protectedPath) &&
+      retainedLogicalScopeCandidates.length >= MAX_CONFLICT_CANDIDATES_PER_LOGICAL_SCOPE
+    ) {
+      throw new Error(
+        `Too many unresolved manual-edit recovery copies for this task or agent (${MAX_CONFLICT_CANDIDATES_PER_LOGICAL_SCOPE}). Resolve one before saving another branch.`
       );
     }
   }

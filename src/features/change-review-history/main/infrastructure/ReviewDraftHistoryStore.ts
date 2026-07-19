@@ -50,6 +50,15 @@ interface StoredReviewDraftHistoryConflictCandidateV1
   version: 1;
   scopeKey: string;
   scopeTokenHash: string;
+  entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>;
+}
+
+interface StoredReviewDraftHistoryConflictCandidateV2
+  extends ReviewDraftHistoryConflictCandidate {
+  version: 2;
+  scopeKey: string;
+  scopeTokenHash: string;
+  entry: null;
 }
 
 export interface SaveReviewDraftHistoryEntryInput {
@@ -458,8 +467,19 @@ export class ReviewDraftHistoryStore {
     scopeTokenHash: string;
     expectedRevision: number;
     expectedGeneration: string | null;
-    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>;
+    filePath: string;
+    entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'> | null;
   }): object {
+    if (input.entry === null) {
+      return {
+        scopeKey: input.scopeKey,
+        scopeTokenHash: input.scopeTokenHash,
+        expectedRevision: input.expectedRevision,
+        expectedGeneration: input.expectedGeneration,
+        filePath: input.filePath,
+        entry: null,
+      };
+    }
     return {
       scopeKey: input.scopeKey,
       scopeTokenHash: input.scopeTokenHash,
@@ -477,10 +497,13 @@ export class ReviewDraftHistoryStore {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new InvalidReviewDraftHistoryError('Invalid review draft conflict candidate');
     }
-    const candidate = value as Partial<StoredReviewDraftHistoryConflictCandidateV1>;
+    const candidate = value as Partial<
+      StoredReviewDraftHistoryConflictCandidateV1 | StoredReviewDraftHistoryConflictCandidateV2
+    >;
     const scopeTokenHash = getScopeTokenHash(scopeToken);
+    const isTombstone = candidate.version === 2 && candidate.entry === null;
     if (
-      candidate.version !== 1 ||
+      (candidate.version !== 1 && !isTombstone) ||
       candidate.scopeKey !== scopeKey ||
       candidate.scopeTokenHash !== scopeTokenHash ||
       typeof candidate.id !== 'string' ||
@@ -488,6 +511,9 @@ export class ReviewDraftHistoryStore {
       typeof candidate.capturedAt !== 'string' ||
       !Number.isFinite(Date.parse(candidate.capturedAt)) ||
       typeof candidate.filePath !== 'string' ||
+      candidate.filePath.length === 0 ||
+      candidate.filePath.length > MAX_FILE_PATH_LENGTH ||
+      candidate.filePath.includes('\0') ||
       !Number.isSafeInteger(candidate.expectedRevision) ||
       (candidate.expectedRevision as number) < 0 ||
       ((candidate.expectedRevision as number) === 0
@@ -498,29 +524,33 @@ export class ReviewDraftHistoryStore {
       ((candidate.observedCurrentRevision as number) === 0
         ? candidate.observedCurrentGeneration !== null
         : !isValidGeneration(candidate.observedCurrentGeneration)) ||
-      !candidate.entry ||
-      typeof candidate.entry !== 'object' ||
-      Array.isArray(candidate.entry)
+      (isTombstone
+        ? candidate.expectedRevision !== 0 || candidate.expectedGeneration !== null
+        : !candidate.entry ||
+          typeof candidate.entry !== 'object' ||
+          Array.isArray(candidate.entry))
     ) {
       throw new InvalidReviewDraftHistoryError('Invalid review draft conflict candidate');
     }
-    const entry = candidate.entry as Omit<
-      ReviewDraftHistoryEntry,
-      'updatedAt' | 'generation'
-    >;
-    this.assertEntry({
-      ...entry,
-      expectedRevision: candidate.expectedRevision as number,
-      expectedGeneration: candidate.expectedGeneration as string | null,
-    });
-    if (candidate.filePath !== entry.filePath) {
-      throw new InvalidReviewDraftHistoryError('Mismatched review draft conflict file');
+    const entry = isTombstone
+      ? null
+      : (candidate.entry as Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>);
+    if (entry) {
+      this.assertEntry({
+        ...entry,
+        expectedRevision: candidate.expectedRevision as number,
+        expectedGeneration: candidate.expectedGeneration as string | null,
+      });
+      if (candidate.filePath !== entry.filePath) {
+        throw new InvalidReviewDraftHistoryError('Mismatched review draft conflict file');
+      }
     }
     const identity = this.getConflictCandidateIdentityPayload({
       scopeKey,
       scopeTokenHash,
       expectedRevision: candidate.expectedRevision as number,
       expectedGeneration: candidate.expectedGeneration as string | null,
+      filePath: candidate.filePath,
       entry,
     });
     const expectedId = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
@@ -651,6 +681,7 @@ export class ReviewDraftHistoryStore {
       scopeTokenHash,
       expectedRevision,
       expectedGeneration,
+      filePath: entry.filePath,
       entry,
     });
     const id = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
@@ -695,6 +726,59 @@ export class ReviewDraftHistoryStore {
       observedCurrentGeneration,
       entry,
     };
+  }
+
+  private async writeEmptyConflictCandidate(
+    teamName: string,
+    scopeKey: string,
+    scopeToken: string,
+    filePath: string,
+    replacementPath?: string
+  ): Promise<ReviewDraftHistoryConflictCandidate> {
+    const scopeTokenHash = getScopeTokenHash(scopeToken);
+    const identity = this.getConflictCandidateIdentityPayload({
+      scopeKey,
+      scopeTokenHash,
+      expectedRevision: 0,
+      expectedGeneration: null,
+      filePath,
+      entry: null,
+    });
+    const id = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+    const candidate: StoredReviewDraftHistoryConflictCandidateV2 = {
+      version: 2,
+      id,
+      scopeKey,
+      scopeTokenHash,
+      capturedAt: new Date().toISOString(),
+      filePath,
+      expectedRevision: 0,
+      expectedGeneration: null,
+      observedCurrentRevision: 0,
+      observedCurrentGeneration: null,
+      entry: null,
+    };
+    const serialized = JSON.stringify(candidate);
+    const candidatePath = this.getConflictCandidatePath(
+      teamName,
+      scopeKey,
+      scopeToken,
+      id
+    );
+    await this.ensureConflictCandidateDir(teamName, scopeKey, scopeToken);
+    await this.assertConflictCandidateCapacity(
+      teamName,
+      scopeKey,
+      scopeToken,
+      candidatePath,
+      replacementPath
+    );
+    await atomicWriteAsync(candidatePath, serialized, {
+      mode: 0o600,
+      durability: 'strict',
+      syncDirectory: true,
+    });
+    return candidate;
   }
 
   async load(
@@ -801,7 +885,7 @@ export class ReviewDraftHistoryStore {
         expectedGeneration: candidate.expectedGeneration,
         observedCurrentRevision: candidate.observedCurrentRevision,
         observedCurrentGeneration: candidate.observedCurrentGeneration,
-        entryRevision: candidate.entry.revision,
+        entryRevision: candidate.entry?.revision ?? null,
       }));
   }
 
@@ -877,6 +961,39 @@ export class ReviewDraftHistoryStore {
       await unlinkPathDurably(candidatePath);
       return current ?? null;
     }
+    if (candidate.entry === null) {
+      if (!current) {
+        await unlinkPathDurably(candidatePath);
+        return null;
+      }
+      await this.writeConflictCandidate(
+        teamName,
+        scopeKey,
+        scopeToken,
+        {
+          filePath: current.filePath,
+          codec: current.codec,
+          revision: current.revision + 1,
+          diskBaseline: current.diskBaseline,
+          editorState: current.editorState,
+          expectedRevision: current.revision,
+          expectedGeneration: current.generation,
+        },
+        current.revision + 1,
+        current.generation,
+        candidatePath
+      );
+      await this.clearEntry(
+        teamName,
+        scopeKey,
+        scopeToken,
+        current.filePath,
+        current.revision,
+        current.generation
+      );
+      await unlinkPathDurably(candidatePath);
+      return null;
+    }
     if (
       current &&
       current.filePath === candidate.entry.filePath &&
@@ -907,6 +1024,14 @@ export class ReviewDraftHistoryStore {
         current.generation,
         candidatePath
       );
+    } else {
+      await this.writeEmptyConflictCandidate(
+        teamName,
+        scopeKey,
+        scopeToken,
+        candidate.filePath,
+        candidatePath
+      );
     }
     const recovered = await this.saveEntry(teamName, scopeKey, scopeToken, {
       ...candidate.entry,
@@ -932,7 +1057,8 @@ export class ReviewDraftHistoryStore {
       await this.mapConflictCandidates(teamName, scopeKey, scopeToken, (entry) => ({
         id: entry.id,
         capturedAt: entry.capturedAt,
-        candidate: conflictEntriesEqual(entry.entry, expectedEntry) ? entry : null,
+        candidate:
+          entry.entry && conflictEntriesEqual(entry.entry, expectedEntry) ? entry : null,
       }))
     ).find((entry) => entry.candidate)?.candidate;
     if (!candidate) throw new Error('Manual-edit recovery predecessor is unavailable');

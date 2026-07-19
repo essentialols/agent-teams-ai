@@ -63,7 +63,7 @@ if (mode === 'create-and-crash') {
     teamName,
     scopeKey,
     draftScopeToken,
-    candidate!.entry,
+    candidate!.entry!,
     {
       filePath,
       codec: 'codemirror-history-v1',

@@ -45,7 +45,8 @@ export interface ReviewDraftHistoryConflictCandidate {
   expectedGeneration: string | null;
   observedCurrentRevision: number;
   observedCurrentGeneration: string | null;
-  entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>;
+  /** Null is a durable tombstone representing the branch with no saved manual edit. */
+  entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'> | null;
 }
 
 /** Metadata-only renderer view of a durable manual-edit recovery branch. */
@@ -57,5 +58,6 @@ export interface ReviewDraftHistoryConflictCandidateSummary {
   expectedGeneration: string | null;
   observedCurrentRevision: number;
   observedCurrentGeneration: string | null;
-  entryRevision: number;
+  /** Null identifies a reversible branch with no saved manual edit. */
+  entryRevision: number | null;
 }

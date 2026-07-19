@@ -350,6 +350,92 @@ describe('ReviewDraftHistoryStore', () => {
     });
   });
 
+  it('preserves an empty manual-edit branch and switches back to it', async () => {
+    const { ReviewDraftHistoryStore } = await import(
+      '@features/change-review-history/main'
+    );
+    const store = new ReviewDraftHistoryStore();
+    const saved = await store.saveEntry('demo', 'task-123', 'scope-empty-branch', {
+      filePath: '/repo/a.ts',
+      codec: 'codemirror-history-v1',
+      expectedRevision: 0,
+      expectedGeneration: null,
+      revision: 1,
+      diskBaseline: 'A',
+      editorState: editorState('AB', ['B']),
+    });
+    await store.clearEntry(
+      'demo',
+      'task-123',
+      'scope-empty-branch',
+      '/repo/a.ts',
+      1,
+      saved.generation
+    );
+    await expect(
+      store.saveEntry('demo', 'task-123', 'scope-empty-branch', {
+        filePath: '/repo/a.ts',
+        codec: 'codemirror-history-v1',
+        expectedRevision: 1,
+        expectedGeneration: saved.generation,
+        revision: 2,
+        diskBaseline: 'A',
+        editorState: editorState('AC', ['C']),
+      })
+    ).rejects.toThrow('Review draft history changed; refusing stale state overwrite');
+
+    const [recovery] = await store.loadConflictCandidates(
+      'demo',
+      'task-123',
+      'scope-empty-branch'
+    );
+    const recovered = await store.resolveConflictCandidate(
+      'demo',
+      'task-123',
+      'scope-empty-branch',
+      recovery!.id,
+      'recover-candidate',
+      0,
+      null
+    );
+    expect(recovered).toMatchObject({ revision: 1, editorState: { doc: 'AC' } });
+
+    const [emptyBranch] = await store.loadConflictCandidates(
+      'demo',
+      'task-123',
+      'scope-empty-branch'
+    );
+    expect(emptyBranch).toMatchObject({
+      filePath: '/repo/a.ts',
+      observedCurrentRevision: 1,
+      entry: null,
+    });
+    await expect(
+      store.resolveConflictCandidate(
+        'demo',
+        'task-123',
+        'scope-empty-branch',
+        emptyBranch!.id,
+        'recover-candidate',
+        1,
+        recovered!.generation
+      )
+    ).resolves.toBeNull();
+    await expect(
+      store.load('demo', 'task-123', 'scope-empty-branch')
+    ).resolves.toBeNull();
+
+    const [recoveredBackup] = await store.loadConflictCandidates(
+      'demo',
+      'task-123',
+      'scope-empty-branch'
+    );
+    expect(recoveredBackup).toMatchObject({
+      observedCurrentRevision: 0,
+      entry: { editorState: { doc: 'AC' } },
+    });
+  });
+
   it('keeps authoritative editor history when a conflict candidate is dismissed', async () => {
     const { ReviewDraftHistoryStore } = await import(
       '@features/change-review-history/main'
@@ -429,7 +515,7 @@ describe('ReviewDraftHistoryStore', () => {
       'demo',
       'task-123',
       'scope-promote',
-      candidate!.entry,
+      candidate!.entry!,
       {
         filePath: '/repo/a.ts',
         codec: 'codemirror-history-v1',
@@ -570,7 +656,7 @@ describe('ReviewDraftHistoryStore', () => {
       )
     ).resolves.toMatchObject({
       revision: 2,
-      editorState: selected.entry.editorState,
+      editorState: selected.entry!.editorState,
     });
     const afterSwap = await store.loadConflictCandidates(
       'demo',

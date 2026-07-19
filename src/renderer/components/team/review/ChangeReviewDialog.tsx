@@ -4792,7 +4792,9 @@ export const ChangeReviewDialog = ({
             <div className="mt-0.5 text-amber-100/70">
               {activeReviewConflictCandidate.kind === 'decision'
                 ? `Another window saved a different review branch. Local copy: ${activeReviewConflictCandidate.value.undoDepth} Undo and ${activeReviewConflictCandidate.value.redoDepth} Redo actions.`
-                : `Another window saved different manual edit history for ${activeReviewConflictCandidate.value.filePath}.`}
+                : activeReviewConflictCandidate.value.entryRevision === null
+                  ? `The recovery branch has no saved manual edits for ${activeReviewConflictCandidate.value.filePath}.`
+                  : `Another window saved different manual edit history for ${activeReviewConflictCandidate.value.filePath}.`}
               {reviewConflictCandidateCount > 1
                 ? ` ${reviewConflictCandidateCount - 1} more recovery ${reviewConflictCandidateCount === 2 ? 'copy is' : 'copies are'} queued.`
                 : ''}

@@ -4394,7 +4394,7 @@ async function handleReplaceDraftHistoryConflictCandidate(
         expectedGeneration: replacement.expectedGeneration,
         observedCurrentRevision: replacement.observedCurrentRevision,
         observedCurrentGeneration: replacement.observedCurrentGeneration,
-        entryRevision: replacement.entry.revision,
+        entryRevision: replacement.entry?.revision ?? null,
       };
     });
   });

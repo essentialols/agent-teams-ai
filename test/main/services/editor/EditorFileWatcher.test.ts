@@ -2,10 +2,11 @@
  * Tests for EditorFileWatcher — start/stop, event filtering, path security.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock chokidar
 const mockOn = vi.fn().mockReturnThis();
@@ -39,7 +40,10 @@ vi.mock('@shared/utils/logger', () => ({
 
 import { watch } from 'chokidar';
 
-import { EditorFileWatcher } from '../../../../src/main/services/editor/EditorFileWatcher';
+import {
+  EditorFileWatcher,
+  identityChangeType,
+} from '../../../../src/main/services/editor/EditorFileWatcher';
 
 // =============================================================================
 // Tests
@@ -49,6 +53,8 @@ describe('EditorFileWatcher', () => {
   let watcher: EditorFileWatcher;
   const FLUSH_DEBOUNCE_MS = 350;
   const STARTUP_IGNORE_CHANGE_MS = 3000;
+  const WATCHER_READY_TIMEOUT_MS = 5000;
+  const WATCHER_RESTART_DELAY_MS = 250;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -57,6 +63,11 @@ describe('EditorFileWatcher', () => {
     mockAdd.mockReturnThis();
     mockUnwatch.mockReturnThis();
     watcher = new EditorFileWatcher();
+  });
+
+  it('treats an unreadable startup identity as a conservative change', () => {
+    expect(identityChangeType({ status: 'unavailable' }, { status: 'missing' })).toBe('change');
+    expect(identityChangeType({ status: 'missing' }, { status: 'unavailable' })).toBe('change');
   });
 
   afterEach(() => {
@@ -125,6 +136,51 @@ describe('EditorFileWatcher', () => {
         type: 'change',
         path: '/Users/test/project/src/index.ts',
       });
+      reviewWatcher.stop();
+    });
+
+    it('fails closed when chokidar errors before it is ready', () => {
+      const reviewWatcher = new EditorFileWatcher({ ignoreStartupChanges: false });
+      const onChange = vi.fn();
+      const filePath = '/Users/test/project/src/index.ts';
+      reviewWatcher.start('/Users/test/project', onChange);
+      reviewWatcher.setWatchedFiles([filePath]);
+
+      const errorHandler = mockOn.mock.calls.find((call) => call[0] === 'error')?.[1];
+      errorHandler?.(new Error('watch unavailable'));
+      vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS);
+
+      expect(onChange).toHaveBeenCalledWith({ type: 'change', path: filePath });
+      reviewWatcher.stop();
+    });
+
+    it('fails closed after ready even during startup suppression', () => {
+      const onChange = vi.fn();
+      const filePath = '/Users/test/project/src/index.ts';
+      watcher.start('/Users/test/project', onChange);
+      watcher.setWatchedFiles([filePath]);
+
+      const readyHandler = mockOn.mock.calls.find((call) => call[0] === 'ready')?.[1];
+      const errorHandler = mockOn.mock.calls.find((call) => call[0] === 'error')?.[1];
+      readyHandler?.();
+      errorHandler?.(new Error('watch stopped'));
+      vi.advanceTimersByTime(WATCHER_RESTART_DELAY_MS + FLUSH_DEBOUNCE_MS);
+
+      expect(onChange).toHaveBeenCalledWith({ type: 'change', path: filePath });
+      expect(watch).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails closed when chokidar never becomes ready', () => {
+      const reviewWatcher = new EditorFileWatcher({ ignoreStartupChanges: false });
+      const onChange = vi.fn();
+      const filePath = '/Users/test/project/src/index.ts';
+      reviewWatcher.start('/Users/test/project', onChange);
+      reviewWatcher.setWatchedFiles([filePath]);
+
+      vi.advanceTimersByTime(WATCHER_READY_TIMEOUT_MS + FLUSH_DEBOUNCE_MS);
+
+      expect(onChange).toHaveBeenCalledWith({ type: 'change', path: filePath });
+      expect(watch).toHaveBeenCalledTimes(2);
       reviewWatcher.stop();
     });
 
@@ -206,7 +262,7 @@ describe('EditorFileWatcher', () => {
       },
       {
         name: 'create',
-        prepare: (_filePath: string) => undefined,
+        prepare: () => undefined,
         mutate: (filePath: string) => writeFileSync(filePath, 'created'),
         expectedType: 'create',
       },

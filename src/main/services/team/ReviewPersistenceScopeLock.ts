@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
@@ -13,6 +14,7 @@ const DEFAULT_ACQUIRE_TIMEOUT_MS = 30_000;
 const DEFAULT_RETRY_INTERVAL_MS = 25;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 const SQLITE_BUSY_TIMEOUT_MS = 2_000;
+const PROCESS_START_CACHE_TTL_MS = 5_000;
 const PROCESS_STARTED_AT = Math.floor(Date.now() - process.uptime() * 1_000);
 
 interface ReviewPersistenceScopeLockOptions {
@@ -35,6 +37,7 @@ interface ReviewScopeLockLease {
 
 const lockDatabases = new Map<string, DatabaseSync>();
 const activeOwnerTokens = new Set<string>();
+const observedProcessStarts = new Map<number, { startedAt: number | null; expiresAt: number }>();
 
 function getLockDatabasePath(): string {
   return path.join(getTeamsBasePath(), '.review-persistence-locks.sqlite3');
@@ -119,13 +122,61 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function getProcessStartedAt(pid: number): number | null {
+  if (pid === process.pid) return PROCESS_STARTED_AT;
+  const cached = observedProcessStarts.get(pid);
+  if (cached && cached.expiresAt > Date.now()) return cached.startedAt;
+  let startedAt: number | null = null;
+  try {
+    if (process.platform === 'win32') {
+      const result = spawnSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
+        ],
+        { encoding: 'utf8', timeout: 1_000, windowsHide: true }
+      );
+      if (result.status === 0) {
+        const parsed = Date.parse(result.stdout.trim());
+        startedAt = Number.isFinite(parsed) ? parsed : null;
+      }
+    } else {
+      const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8',
+        timeout: 1_000,
+        windowsHide: true,
+        env: { ...process.env, LC_ALL: 'C' },
+      });
+      if (result.status === 0) {
+        const parsed = Date.parse(result.stdout.trim());
+        startedAt = Number.isFinite(parsed) ? parsed : null;
+      }
+    }
+  } catch {
+    // If process identity cannot be observed, keep the live PID owner conservatively.
+  }
+  observedProcessStarts.set(pid, {
+    startedAt,
+    expiresAt: Date.now() + PROCESS_START_CACHE_TTL_MS,
+  });
+  return startedAt;
+}
+
 function isStaleOwner(row: ReviewScopeLockRow): boolean {
   if (!isProcessAlive(row.owner_pid)) return true;
   // A recycled PID must not keep a crash-left row forever. The same process can
   // import this module more than once, so tolerate small uptime rounding drift.
-  if (row.owner_pid !== process.pid) return false;
-  const sameProcessStart = Math.abs(row.owner_started_at - PROCESS_STARTED_AT) <= 10_000;
-  return !sameProcessStart || !activeOwnerTokens.has(row.owner_token);
+  const observedProcessStart = getProcessStartedAt(row.owner_pid);
+  if (
+    observedProcessStart !== null &&
+    Math.abs(row.owner_started_at - observedProcessStart) > 10_000
+  ) {
+    return true;
+  }
+  return row.owner_pid === process.pid && !activeOwnerTokens.has(row.owner_token);
 }
 
 function rollbackBestEffort(database: DatabaseSync): void {
@@ -141,6 +192,14 @@ function tryAcquireLease(
   scopeId: string,
   ownerToken: string
 ): boolean {
+  const observed = database
+    .prepare(
+      'SELECT owner_token, owner_pid, owner_started_at FROM review_scope_locks WHERE scope_id = ?'
+    )
+    .get(scopeId) as unknown as ReviewScopeLockRow | undefined;
+  const observedIsStale =
+    !observed || observed.owner_token === ownerToken || isStaleOwner(observed);
+
   database.exec('BEGIN IMMEDIATE');
   try {
     const row = database
@@ -148,7 +207,17 @@ function tryAcquireLease(
         'SELECT owner_token, owner_pid, owner_started_at FROM review_scope_locks WHERE scope_id = ?'
       )
       .get(scopeId) as unknown as ReviewScopeLockRow | undefined;
-    if (row && row.owner_token !== ownerToken && !isStaleOwner(row)) {
+    const observedOwnerIsUnchanged =
+      !!observed &&
+      !!row &&
+      observed.owner_token === row.owner_token &&
+      observed.owner_pid === row.owner_pid &&
+      observed.owner_started_at === row.owner_started_at;
+    if (
+      row &&
+      row.owner_token !== ownerToken &&
+      (!observedOwnerIsUnchanged || !observedIsStale)
+    ) {
       database.exec('COMMIT');
       return false;
     }
@@ -296,4 +365,5 @@ export function closeReviewPersistenceScopeLockDatabasesForTests(): void {
   for (const database of lockDatabases.values()) database.close();
   lockDatabases.clear();
   activeOwnerTokens.clear();
+  observedProcessStarts.clear();
 }

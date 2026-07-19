@@ -73,6 +73,54 @@ describe('OpenCode runtime defaults', () => {
     expect(ports.resolveClaudePath).not.toHaveBeenCalled();
   });
 
+  it('ignores non-OpenCode models when inheriting the OpenCode root model', async () => {
+    const resolveClaudePath = vi.fn().mockResolvedValue('/usr/bin/claude');
+    const ports = createPorts({ resolveClaudePath });
+
+    const result = await materializeOpenCodeRuntimeAdapterDefaults(
+      {
+        request: createRequest(),
+        members: [
+          { name: 'dev', role: 'developer', providerId: 'opencode', model: 'gpt-5' },
+          { name: 'reviewer', role: 'reviewer', providerId: 'anthropic', model: 'sonnet' },
+          { name: 'qa', role: 'tester', providerId: 'codex', model: 'gpt-5-codex' },
+        ],
+      },
+      ports
+    );
+
+    expect(result.request.model).toBe('gpt-5');
+    expect(result.members).toEqual([
+      expect.objectContaining({ name: 'dev', model: 'gpt-5' }),
+      expect.objectContaining({ name: 'reviewer', model: 'sonnet' }),
+      expect.objectContaining({ name: 'qa', model: 'gpt-5-codex' }),
+    ]);
+    expect(resolveClaudePath).not.toHaveBeenCalled();
+  });
+
+  it('resolves the OpenCode default instead of inheriting a non-OpenCode member model', async () => {
+    const resolveProviderDefaultModel = vi.fn().mockResolvedValue(' opencode/default ');
+    const ports = createPorts({ resolveProviderDefaultModel });
+
+    const result = await materializeOpenCodeRuntimeAdapterDefaults(
+      {
+        request: createRequest(),
+        members: [
+          { name: 'dev', role: 'developer', providerId: 'opencode' },
+          { name: 'reviewer', role: 'reviewer', providerId: 'anthropic', model: 'sonnet' },
+        ],
+      },
+      ports
+    );
+
+    expect(result.request.model).toBe('opencode/default');
+    expect(result.members).toEqual([
+      expect.objectContaining({ name: 'dev', model: 'opencode/default' }),
+      expect.objectContaining({ name: 'reviewer', model: 'sonnet' }),
+    ]);
+    expect(resolveProviderDefaultModel).toHaveBeenCalledOnce();
+  });
+
   it('rejects ambiguous member model selections', async () => {
     await expect(
       materializeOpenCodeRuntimeAdapterDefaults(

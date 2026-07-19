@@ -767,6 +767,8 @@ async function main() {
     const rect = button.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
   })`);
+  const historyDismissTarget = visibleElement(`Array.from(document.querySelectorAll('h2'))
+    .find((heading) => heading.textContent?.startsWith('Changes for task #'))`);
   const ensureHistoryOpen = async (label) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (await client.evaluate(`Boolean(${visibleHistoryPopover})`)) {
@@ -788,12 +790,36 @@ async function main() {
       if (!(await client.evaluate(`Boolean(${visibleHistoryPopover})`))) {
         return;
       }
+      const explicitCloseButton = `(${visibleHistoryPopover})?.querySelector(
+        'button[aria-label="Close review history"]'
+      )`;
+      if (await client.evaluate(`Boolean(${explicitCloseButton})`)) {
+        await client.domClick(explicitCloseButton);
+        try {
+          await client.waitFor(`!(${visibleHistoryPopover})`, label, 1_000);
+          return;
+        } catch {
+          // A concurrent history update can remount the popover once; continue fallbacks.
+        }
+      }
       await client.pressEscape();
       try {
         await client.waitFor(`!(${visibleHistoryPopover})`, label, 750);
         return;
       } catch {
         // An action can remount the Radix layer after Escape was delivered to the old content.
+      }
+      if (!(await client.evaluate(`Boolean(${visibleHistoryPopover})`))) {
+        return;
+      }
+      if (await client.evaluate(`Boolean(${historyDismissTarget})`)) {
+        await client.click(historyDismissTarget);
+        try {
+          await client.waitFor(`!(${visibleHistoryPopover})`, label, 1_000);
+          return;
+        } catch {
+          // Radix may replace the dismissable layer while an action is committing.
+        }
       }
       if (!(await client.evaluate(`Boolean(${visibleHistoryPopover})`))) {
         return;

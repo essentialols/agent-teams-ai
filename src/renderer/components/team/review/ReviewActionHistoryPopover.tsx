@@ -381,7 +381,19 @@ export const ReviewActionHistoryPopover = ({
           }}
         >
           <div className="sticky top-0 z-10 border-b border-border bg-surface px-3 py-2.5">
-            <div className="text-xs font-medium text-text">Review action history</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-text">Review action history</div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Close review history"
+                className="size-6 shrink-0 text-text-muted hover:text-text"
+                onClick={() => setOpen(false)}
+              >
+                <X className="size-3.5" aria-hidden="true" />
+              </Button>
+            </div>
             <div
               data-review-history-persistence={persistenceStatus}
               className={cn(

@@ -22,6 +22,148 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
     expectTypeOf<VoidCrossTeamSender>().not.toExtend<OpenCodeRuntimeDeliveryCrossTeamSender>();
   });
 
+  it('normalizes mixed legacy and structured task refs for every destination', async () => {
+    const sentMessages: InboxMessage[] = [];
+    const appendMessage = vi.fn((_teamName: string, message: InboxMessage) => {
+      sentMessages.push(message);
+      return Promise.resolve();
+    });
+    const sendMessage = vi.fn(() =>
+      Promise.resolve({ deliveredToInbox: true, messageId: 'member-task-refs' })
+    );
+    const crossTeamSender = vi.fn(
+      (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) =>
+        Promise.resolve({
+          messageId: request.messageId ?? 'cross-team-task-refs',
+          deliveredToInbox: true,
+        })
+    );
+    const ports = createOpenCodeRuntimeDeliveryPorts({
+      sentMessagesStore: {
+        appendMessage,
+        readMessages: vi.fn(() => Promise.resolve(sentMessages)),
+      },
+      inboxReader: {
+        getMessagesFor: vi.fn(() => Promise.resolve([])),
+      },
+      inboxWriter: { sendMessage },
+      getCrossTeamSender: () => crossTeamSender,
+    });
+    const structuredTaskRef = {
+      taskId: ' structured-task-id ',
+      displayId: ' #structured ',
+      teamName: ' exact-runtime-team ',
+    };
+    const taskRefs = [
+      ' legacy-task-id ',
+      structuredTaskRef,
+      '',
+      '   ',
+      null,
+      42,
+      {},
+      { taskId: 'partial-task-ref' },
+      { taskId: '', displayId: '#invalid', teamName: 'team-a' },
+      ['nested-task-ref'],
+    ] as unknown as RuntimeDeliveryEnvelope['taskRefs'];
+    const expectedTaskRefs = [
+      {
+        taskId: 'legacy-task-id',
+        displayId: 'legacy-task-id',
+        teamName: 'team-a',
+      },
+      structuredTaskRef,
+    ];
+
+    await getRuntimePort(ports, 'user_sent_messages').write({
+      envelope: { ...envelope(), to: 'user', taskRefs },
+      destinationMessageId: 'user-task-refs',
+    });
+    await getRuntimePort(ports, 'member_inbox').write({
+      envelope: { ...envelope(), to: { memberName: 'Reviewer' }, taskRefs },
+      destinationMessageId: 'member-task-refs',
+    });
+    await getRuntimePort(ports, 'cross_team_outbox').write({
+      envelope: { ...envelope(), taskRefs },
+      destinationMessageId: 'cross-team-task-refs',
+    });
+
+    expect(appendMessage).toHaveBeenCalledWith(
+      'team-a',
+      expect.objectContaining({
+        messageId: 'user-task-refs',
+        taskRefs: expectedTaskRefs,
+      })
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      'team-a',
+      expect.objectContaining({ taskRefs: expectedTaskRefs })
+    );
+    expect(crossTeamSender).toHaveBeenCalledWith(
+      expect.objectContaining({ taskRefs: expectedTaskRefs })
+    );
+    expect(appendMessage).toHaveBeenCalledWith(
+      'team-a',
+      expect.objectContaining({
+        messageId: 'cross-team-task-refs',
+        taskRefs: expectedTaskRefs,
+      })
+    );
+  });
+
+  it('omits task refs when persisted refs are empty or malformed', async () => {
+    const emptyTaskRefValues = [
+      [],
+      ['', '   ', null, 42, {}, { taskId: 'partial-task-ref' }, ['nested-task-ref']],
+      null,
+      {},
+      'not-an-array',
+    ];
+
+    for (const taskRefValue of emptyTaskRefValues) {
+      const appendMessage = vi.fn(() => Promise.resolve());
+      const crossTeamSender = vi.fn(
+        (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) =>
+          Promise.resolve({
+            messageId: request.messageId ?? 'runtime-delivery-message',
+            deliveredToInbox: true,
+          })
+      );
+      const port = getCrossTeamPort(
+        createOpenCodeRuntimeDeliveryPorts({
+          sentMessagesStore: {
+            appendMessage,
+            readMessages: vi.fn(() => Promise.resolve([])),
+          },
+          inboxReader: {
+            getMessagesFor: vi.fn(() => Promise.resolve([])),
+          },
+          inboxWriter: {
+            sendMessage: vi.fn(() =>
+              Promise.resolve({ deliveredToInbox: true, messageId: 'unused' })
+            ),
+          },
+          getCrossTeamSender: () => crossTeamSender,
+        })
+      );
+
+      await port.write({
+        envelope: {
+          ...envelope(),
+          taskRefs: taskRefValue as unknown as RuntimeDeliveryEnvelope['taskRefs'],
+        },
+        destinationMessageId: 'runtime-delivery-message',
+      });
+
+      expect(crossTeamSender).toHaveBeenCalledTimes(1);
+      expect(crossTeamSender.mock.calls[0]?.[0]).not.toHaveProperty('taskRefs');
+      expect(appendMessage).toHaveBeenCalledWith(
+        'team-a',
+        expect.objectContaining({ taskRefs: undefined })
+      );
+    }
+  });
+
   it('requires runtime proof when an OpenCode runtime delivers cross-team', async () => {
     const sentMessages: InboxMessage[] = [];
     const crossTeamSender = vi.fn(
@@ -234,9 +376,16 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
 });
 
 function getCrossTeamPort(ports: RuntimeDeliveryDestinationPort[]): RuntimeDeliveryDestinationPort {
-  const port = ports.find((candidate) => candidate.kind === 'cross_team_outbox');
+  return getRuntimePort(ports, 'cross_team_outbox');
+}
+
+function getRuntimePort(
+  ports: RuntimeDeliveryDestinationPort[],
+  kind: RuntimeDeliveryDestinationPort['kind']
+): RuntimeDeliveryDestinationPort {
+  const port = ports.find((candidate) => candidate.kind === kind);
   if (!port) {
-    throw new Error('cross-team runtime delivery port not registered');
+    throw new Error(`${kind} runtime delivery port not registered`);
   }
   return port;
 }

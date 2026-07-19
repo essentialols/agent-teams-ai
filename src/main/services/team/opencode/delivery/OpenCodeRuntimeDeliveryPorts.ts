@@ -28,16 +28,45 @@ export interface OpenCodeRuntimeDeliveryPortsDependencies {
   getCrossTeamSender: () => OpenCodeRuntimeDeliveryCrossTeamSender | null;
 }
 
-function runtimeTaskRefs(
-  value: readonly TaskRef[] | undefined
-): InboxMessage['taskRefs'] | undefined {
-  return value?.length
-    ? value.map((taskRef) => ({
+function isRuntimeTaskRef(value: unknown): value is TaskRef {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const taskRef = value as Partial<TaskRef>;
+  return (
+    typeof taskRef.taskId === 'string' &&
+    taskRef.taskId.trim().length > 0 &&
+    typeof taskRef.displayId === 'string' &&
+    taskRef.displayId.trim().length > 0 &&
+    typeof taskRef.teamName === 'string' &&
+    taskRef.teamName.trim().length > 0
+  );
+}
+
+function runtimeTaskRefs(teamName: string, value: unknown): InboxMessage['taskRefs'] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const taskRefs: TaskRef[] = [];
+  for (const taskRef of value) {
+    if (typeof taskRef === 'string') {
+      const taskId = taskRef.trim();
+      if (taskId) {
+        taskRefs.push({ teamName, taskId, displayId: taskId });
+      }
+      continue;
+    }
+    if (isRuntimeTaskRef(taskRef)) {
+      taskRefs.push({
         taskId: taskRef.taskId,
         displayId: taskRef.displayId,
         teamName: taskRef.teamName,
-      }))
-    : undefined;
+      });
+    }
+  }
+
+  return taskRefs.length > 0 ? taskRefs : undefined;
 }
 
 function isCrossTeamSendResult(value: unknown): value is CrossTeamSendResult {
@@ -116,7 +145,7 @@ export function createOpenCodeRuntimeDeliveryPorts(
         messageId: destinationMessageId,
         source: 'lead_process',
         leadSessionId: envelope.runtimeSessionId,
-        taskRefs: runtimeTaskRefs(envelope.taskRefs),
+        taskRefs: runtimeTaskRefs(envelope.teamName, envelope.taskRefs),
       });
       return {
         kind: 'user_sent_messages',
@@ -166,7 +195,7 @@ export function createOpenCodeRuntimeDeliveryPorts(
         summary: envelope.summary ?? undefined,
         source: 'inbox',
         leadSessionId: envelope.runtimeSessionId,
-        taskRefs: runtimeTaskRefs(envelope.taskRefs),
+        taskRefs: runtimeTaskRefs(envelope.teamName, envelope.taskRefs),
       });
       return {
         kind: 'member_inbox',
@@ -217,7 +246,7 @@ export function createOpenCodeRuntimeDeliveryPorts(
       if (!crossTeamSender) {
         throw new Error('Cross-team sender is not configured');
       }
-      const taskRefs = runtimeTaskRefs(envelope.taskRefs);
+      const taskRefs = runtimeTaskRefs(envelope.teamName, envelope.taskRefs);
       const result = await crossTeamSender({
         fromTeam: envelope.teamName,
         fromMember: envelope.fromMemberName,
@@ -265,7 +294,7 @@ export function createOpenCodeRuntimeDeliveryPorts(
           source: CROSS_TEAM_SENT_SOURCE,
           summary: envelope.summary ?? `Cross-team message to ${location.toTeamName}`,
           leadSessionId: envelope.runtimeSessionId,
-          taskRefs: runtimeTaskRefs(envelope.taskRefs),
+          taskRefs: runtimeTaskRefs(envelope.teamName, envelope.taskRefs),
           conversationId: envelope.idempotencyKey,
         });
       }

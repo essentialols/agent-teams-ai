@@ -42,8 +42,15 @@ export function getOpenCodeSourceDisplayName(
   fallbackDisplayName?: string | null
 ): string {
   const normalized = sourceId.trim().toLowerCase();
+  const fallback = fallbackDisplayName?.trim();
   if (!normalized) {
-    return fallbackDisplayName?.trim() || sourceId;
+    return fallback || sourceId;
+  }
+
+  // xAI API access and the SuperGrok subscription share the same OpenCode
+  // source id, so keep the plan-specific label supplied by the runtime.
+  if (normalized === 'xai' && fallback?.toLowerCase() === 'supergrok') {
+    return fallback;
   }
 
   const knownLabel = OPEN_CODE_SOURCE_LABELS[normalized];
@@ -51,7 +58,6 @@ export function getOpenCodeSourceDisplayName(
     return knownLabel;
   }
 
-  const fallback = fallbackDisplayName?.trim();
   if (fallback) {
     return fallback;
   }

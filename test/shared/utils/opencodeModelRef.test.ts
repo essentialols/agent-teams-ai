@@ -43,4 +43,9 @@ describe('opencodeModelRef', () => {
       'Custom Provider'
     );
   });
+
+  it('preserves the SuperGrok subscription label for the shared xAI source', () => {
+    expect(getOpenCodeSourceDisplayName('xai', 'SuperGrok')).toBe('SuperGrok');
+    expect(getOpenCodeSourceDisplayName('xai', 'xAI API')).toBe('xAI');
+  });
 });

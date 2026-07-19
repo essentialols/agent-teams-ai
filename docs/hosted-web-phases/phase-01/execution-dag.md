@@ -1,24 +1,25 @@
 # PR #252 latest-base sync execution DAG
 
-Status: `pr252-latest-base-sync-router-v1`; terminal state: `HOLD`.
+Status: `pr252-latest-base-sync-router-v2-proposal`; terminal state: `HOLD`.
 
 The accepted/integrated Phase 2 product wave is
 `eee2389f7ee9300df93ef02d92e9ae114949aff4`. The Phase 2 milestone and next phase are blocked only
-by latest-base sync. Active router/canonical head
-`81e79295e199bad0e6bf426537564ea7bc67dfcd` descends from that historical product wave. No observed
-base is packet authority.
+by latest-base sync. The authoring-time router/canonical head
+`ec43eb727b5a90dbbd16bdd74b72397000abcd82` descends from that historical product wave; the live PR
+head is re-resolved once at each atomic attempt prepare/start. No observed base or head is durable
+packet authority.
 
 ## Ordered DAG
 
 ```text
 P2 product wave eee2389f... ACCEPTED + INTEGRATED
-  -> PR252.ROUTER.ACTIVE 81e79295... CANONICAL HEAD
+  -> PR252.ROUTER.ACTIVE (canonical head live-resolved at attempt start)
     -> PR252.BINDING.ATOMIC
        ProjectScopedControl resolves live base exactly once
        writes immutable pr252.latest-base-binding/v1 pre-start contract
-       materializes product attempt from 81e79295...
+       materializes product attempt from attempt.canonicalHeadSha
        records actual conflict paths
-       binds [81e79295..., resolvedBaseSha]
+       binds [attempt.canonicalHeadSha, resolvedBaseSha]
       -> PR252.SYNC.PRODUCER (capacity 1)
          edit actual conflict paths only
          preserve canonical-wave behavior + bound-base behavior
@@ -34,7 +35,7 @@ P2 product wave eee2389f... ACCEPTED + INTEGRATED
                   -> PR252.SYNC.BROKER_PROMOTION_PROOF
                      compare live base and canonical PR head again
                      create exact reviewed tree as true ordered two-parent merge
-                     parents [81e79295..., resolvedBaseSha]
+                     parents [attempt.canonicalHeadSha, resolvedBaseSha]
                      promote + push with expected-old-head protection
                      prove remote head and GitHub head OID equal merge commit
                      prove GitHub base OID still equals resolvedBaseSha
@@ -64,9 +65,10 @@ live base != attempt.resolvedBaseSha
 
 - `ProjectScopedControl` owns the transition and DAG decision.
 - Runtime owns only the selected resolve/materialize/record/start primitives.
-- Canonical PR head must equal `81e79295e199bad0e6bf426537564ea7bc67dfcd`.
+- The canonical PR head is the live PR #252 head resolved once at prepare/start
+  (authoring-time observation: `ec43eb727b5a90dbbd16bdd74b72397000abcd82`).
 - Live base is resolved once into an exact full 40-hex `resolvedBaseSha`.
-- Product materialization starts from active router/canonical head `81e79295...`.
+- Product materialization starts from the live-resolved canonical head (`attempt.canonicalHeadSha`).
 - The same base is the ordered second parent.
 - Actual conflicts and focused commands are frozen before producer start.
 - Partial admission, ambiguity, or duplicate capacity starts no worker and ends `HOLD`.
@@ -100,11 +102,9 @@ live base != attempt.resolvedBaseSha
 ### `PR252.SYNC.BROKER_PROMOTION_PROOF`
 
 - Base and canonical PR head still match immediately before construction/push.
-- Exactly two ordered parents:
-  `[81e79295e199bad0e6bf426537564ea7bc67dfcd, resolvedBaseSha]`.
+- Exactly two ordered parents: `[attempt.canonicalHeadSha, resolvedBaseSha]`.
 - Commit tree exactly equals the accepted reviewed tree.
-- Push uses expected-old-head protection fixed to canonical head
-  `81e79295e199bad0e6bf426537564ea7bc67dfcd`.
+- Push uses expected-old-head protection fixed to `attempt.canonicalHeadSha`.
 - Remote and GitHub head equal the merge commit; GitHub base equals the bound base.
 - GitHub state is resolved and non-conflicting; `UNKNOWN` or `CONFLICTING` is not proof.
 - Git commit SHA is primary provenance; no repository manifest/manifest hash.

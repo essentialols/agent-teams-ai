@@ -1,5 +1,11 @@
 # Phase 2 controller packet: identity and read truth
 
+> **Historical packet — already executed.** The Phase 2 identity product wave was accepted and
+> integrated in `eee2389f7`, canonical team lifecycle reads were wired into production
+> (IPC/HTTP/preload/standalone) in `bc893aa16`, and the safe read boundary completed in
+> `ec43eb727`. Do not re-execute this packet; current authority is
+> `docs/hosted-web-phases/EXECUTION_INDEX.json` (see `phase2PacketDisposition`).
+
 ## Status and authority
 
 - Status: `candidate-awaiting-independent-root-review`; product state `blocked`.

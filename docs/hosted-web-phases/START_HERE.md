@@ -1,7 +1,34 @@
 # Start here: PR #252 latest-base sync
 
-- Revision: `pr252-latest-base-sync-router-v1`
-- Router/canonical head: `81e79295e199bad0e6bf426537564ea7bc67dfcd`, active authority
+## Orientation for incoming agents (read this first)
+
+- **What is already DONE — do not re-implement.** The Phase 2 identity product wave is accepted and
+  integrated (`eee2389f7`); canonical team lifecycle reads are wired into production transports
+  (IPC, HTTP, preload, standalone via `src/main/composition/hosted/phase2Read*.ts`) since
+  `bc893aa16`; the Phase 2 safe read boundary is complete (`ec43eb727`). Every `phase-02/` packet
+  is a historical record of finished work. The built code is mapped in [CONTEXT.md](CONTEXT.md).
+- **The only executable node right now** is the PR #252 latest-base sync below, and its admission
+  is owned by the project controller (`ProjectScopedControl`). A sync merge was pushed
+  (`75a65332c`) but the base has moved again and GitHub still reports the PR CONFLICTING, so the
+  sync remains the open blocker. Implementers without the controller mandate have no product task
+  here; do not start Phase 2 work from the historical packets.
+- **Head pins are live-resolved.** The first merge parent is the live PR #252 branch head resolved
+  once at attempt prepare/start; SHAs printed in these documents are authoring-time records, and
+  later accepted commits supersede them without a new router revision. The full-SHA stop rule
+  below applies to the attempt-bound binding contract, not to a plain difference between a
+  document's authoring-time SHA and the current branch head.
+- **Known red tests** are tracked in [KNOWN_RED.md](KNOWN_RED.md) with causes, triage state, and
+  resolution steps — check it before diagnosing a red run. Anything red and not listed there is an
+  unexpected regression.
+- **There is no `phase-03/` packet yet.** After the sync merge lands, the next phase packet must
+  be authored first; do not search for it.
+- Process guidance for keeping lanes fast: [VELOCITY.md](VELOCITY.md) (reference, not mandatory).
+
+## Router authority
+
+- Revision: `pr252-latest-base-sync-router-v2-proposal` (v2: stale exact-head pins replaced with
+  the live-resolve-at-attempt-start policy the contract already uses for the base)
+- Router/canonical head at authoring time: `ec43eb727b5a90dbbd16bdd74b72397000abcd82`
 - Historical product-wave provenance: `eee2389f7ee9300df93ef02d92e9ae114949aff4`, accepted,
   integrated, and an ancestor of the active router
 - Current blocker: latest-base sync only
@@ -39,9 +66,9 @@ dependency mismatch. Return `HOLD`; do not repair authority informally.
 
 The router author launches nothing. After these exact seven paths become active packet authority,
 `ProjectScopedControl` may atomically prepare/start one product attempt. During that single
-transition it resolves the live PR base once, records the exact full commit, materializes the product
-worker from `81e79295e199bad0e6bf426537564ea7bc67dfcd`, derives the actual conflict set, and binds the
-canonical head and same base as ordered first and second parents.
+transition it resolves the live PR base once and the live PR head once, records both exact full
+commits, materializes the product worker from that resolved head, derives the actual conflict set,
+and binds the resolved head and base as ordered first and second parents.
 
 The producer edits only actual conflict paths, preserves both parent behaviors, runs focused tests and
 all mechanical gates, self-reviews, and ends `HOLD`. The controller reruns the complete mechanical
@@ -49,9 +76,8 @@ gate set directly. There is no mechanical-review worker. Exactly one fresh indep
 integration/architecture/security semantic reviewer may follow.
 
 Only that review's `ACCEPT` with P0/P1/P2 `0/0/0` permits broker construction, promotion, push,
-and GitHub conflict proof of the exact ordered two-parent merge. The broker uses canonical head
-`81e79295e199bad0e6bf426537564ea7bc67dfcd` as the expected old PR head and the merge's first
-parent. A live-base mismatch at any later gate invalidates only the attempt; the same stable packet
+and GitHub conflict proof of the exact ordered two-parent merge. The broker uses the attempt-bound
+canonical head as the expected old PR head and the merge's first parent. A live-base mismatch at any later gate invalidates only the attempt; the same stable packet
 admits a new atomic attempt after the old one is terminal.
 
 ## Safety and provenance

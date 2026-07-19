@@ -3,12 +3,13 @@
 ## Status and authority
 
 - Current phase/node: `phase-02` / `PR252.LATEST_BASE_SYNC`
-- Router revision: `pr252-latest-base-sync-router-v1`
+- Router revision: `pr252-latest-base-sync-router-v2-proposal`
 - Canonical repository/PR: `777genius/agent-teams-ai#252`
 - Historical accepted product-wave provenance:
   `eee2389f7ee9300df93ef02d92e9ae114949aff4`
-- Active router/canonical head and canonical remote head:
-  `81e79295e199bad0e6bf426537564ea7bc67dfcd`
+- Active router/canonical head and canonical remote head at authoring time:
+  `ec43eb727b5a90dbbd16bdd74b72397000abcd82` (the live PR head is re-resolved once at each
+  atomic attempt prepare/start and supersedes this record)
 - Product-wave relationship: the accepted product-wave commit is a historical ancestor of the active
   router/canonical head
 - Product-wave disposition: accepted and integrated
@@ -60,12 +61,12 @@ Its logical shape is:
   "productAttemptId": "<non-empty unique attempt ID>",
   "repository": "777genius/agent-teams-ai",
   "pullRequestNumber": 252,
-  "routerAuthoritySha": "81e79295e199bad0e6bf426537564ea7bc67dfcd",
-  "canonicalHeadSha": "81e79295e199bad0e6bf426537564ea7bc67dfcd",
-  "materializationSourceSha": "81e79295e199bad0e6bf426537564ea7bc67dfcd",
+  "routerAuthoritySha": "ec43eb727b5a90dbbd16bdd74b72397000abcd82",
+  "canonicalHeadSha": "<exact lowercase 40-hex live PR head, resolved once at prepare/start>",
+  "materializationSourceSha": "<the exact same canonicalHeadSha>",
   "resolvedBaseSha": "<exact lowercase 40-hex live PR base commit>",
   "orderedParentShas": [
-    "81e79295e199bad0e6bf426537564ea7bc67dfcd",
+    "<the exact same canonicalHeadSha>",
     "<the exact same resolvedBaseSha>"
   ],
   "conflictPaths": ["<sorted distinct actual conflict path>"],
@@ -77,9 +78,10 @@ Its logical shape is:
 The contract is valid only when:
 
 1. the variable `resolvedBaseSha` is a full lowercase 40-hex commit SHA;
-2. `routerAuthoritySha`, `canonicalHeadSha`, `materializationSourceSha`, and
-   `orderedParentShas[0]` byte-equal active router commit
-   `81e79295e199bad0e6bf426537564ea7bc67dfcd`;
+2. `routerAuthoritySha` byte-equals the router authoring-time commit
+   `ec43eb727b5a90dbbd16bdd74b72397000abcd82`, while `canonicalHeadSha`,
+   `materializationSourceSha`, and `orderedParentShas[0]` all byte-equal the live PR #252 head
+   resolved exactly once at the same atomic prepare/start transition;
 3. `orderedParentShas` has exactly two entries in the declared order;
 4. `orderedParentShas[1]` byte-equals `resolvedBaseSha`;
 5. `conflictPaths` is the complete sorted, distinct, non-empty set produced by the attempt's ordered
@@ -100,12 +102,12 @@ repository does not implement or call a raw worker lifecycle. In that transition
 
 1. proves the exact seven-path router is active authority and no product attempt is active, under
    review, or eligible for promotion;
-2. proves PR #252's live head is exactly
-   `81e79295e199bad0e6bf426537564ea7bc67dfcd`;
+2. resolves PR #252's live head exactly once from canonical GitHub PR identity and freezes it as
+   `canonicalHeadSha`;
 3. resolves the live PR base exactly once from canonical GitHub PR identity and requires one exact
    full commit object;
 4. creates a unique `productAttemptId` and freezes that commit as `resolvedBaseSha`;
-5. asks the runtime to materialize from active router/canonical head `81e79295...`, never from its
+5. asks the runtime to materialize from the live-resolved canonical head (`attempt.canonicalHeadSha`), never from its
    historical product-wave ancestor, prior worker state, or the base;
 6. asks the runtime to apply the bound base mechanically as ordered second parent, leaving conflicts
    unresolved and all non-conflicting bytes fixed;
@@ -123,7 +125,7 @@ with `resolvedBaseSha`; they never update, re-resolve, or substitute the attempt
 ## Product producer
 
 The controller admits one bounded merge-resolution producer for the bound attempt. It is a fresh
-product worker materialized from canonical `81e79295...`; no old job, same-job continuation, dirty
+product worker materialized from `attempt.canonicalHeadSha`; no old job, same-job continuation, dirty
 workspace, patch carrier, or prior attempt output is eligible. Fast mode is prohibited.
 
 ### Exact writable scope
@@ -245,14 +247,14 @@ version, old job continuation, or source-pin update is required.
 
 After exact independent `ACCEPT`, the broker acts only on a fresh controller authorization. It
 first proves the live base still equals `resolvedBaseSha` and the PR head still equals canonical
-`81e79295...`. It then:
+`attempt.canonicalHeadSha`. It then:
 
 1. materializes the exact accepted reviewed tree;
 2. creates one conventional merge commit with exactly the ordered parents
-   `[81e79295e199bad0e6bf426537564ea7bc67dfcd, resolvedBaseSha]`;
+   `[attempt.canonicalHeadSha, resolvedBaseSha]`;
 3. proves the commit tree equals the reviewer-bound resolved tree SHA;
 4. promotes and pushes that exact commit to the PR #252 head with expected-old-head protection
-   fixed to `81e79295e199bad0e6bf426537564ea7bc67dfcd`;
+   fixed to `attempt.canonicalHeadSha`;
 5. proves the remote PR head equals the created merge commit; and
 6. queries canonical GitHub PR #252 until mergeability is resolved, then proves its head OID equals
    the pushed merge commit, its base OID still equals `resolvedBaseSha`, and its mergeability is
@@ -274,10 +276,10 @@ neither.
 
 ```text
 accepted/integrated Phase 2 product wave eee2389f...
-  -> exact seven-path stable router 81e79295... becomes active canonical authority
+  -> exact seven-path stable router (authoring-time head ec43eb727...) becomes active canonical authority
     -> ProjectScopedControl atomic prepare/start
        resolve live PR base once -> pr252.latest-base-binding/v1
-       materialize from 81e79295... -> actual conflict set -> ordered second-parent binding
+       materialize from attempt.canonicalHeadSha -> actual conflict set -> ordered second-parent binding
       -> at most one bounded product producer
          actual conflicts only + both behaviors + focused/mechanical gates + self-review
         -> HOLD
@@ -286,7 +288,7 @@ accepted/integrated Phase 2 product wave eee2389f...
             -> exactly one independent integration/architecture/security semantic reviewer
               -> HOLD
                 ACCEPT 0/0/0 -> broker rechecks binding
-                  -> true merge [81e79295..., resolvedBaseSha]
+                  -> true merge [attempt.canonicalHeadSha, resolvedBaseSha]
                   -> exact reviewed tree -> promote -> push
                   -> remote-head equality + GitHub exact-pair non-conflict proof
                   -> release latest-base gate -> HOLD; no successor launch

@@ -1,5 +1,18 @@
 # Hosted Web Runtime: End-to-End Completion Plan
 
+## How to navigate this document (6.9k lines — do not read linearly)
+
+- Built-code orientation lives in [hosted-web-phases/CONTEXT.md](hosted-web-phases/CONTEXT.md);
+  read that first, then come here only for the sections your task needs.
+- Authoring the next phase packet: `Implementation phases` (per-phase scope), then
+  `Critical path and parallel dependencies` and `Parallel execution model`.
+- Designing contracts/adapters: `Target architecture`, `Feature ownership and dependency design`,
+  `Architecture decisions`, `HTTP contract rules`.
+- Parity questions ("does hosted need to cover X?"): `Capability and parity matrix` and
+  `Data ownership catalog required before writes`.
+- Verification and release: `Real end-to-end verification design`, `Test matrix`,
+  `Verification commands and gates`, `Definition of done`.
+
 ## Document status
 
 - Status: reference plan; for the live phase status see

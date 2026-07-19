@@ -5,7 +5,10 @@ import {
 
 import { isOpenCodeBridgeNoOutputDiagnostic } from '../opencode/bridge/OpenCodeBridgeSupportDiagnostics';
 import { isOpenCodeTerminalProbeTechnicalDiagnostic } from '../opencode/readiness/OpenCodeFailureDiagnostics';
-import { selectRuntimeDiagnosticClassification } from '../runtime/RuntimeDiagnosticClassifier';
+import {
+  hasHttpRateLimitStatusCode,
+  selectRuntimeDiagnosticClassification,
+} from '../runtime/RuntimeDiagnosticClassifier';
 import { createPersistedLaunchSnapshot } from '../TeamLaunchStateEvaluator';
 
 import type { TeamRuntimePrepareResult } from '../runtime';
@@ -21,8 +24,6 @@ const OPEN_CODE_SECRET_FLAG_PATTERN =
 const OPEN_CODE_BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Z0-9._~+/=-]+/gi;
 const OPEN_CODE_SECRET_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]{16,}\b/g;
 const OPEN_CODE_APP_MANAGED_BRIEFING_MAX_CHARS = 12_000;
-const OPEN_CODE_HTTP_RATE_LIMIT_PATTERN =
-  /^\s*(?:error\s*[:=-]?\s*)?429\b|\b(?:http(?:[\s_-]*status)?|status(?:[\s_-]*code)?|error(?:[\s_-]*code)?|code)["']?\s*(?::|=|is|of)?\s*["']?429\b|\b429\s+(?:too many requests|rate limit(?:ed)?|resource exhausted)\b/im;
 export const OPENCODE_RUNTIME_BINARY_UNREACHABLE_DIAGNOSTIC =
   'OpenCode runtime binary is not installed or not reachable by launch preflight.';
 export const OPENCODE_APP_MCP_UNREACHABLE_DIAGNOSTIC =
@@ -130,7 +131,7 @@ export function hasRealOpenCodeFailureDiagnostic(text: string): boolean {
     normalized.includes('rate-limit') ||
     normalized.includes('ratelimiterror') ||
     normalized.includes('too many requests') ||
-    OPEN_CODE_HTTP_RATE_LIMIT_PATTERN.test(normalized) ||
+    hasHttpRateLimitStatusCode(normalized) ||
     normalized.includes('member removed') ||
     normalized.includes('session conflict') ||
     normalized.includes('run tombstoned') ||

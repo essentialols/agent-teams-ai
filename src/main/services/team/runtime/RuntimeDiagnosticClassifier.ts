@@ -101,14 +101,29 @@ function hasGrpcResourceExhaustedCode(message: string): boolean {
   return /\bgrpc[_\s-]*code["']?\s*(?::|=|is)\s*["']?8\b/i.test(message);
 }
 
-function hasHttpRateLimitStatusCode(message: string): boolean {
+function hasLeadingHttpRateLimitStatusCode(message: string): boolean {
+  return /^\s*(?:error\s*[:=-]?\s*)?429\b/m.test(message);
+}
+
+function hasLabeledHttpRateLimitStatusCode(message: string): boolean {
+  return (
+    /\bhttp(?:[\s_-]*status)?["']?\s*(?::|=|is|of)?\s*["']?429\b/.test(message) ||
+    /\bstatus(?:[\s_-]*code)?["']?\s*(?::|=|is|of)?\s*["']?429\b/.test(message) ||
+    /\berror(?:[\s_-]*code)?["']?\s*(?::|=|is|of)?\s*["']?429\b/.test(message) ||
+    /\bcode["']?\s*(?::|=|is|of)?\s*["']?429\b/.test(message)
+  );
+}
+
+function hasDescriptiveHttpRateLimitStatusCode(message: string): boolean {
+  return /\b429\s+(?:too many requests|rate limit(?:ed)?|resource exhausted)\b/.test(message);
+}
+
+export function hasHttpRateLimitStatusCode(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
-    /^\s*(?:error\s*[:=-]?\s*)?429\b/m.test(normalized) ||
-    /\b(?:http(?:[\s_-]*status)?|status(?:[\s_-]*code)?|error(?:[\s_-]*code)?|code)["']?\s*(?::|=|is|of)?\s*["']?429\b/.test(
-      normalized
-    ) ||
-    /\b429\s+(?:too many requests|rate limit(?:ed)?|resource exhausted)\b/.test(normalized)
+    hasLeadingHttpRateLimitStatusCode(normalized) ||
+    hasLabeledHttpRateLimitStatusCode(normalized) ||
+    hasDescriptiveHttpRateLimitStatusCode(normalized)
   );
 }
 

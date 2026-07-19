@@ -55,7 +55,7 @@ describe('TeamLoadingSkeleton Kanban', () => {
     expect(columns.every((column) => !column.className.includes('border'))).toBe(true);
     expect(columns.every((column) => !column.className.includes('rounded-md'))).toBe(true);
 
-    const gridItems = columns.map((column) => column.parentElement as HTMLElement);
+    const gridItems = columns.map((column) => column.parentElement!);
     expect(gridItems.map((item) => item.style.gridColumn)).toEqual([
       '1 / span 4',
       '5 / span 4',

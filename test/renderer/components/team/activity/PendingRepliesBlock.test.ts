@@ -58,6 +58,7 @@ describe('PendingRepliesBlock', () => {
       root.render(
         React.createElement(PendingRepliesBlock, {
           members: [member],
+          nowMs: Date.parse('2026-04-09T10:00:00.000Z'),
           pendingRepliesByMember: {
             alice: Date.parse('2026-04-09T09:59:00.000Z'),
           },
@@ -101,6 +102,7 @@ describe('PendingRepliesBlock', () => {
       root.render(
         React.createElement(PendingRepliesBlock, {
           members: [plainMember],
+          nowMs: Date.parse('2026-04-09T10:00:00.000Z'),
           messages: [message],
           isTeamAlive: false,
           pendingRepliesByMember,
@@ -114,6 +116,7 @@ describe('PendingRepliesBlock', () => {
       root.render(
         React.createElement(PendingRepliesBlock, {
           members: [plainMember],
+          nowMs: Date.parse('2026-04-09T10:00:00.000Z'),
           messages: [message],
           isTeamAlive: true,
           pendingRepliesByMember,
@@ -127,6 +130,7 @@ describe('PendingRepliesBlock', () => {
       root.render(
         React.createElement(PendingRepliesBlock, {
           members: [plainMember],
+          nowMs: Date.parse('2026-04-09T10:00:00.000Z'),
           messages: [{ ...message, read: true }],
           isTeamAlive: true,
           pendingRepliesByMember,

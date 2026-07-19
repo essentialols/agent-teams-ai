@@ -175,6 +175,7 @@ describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
               backendType: 'process',
               tmuxPaneId: 'process:123',
               runtimePid: 123,
+              runtimeSessionId: 'old-process-session',
               bootstrapRuntimeEventsPath: '/safe-test-project/runtime/old.runtime.jsonl',
               bootstrapProofToken: 'old-proof-token',
               bootstrapRunId: 'old-run',
@@ -206,6 +207,7 @@ describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
       staleField: 'preserved',
     });
     expect(member).not.toHaveProperty('runtimePid');
+    expect(member).not.toHaveProperty('runtimeSessionId');
     expect(member).not.toHaveProperty('bootstrapRuntimeEventsPath');
     expect(member).not.toHaveProperty('bootstrapProofToken');
     expect(member).not.toHaveProperty('bootstrapRunId');

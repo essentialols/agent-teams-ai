@@ -15,6 +15,7 @@ const TEAM_JSON_READ_TIMEOUT_MS = 5_000;
 const TEAM_CONFIG_MAX_BYTES = 10 * 1024 * 1024;
 const PROCESS_BACKEND_OPTIONAL_METADATA_FIELDS = [
   'runtimePid',
+  'runtimeSessionId',
   'bootstrapRuntimeEventsPath',
   'bootstrapProofToken',
   'bootstrapRunId',

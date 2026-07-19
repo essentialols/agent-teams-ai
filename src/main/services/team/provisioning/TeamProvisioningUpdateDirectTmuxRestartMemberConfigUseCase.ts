@@ -68,7 +68,8 @@ async function withInProcessTeamConfigMutationLock<T>(
     release = resolve;
   });
   teamConfigMutationQueues.set(teamName, current);
-  await previous;
+  // Keep queue admission rejection-safe if a prior or legacy tail rejects.
+  await previous.catch(() => undefined);
   try {
     return await operation();
   } finally {

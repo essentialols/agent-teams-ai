@@ -341,6 +341,46 @@ describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
     });
   });
 
+  it('continues serialized mutations after a rejected update without committing the rejected state', async () => {
+    let persisted = JSON.stringify({
+      name: 'Team A',
+      members: [{ name: 'Worker A' }, { name: 'Worker B' }],
+    });
+    const events: string[] = [];
+    let writeCount = 0;
+    const useCase = createUpdateDirectTmuxRestartMemberConfigUseCase({
+      async readTeamConfigJson() {
+        events.push('read');
+        return persisted;
+      },
+      async writeTeamConfigJson(_teamName, contents) {
+        writeCount += 1;
+        events.push(`write-${writeCount}`);
+        if (writeCount === 1) {
+          throw new Error('rejected mutation');
+        }
+        persisted = contents;
+      },
+      invalidateTeamConfig() {
+        events.push('invalidate');
+      },
+    });
+
+    const rejected = expect(
+      useCase(restartInput('Worker A', 'rejected-prompt', 1))
+    ).rejects.toThrow('rejected mutation');
+    const successful = useCase(restartInput('Worker B', 'accepted-prompt', 2));
+
+    await rejected;
+    await expect(successful).resolves.toBeUndefined();
+
+    expect(events).toEqual(['read', 'write-1', 'read', 'write-2', 'invalidate']);
+    expect(memberPrompts(persisted)).toMatchObject({
+      'Worker A': '',
+      'Worker B': 'accepted-prompt',
+    });
+  });
+
   it('fails before writing when the team config is unavailable', async () => {
     const writes: string[] = [];
     const useCase = createUpdateDirectTmuxRestartMemberConfigUseCase({

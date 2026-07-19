@@ -7,7 +7,9 @@ import {
 
 function createPorts(
   overrides: {
-    paneRuntimeInfo?: Map<string, { currentCommand?: string }>;
+    paneRuntimeInfo?: Map<string, { panePid: number; currentCommand?: string }>;
+    processCommandByPid?: (pid: number) => string | null;
+    processRows?: readonly { pid: number; ppid: number; command: string }[] | null;
     lingeringPids?: number[];
     lingeringPaneIds?: string[];
     throwOnPane?: string;
@@ -23,12 +25,21 @@ function createPorts(
     waitPaneCalls: [] as Array<{ paneIds: readonly string[]; timeoutMs: number; pollMs: number }>,
     info: [] as string[],
     debug: [] as string[],
+    warnings: [] as string[],
+    processTableReads: [] as { bypassCache: boolean }[],
   };
 
   const ports: PreparePrimaryOwnedMemberRestartRuntimeUseCasePorts = {
     async listTmuxPaneRuntimeInfo(paneIds) {
       calls.listedPaneIds.push([...paneIds]);
       return overrides.paneRuntimeInfo ?? new Map();
+    },
+    async listRuntimeProcesses(options) {
+      calls.processTableReads.push(options);
+      return overrides.processRows ?? [];
+    },
+    readProcessCommandByPid(pid) {
+      return overrides.processCommandByPid?.(pid) ?? null;
     },
     killTmuxPane(paneId) {
       calls.killedPanes.push(paneId);
@@ -59,6 +70,9 @@ function createPorts(
     logDebug(message) {
       calls.debug.push(message);
     },
+    logWarning(message) {
+      calls.warnings.push(message);
+    },
   };
 
   return { calls, ports };
@@ -67,7 +81,7 @@ function createPorts(
 describe('TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase', () => {
   it('keeps an idle tmux pane reusable while stopping matching live process handles', async () => {
     const { calls, ports } = createPorts({
-      paneRuntimeInfo: new Map([['pane-a', { currentCommand: 'bash' }]]),
+      paneRuntimeInfo: new Map([['pane-a', { panePid: 410, currentCommand: 'bash' }]]),
     });
     const prepareRestartRuntime = createPreparePrimaryOwnedMemberRestartRuntimeUseCase(ports);
 
@@ -97,7 +111,14 @@ describe('TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase', () =>
 
   it('kills and verifies stale tmux panes when no reusable shell pane is available', async () => {
     const { calls, ports } = createPorts({
-      paneRuntimeInfo: new Map([['pane-a', { currentCommand: 'node' }]]),
+      paneRuntimeInfo: new Map([['pane-a', { panePid: 420, currentCommand: 'node' }]]),
+      processRows: [
+        {
+          pid: 421,
+          ppid: 420,
+          command: 'bun cli.js --team-name team-a --agent-name Worker --agent-id Worker@team-a',
+        },
+      ],
     });
     const prepareRestartRuntime = createPreparePrimaryOwnedMemberRestartRuntimeUseCase(ports);
 
@@ -115,9 +136,78 @@ describe('TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase', () =>
     });
 
     expect(calls.killedPanes).toEqual(['pane-a']);
+    expect(calls.processTableReads).toEqual([{ bypassCache: true }]);
     expect(calls.waitPaneCalls).toEqual([{ paneIds: ['pane-a'], timeoutMs: 1_500, pollMs: 100 }]);
     expect(calls.info).toEqual([
       '[team-a] Killed teammate pane Worker (pane-a) for manual restart',
+    ]);
+  });
+
+  it('keeps a foreign pane alive when stale restart metadata points at another runtime', async () => {
+    const { calls, ports } = createPorts({
+      paneRuntimeInfo: new Map([['pane-a', { panePid: 430, currentCommand: 'node' }]]),
+      processRows: [
+        { pid: 431, ppid: 430, command: '/bin/zsh -l' },
+        {
+          pid: 432,
+          ppid: 431,
+          command: 'bun cli.js --team-name team-a --agent-name Other --agent-id Other@team-a',
+        },
+      ],
+    });
+    const prepareRestartRuntime = createPreparePrimaryOwnedMemberRestartRuntimeUseCase(ports);
+
+    await expect(
+      prepareRestartRuntime({
+        teamName: 'team-a',
+        memberName: 'Worker',
+        persistedRuntimeMembers: [
+          { name: 'Worker', backendType: 'tmux', tmuxPaneId: 'pane-a', runtimePid: 432 },
+        ],
+        invalidateRuntimeSnapshotCaches: () => undefined,
+        loadLiveRuntimeByMember: async () => new Map(),
+      })
+    ).resolves.toEqual({
+      directTmuxRestartPaneId: null,
+      shouldDirectProcessRestart: false,
+    });
+
+    expect(calls.killedPanes).toEqual([]);
+    expect(calls.waitPaneCalls).toEqual([]);
+    expect(calls.warnings).toEqual([
+      expect.stringContaining('pane runtime identity does not match the exact team and member'),
+    ]);
+  });
+
+  it('keeps an exact-command root pane alive when its persisted runtime pid differs', async () => {
+    const { calls, ports } = createPorts({
+      paneRuntimeInfo: new Map([['pane-a', { panePid: 440, currentCommand: 'node' }]]),
+      processCommandByPid: (pid) =>
+        pid === 440
+          ? 'bun cli.js --team-name team-a --agent-name Worker --agent-id Worker@team-a'
+          : null,
+    });
+    const prepareRestartRuntime = createPreparePrimaryOwnedMemberRestartRuntimeUseCase(ports);
+
+    await expect(
+      prepareRestartRuntime({
+        teamName: 'team-a',
+        memberName: 'Worker',
+        persistedRuntimeMembers: [
+          { name: 'Worker', backendType: 'tmux', tmuxPaneId: 'pane-a', runtimePid: 441 },
+        ],
+        invalidateRuntimeSnapshotCaches: () => undefined,
+        loadLiveRuntimeByMember: async () => new Map(),
+      })
+    ).resolves.toEqual({
+      directTmuxRestartPaneId: null,
+      shouldDirectProcessRestart: false,
+    });
+
+    expect(calls.killedPanes).toEqual([]);
+    expect(calls.waitPaneCalls).toEqual([]);
+    expect(calls.warnings).toEqual([
+      expect.stringContaining('pane runtime identity does not match the exact team and member'),
     ]);
   });
 
@@ -140,7 +230,17 @@ describe('TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase', () =>
       'Restart for teammate "Worker" is still waiting for the previous process to exit (222).'
     );
 
-    const panePorts = createPorts({ lingeringPaneIds: ['pane-a'] });
+    const panePorts = createPorts({
+      paneRuntimeInfo: new Map([['pane-a', { panePid: 450, currentCommand: 'node' }]]),
+      processRows: [
+        {
+          pid: 451,
+          ppid: 450,
+          command: 'bun cli.js --team-name team-a --agent-name Worker --agent-id Worker@team-a',
+        },
+      ],
+      lingeringPaneIds: ['pane-a'],
+    });
     const preparePaneRestart = createPreparePrimaryOwnedMemberRestartRuntimeUseCase(
       panePorts.ports
     );
@@ -208,7 +308,7 @@ describe('TeamProvisioningPreparePrimaryOwnedMemberRestartRuntimeUseCase', () =>
 
   it('honors stale-run guards after live runtime loading before stop attempts', async () => {
     const { calls, ports } = createPorts({
-      paneRuntimeInfo: new Map([['pane-a', { currentCommand: 'node' }]]),
+      paneRuntimeInfo: new Map([['pane-a', { panePid: 460, currentCommand: 'node' }]]),
     });
     const prepareRestartRuntime = createPreparePrimaryOwnedMemberRestartRuntimeUseCase(ports);
     let current = true;

@@ -234,11 +234,7 @@ export class ReviewDecisionStore {
     return path.join(this.getV2DirPath(teamName, scopeKey), `${scopeHash}.json`);
   }
 
-  private getConflictCandidateDir(
-    teamName: string,
-    scopeKey: string,
-    scopeToken: string
-  ): string {
+  private getConflictCandidateDir(teamName: string, scopeKey: string, scopeToken: string): string {
     const scopeHash = createHash('sha256').update(scopeToken).digest('hex');
     return this.getConflictCandidateDirByScopeHash(teamName, scopeKey, scopeHash);
   }
@@ -451,9 +447,9 @@ export class ReviewDecisionStore {
       const { beforeBlob, afterBlob, fileRef, ...metadata } = candidate;
       return {
         ...metadata,
-        beforeContent: textBlobs[beforeBlob]!,
-        afterContent: afterBlob === null ? null : textBlobs[afterBlob]!,
-        ...(fileRef ? { file: fileSummaryBlobs[fileRef]! } : {}),
+        beforeContent: textBlobs[beforeBlob],
+        afterContent: afterBlob === null ? null : textBlobs[afterBlob],
+        ...(fileRef ? { file: fileSummaryBlobs[fileRef] } : {}),
       } as ReviewDiskUndoSnapshot;
     };
     const decodeAction = (value: unknown): ReviewUndoAction | null => {
@@ -486,7 +482,7 @@ export class ReviewDecisionStore {
         action: {
           ...actionMetadata,
           snapshot,
-          ...(fileRef ? { file: fileSummaryBlobs[fileRef]! } : {}),
+          ...(fileRef ? { file: fileSummaryBlobs[fileRef] } : {}),
         },
       } as ReviewUndoAction;
     };
@@ -509,7 +505,10 @@ export class ReviewDecisionStore {
   }
 
   private getConflictCandidateIdentityPayload(
-    candidate: Omit<StoredReviewDecisionConflictCandidateV1, 'version' | 'id' | 'capturedAt' | 'observedCurrentRevision'>
+    candidate: Omit<
+      StoredReviewDecisionConflictCandidateV1,
+      'version' | 'id' | 'capturedAt' | 'observedCurrentRevision'
+    >
   ): object {
     return {
       scopeKey: candidate.scopeKey,
@@ -551,9 +550,9 @@ export class ReviewDecisionStore {
       typeof candidate.capturedAt !== 'string' ||
       !Number.isFinite(Date.parse(candidate.capturedAt)) ||
       !Number.isSafeInteger(candidate.expectedRevision) ||
-      (candidate.expectedRevision as number) < 0 ||
+      candidate.expectedRevision! < 0 ||
       !Number.isSafeInteger(candidate.observedCurrentRevision) ||
-      (candidate.observedCurrentRevision as number) < 0 ||
+      candidate.observedCurrentRevision! < 0 ||
       !this.isDecisionRecord(candidate.hunkDecisions) ||
       !this.isDecisionRecord(candidate.fileDecisions) ||
       !this.isContextHashRecord(candidate.hunkContextHashesByFile)
@@ -574,14 +573,14 @@ export class ReviewDecisionStore {
     const identityPayload = this.getConflictCandidateIdentityPayload({
       scopeKey,
       scopeTokenHash: expectedScopeTokenHash,
-      expectedRevision: candidate.expectedRevision as number,
+      expectedRevision: candidate.expectedRevision!,
       hunkDecisions: candidate.hunkDecisions,
       fileDecisions: candidate.fileDecisions,
       hunkContextHashesByFile: candidate.hunkContextHashesByFile,
-      reviewActionHistory: candidate.reviewActionHistory as StoredReviewUndoActionV6[],
-      reviewRedoHistory: candidate.reviewRedoHistory as StoredReviewRedoActionV6[],
-      textBlobs: candidate.textBlobs as Record<string, string>,
-      fileSummaryBlobs: candidate.fileSummaryBlobs as Record<string, FileChangeSummary>,
+      reviewActionHistory: candidate.reviewActionHistory!,
+      reviewRedoHistory: candidate.reviewRedoHistory!,
+      textBlobs: candidate.textBlobs!,
+      fileSummaryBlobs: candidate.fileSummaryBlobs!,
     });
     const expectedId = createHash('sha256').update(JSON.stringify(identityPayload)).digest('hex');
     if (candidate.id !== expectedId) {
@@ -600,10 +599,9 @@ export class ReviewDecisionStore {
     return {
       id: candidate.id,
       capturedAt: candidate.capturedAt,
-      origin:
-        sourceScopeHash === currentScopeHash ? 'current-snapshot' : 'prior-snapshot',
-      expectedRevision: candidate.expectedRevision as number,
-      observedCurrentRevision: candidate.observedCurrentRevision as number,
+      origin: sourceScopeHash === currentScopeHash ? 'current-snapshot' : 'prior-snapshot',
+      expectedRevision: candidate.expectedRevision!,
+      observedCurrentRevision: candidate.observedCurrentRevision!,
       state,
     };
   }
@@ -644,10 +642,9 @@ export class ReviewDecisionStore {
       try {
         parsed = JSON.parse(raw) as unknown;
       } catch (error) {
-        throw new InvalidReviewDecisionDataError(
-          'Corrupted review decision conflict candidate',
-          { cause: error }
-        );
+        throw new InvalidReviewDecisionDataError('Corrupted review decision conflict candidate', {
+          cause: error,
+        });
       }
       const candidate = this.parseConflictCandidate(
         parsed,
@@ -698,10 +695,7 @@ export class ReviewDecisionStore {
     const existing = candidates.filter(
       (entry): entry is string => entry !== null && entry !== replacementPath
     );
-    if (
-      !existing.includes(protectedPath) &&
-      existing.length >= MAX_RETAINED_CONFLICT_CANDIDATES
-    ) {
+    if (!existing.includes(protectedPath) && existing.length >= MAX_RETAINED_CONFLICT_CANDIDATES) {
       throw new Error(
         `Too many unresolved review recovery copies (${MAX_RETAINED_CONFLICT_CANDIDATES}). Resolve one before saving another branch.`
       );
@@ -730,10 +724,7 @@ export class ReviewDecisionStore {
     state: ReviewPersistedStateSnapshot,
     replacementPath?: string
   ): Promise<void> {
-    const encodedHistory = this.encodeHistoryV6(
-      state.reviewActionHistory,
-      state.reviewRedoHistory
-    );
+    const encodedHistory = this.encodeHistoryV6(state.reviewActionHistory, state.reviewRedoHistory);
     const scopeTokenHash = createHash('sha256').update(scopeToken).digest('hex');
     const identityFields = {
       scopeKey,
@@ -835,7 +826,7 @@ export class ReviewDecisionStore {
         ...(data as ReviewDecisionsData),
         version: 6,
         scopeKey: data.scopeKey as string,
-        scopeToken: data.scopeToken as string,
+        scopeToken: data.scopeToken!,
         reviewActionHistory: decoded.undo,
         reviewRedoHistory: decoded.redo,
         revision: data.revision as number,
@@ -851,10 +842,7 @@ export class ReviewDecisionStore {
         !this.isReviewActionHistory(data.reviewActionHistory)) ||
       (data.version === 5 && !this.isReviewRedoHistory(data.reviewRedoHistory)) ||
       (data.version === 5 &&
-        !this.hasDisjointReviewActionIds(
-          data.reviewActionHistory as ReviewUndoAction[],
-          data.reviewRedoHistory as ReviewRedoAction[]
-        )) ||
+        !this.hasDisjointReviewActionIds(data.reviewActionHistory!, data.reviewRedoHistory!)) ||
       ((data.version === 4 || data.version === 5) &&
         (!Number.isSafeInteger(data.revision) ||
           (data.revision as number) < 1 ||
@@ -890,8 +878,7 @@ export class ReviewDecisionStore {
         typeof candidate.createdAt !== 'string' ||
         candidate.createdAt.length === 0 ||
         candidate.createdAt.length > 128 ||
-        (candidate.descriptor !== undefined &&
-          !this.isReviewActionDescriptor(candidate.descriptor))
+        (candidate.descriptor !== undefined && !this.isReviewActionDescriptor(candidate.descriptor))
       ) {
         return false;
       }
@@ -947,26 +934,18 @@ export class ReviewDecisionStore {
     switch (candidate.intent) {
       case 'accept-hunk':
       case 'reject-hunk':
-        return (
-          hasSafeFilePath &&
-          hasSafeHunkIndex &&
-          candidate.fileCount === undefined
-        );
+        return hasSafeFilePath && hasSafeHunkIndex && candidate.fileCount === undefined;
       case 'accept-file':
       case 'reject-file':
       case 'restore-file':
       case 'restore-rename':
         return (
-          hasSafeFilePath &&
-          candidate.hunkIndex === undefined &&
-          candidate.fileCount === undefined
+          hasSafeFilePath && candidate.hunkIndex === undefined && candidate.fileCount === undefined
         );
       case 'accept-all':
       case 'reject-all':
         return (
-          candidate.filePath === undefined &&
-          candidate.hunkIndex === undefined &&
-          hasSafeFileCount
+          candidate.filePath === undefined && candidate.hunkIndex === undefined && hasSafeFileCount
         );
       default:
         return false;
@@ -1269,10 +1248,7 @@ export class ReviewDecisionStore {
     expectedScopeKey?: string
   ): Promise<InternalLoadedReviewDecisions | null> {
     if (
-      !(await assertConstrainedPersistenceDirectory(
-        getTeamsBasePath(),
-        path.dirname(filePath)
-      ))
+      !(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), path.dirname(filePath)))
     ) {
       return null;
     }
@@ -1356,9 +1332,7 @@ export class ReviewDecisionStore {
       'mutation-journal',
       scopeKey
     );
-    if (
-      !(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), journalScopeDir))
-    ) {
+    if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), journalScopeDir))) {
       return new Set();
     }
     let entries: string[];
@@ -1432,10 +1406,7 @@ export class ReviewDecisionStore {
     const protectedExistingCount = existingFiles.filter((entry) =>
       protectedPaths.has(entry.filePath)
     ).length;
-    const unprotectedRetention = Math.max(
-      0,
-      MAX_RETAINED_DECISION_SCOPES - protectedExistingCount
-    );
+    const unprotectedRetention = Math.max(0, MAX_RETAINED_DECISION_SCOPES - protectedExistingCount);
     const staleFiles = existingFiles
       .filter((entry) => !protectedPaths.has(entry.filePath))
       .sort((a, b) => b.mtimeMs - a.mtimeMs || a.filePath.localeCompare(b.filePath))
@@ -1490,15 +1461,12 @@ export class ReviewDecisionStore {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
     const currentScopeHash = createHash('sha256').update(scopeToken).digest('hex');
     const conflictScopes = await this.inspectConflictScopes(teamName, scopeKey);
-    const currentRevision = (await this.loadInternal(teamName, scopeKey, scopeToken))?.revision ?? 0;
+    const currentRevision =
+      (await this.loadInternal(teamName, scopeKey, scopeToken))?.revision ?? 0;
     const candidates: T[] = [];
     let quarantinedCount = 0;
     for (const sourceScopeHash of [...conflictScopes.scopeHashes].sort()) {
-      const dirPath = this.getConflictCandidateDirByScopeHash(
-        teamName,
-        scopeKey,
-        sourceScopeHash
-      );
+      const dirPath = this.getConflictCandidateDirByScopeHash(teamName, scopeKey, sourceScopeHash);
       const entries = await fs.promises.readdir(dirPath);
       for (const entry of entries.filter((name) => EXACT_SCOPE_FILE_PATTERN.test(name))) {
         const candidatePath = path.join(dirPath, entry);
@@ -1554,20 +1522,18 @@ export class ReviewDecisionStore {
     scopeToken: string
   ): Promise<ReviewDecisionConflictCandidateSummary[]> {
     return this.mapConflictCandidates(teamName, scopeKey, scopeToken, (candidate) => ({
-        id: candidate.id,
-        capturedAt: candidate.capturedAt,
-        origin: candidate.origin,
-        recoverability:
-          candidate.origin === 'current-snapshot'
-            ? 'recoverable'
-            : 'different-review-snapshot',
-        expectedRevision: candidate.expectedRevision,
-        observedCurrentRevision: candidate.observedCurrentRevision,
-        hunkDecisionCount: Object.keys(candidate.state.hunkDecisions).length,
-        fileDecisionCount: Object.keys(candidate.state.fileDecisions).length,
-        undoDepth: candidate.state.reviewActionHistory.length,
-        redoDepth: candidate.state.reviewRedoHistory.length,
-      }));
+      id: candidate.id,
+      capturedAt: candidate.capturedAt,
+      origin: candidate.origin,
+      recoverability:
+        candidate.origin === 'current-snapshot' ? 'recoverable' : 'different-review-snapshot',
+      expectedRevision: candidate.expectedRevision,
+      observedCurrentRevision: candidate.observedCurrentRevision,
+      hunkDecisionCount: Object.keys(candidate.state.hunkDecisions).length,
+      fileDecisionCount: Object.keys(candidate.state.fileDecisions).length,
+      undoDepth: candidate.state.reviewActionHistory.length,
+      redoDepth: candidate.state.reviewRedoHistory.length,
+    }));
   }
 
   private async locateConflictCandidate(
@@ -1889,16 +1855,11 @@ export class ReviewDecisionStore {
       if (scopeToken) {
         const exactPath = this.getV2FilePath(teamName, scopeKey, scopeToken);
         if (
-          await assertConstrainedPersistenceDirectory(
-            getTeamsBasePath(),
-            path.dirname(exactPath)
-          )
+          await assertConstrainedPersistenceDirectory(getTeamsBasePath(), path.dirname(exactPath))
         ) {
-          await unlinkPathDurably(exactPath).catch(
-            (error: NodeJS.ErrnoException) => {
-              if (error.code !== 'ENOENT') throw error;
-            }
-          );
+          await unlinkPathDurably(exactPath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+          });
         }
         const legacyPath = this.getLegacyFilePath(teamName, scopeKey);
         let legacy;

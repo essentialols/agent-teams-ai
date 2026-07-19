@@ -187,10 +187,8 @@ async function withReviewDecisionPersistenceLock<T>(
 
   await previous.catch(() => undefined);
   try {
-    return await withReviewPersistenceLogicalScopeLock(
-      teamName,
-      persistenceScope.scopeKey,
-      () => withReviewPersistenceScopeLock(teamName, persistenceScope, operation)
+    return await withReviewPersistenceLogicalScopeLock(teamName, persistenceScope.scopeKey, () =>
+      withReviewPersistenceScopeLock(teamName, persistenceScope, operation)
     );
   } finally {
     release();
@@ -1334,7 +1332,7 @@ async function handleApplyDecisions(
       }
       if (
         !Number.isSafeInteger(request.expectedDecisionRevision) ||
-        (request.expectedDecisionRevision as number) < 0
+        request.expectedDecisionRevision! < 0
       ) {
         throw new Error('Durable review mutation requires an exact decision revision');
       }
@@ -1347,7 +1345,7 @@ async function handleApplyDecisions(
         validatedDecisions as (FileReviewDecision & { reviewKey: string })[],
         fileContents,
         request.persistedState,
-        request.expectedDecisionRevision as number
+        request.expectedDecisionRevision!
       );
     }
 
@@ -2296,10 +2294,8 @@ function isGenericReviewSnapshotContainedByCurrent(
   ) {
     const action = current.reviewActionHistory[index];
     if (!action) return false;
-    const previous = buildReviewUndoDecisionState(
-      action,
-      expectedDecisions,
-      (filePath) => getAuthoritativeReviewedFile(authorization, filePath)
+    const previous = buildReviewUndoDecisionState(action, expectedDecisions, (filePath) =>
+      getAuthoritativeReviewedFile(authorization, filePath)
     );
     if (!previous) return false;
     expectedDecisions = previous;
@@ -2308,16 +2304,11 @@ function isGenericReviewSnapshotContainedByCurrent(
     expected: Readonly<Record<string, T>>,
     observed: Readonly<Record<string, T>>
   ): boolean =>
-    Object.entries(expected).every(([key, value]) =>
-      isDurableReviewEqual(value, observed[key])
-    );
+    Object.entries(expected).every(([key, value]) => isDurableReviewEqual(value, observed[key]));
   return (
     isDurableReviewEqual(incoming.hunkDecisions, expectedDecisions.hunkDecisions) &&
     isDurableReviewEqual(incoming.fileDecisions, expectedDecisions.fileDecisions) &&
-    recordIsContained(
-      incoming.hunkContextHashesByFile ?? {},
-      current.hunkContextHashesByFile ?? {}
-    )
+    recordIsContained(incoming.hunkContextHashesByFile ?? {}, current.hunkContextHashesByFile ?? {})
   );
 }
 
@@ -2331,6 +2322,19 @@ function parseReviewScopeKey(teamName: string, scopeKey: string): ReviewFileScop
   throw new Error('Review decision scope cannot authorize history');
 }
 
+function isAuthorizedReviewDecisionKey(
+  canonicalFiles: ReadonlyMap<string, FileChangeSummary>,
+  key: string,
+  hunk: boolean
+): boolean {
+  if (!hunk) return canonicalFiles.has(key);
+  for (const reviewKey of canonicalFiles.keys()) {
+    const prefix = `${reviewKey}:`;
+    if (key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length))) return true;
+  }
+  return false;
+}
+
 function assertReviewCandidateWithinAuthorization(
   state: ReviewPersistedStateSnapshot,
   authorization: ReviewPathAuthorization
@@ -2342,20 +2346,14 @@ function assertReviewCandidateWithinAuthorization(
   for (const file of authorization.reviewedFiles.values()) {
     canonicalFiles.set(file.changeKey ?? file.filePath, file);
   }
-  const isAuthorizedDecisionKey = (key: string, hunk: boolean): boolean => {
-    if (!hunk) return canonicalFiles.has(key);
-    for (const reviewKey of canonicalFiles.keys()) {
-      const prefix = `${reviewKey}:`;
-      if (key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length))) return true;
-    }
-    return false;
-  };
   if (
-    Object.keys(state.hunkDecisions).some((key) => !isAuthorizedDecisionKey(key, true)) ||
-    Object.keys(state.fileDecisions).some((key) => !isAuthorizedDecisionKey(key, false)) ||
-    Object.keys(state.hunkContextHashesByFile ?? {}).some(
-      (key) => !canonicalFiles.has(key)
-    )
+    Object.keys(state.hunkDecisions).some(
+      (key) => !isAuthorizedReviewDecisionKey(canonicalFiles, key, true)
+    ) ||
+    Object.keys(state.fileDecisions).some(
+      (key) => !isAuthorizedReviewDecisionKey(canonicalFiles, key, false)
+    ) ||
+    Object.keys(state.hunkContextHashesByFile ?? {}).some((key) => !canonicalFiles.has(key))
   ) {
     throw new Error('Review recovery branch contains decisions outside the active review');
   }
@@ -2368,7 +2366,7 @@ function assertReviewCandidateWithinAuthorization(
     if (action.kind === 'hunk') {
       const file = getAuthoritativeReviewedFile(authorization, action.action.filePath);
       const key = `${file.changeKey ?? file.filePath}:${action.action.originalIndex}`;
-      if (!isAuthorizedDecisionKey(key, true)) {
+      if (!isAuthorizedReviewDecisionKey(canonicalFiles, key, true)) {
         throw new Error('Review recovery branch contains an unauthorized hunk action');
       }
       continue;
@@ -2376,10 +2374,10 @@ function assertReviewCandidateWithinAuthorization(
     if (action.kind === 'bulk') {
       if (
         Object.keys(action.decisionSnapshot.hunkDecisions).some(
-          (key) => !isAuthorizedDecisionKey(key, true)
+          (key) => !isAuthorizedReviewDecisionKey(canonicalFiles, key, true)
         ) ||
         Object.keys(action.decisionSnapshot.fileDecisions).some(
-          (key) => !isAuthorizedDecisionKey(key, false)
+          (key) => !isAuthorizedReviewDecisionKey(canonicalFiles, key, false)
         )
       ) {
         throw new Error('Review recovery branch contains an unauthorized bulk snapshot');
@@ -2409,8 +2407,9 @@ function assertReviewCandidateWithinAuthorization(
       fileDecisions: state.fileDecisions,
     };
     let workingHistory = [...undoHistory];
-    for (let index = (state.reviewRedoHistory?.length ?? 0) - 1; index >= 0; index--) {
-      const redo = state.reviewRedoHistory![index]!;
+    const redoHistory = state.reviewRedoHistory ?? [];
+    for (let index = redoHistory.length - 1; index >= 0; index--) {
+      const redo = redoHistory[index];
       const nextHistory = [...workingHistory, redo.action];
       assertExactGenericReviewHistoryTransition(
         {
@@ -2466,14 +2465,6 @@ function assertExactGenericReviewHistoryTransition(
   const resolveHunkKey = (filePath: string, originalIndex: number): string => {
     const file = getAuthoritativeReviewedFile(authorization, filePath);
     return `${file.changeKey ?? file.filePath}:${originalIndex}`;
-  };
-  const isAuthorizedDecisionKey = (key: string, hunk: boolean): boolean => {
-    if (!hunk) return canonicalFiles.has(key);
-    for (const reviewKey of canonicalFiles.keys()) {
-      const prefix = `${reviewKey}:`;
-      if (key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length))) return true;
-    }
-    return false;
   };
   const resolveHunkReviewKey = (key: string): string | null => {
     for (const reviewKey of canonicalFiles.keys()) {
@@ -2537,10 +2528,14 @@ function assertExactGenericReviewHistoryTransition(
     if (
       changedHunks.length + changedFiles.length === 0 ||
       changedHunks.some(
-        (key) => !isAuthorizedDecisionKey(key, true) || working.hunkDecisions[key] !== 'accepted'
+        (key) =>
+          !isAuthorizedReviewDecisionKey(canonicalFiles, key, true) ||
+          working.hunkDecisions[key] !== 'accepted'
       ) ||
       changedFiles.some(
-        (key) => !isAuthorizedDecisionKey(key, false) || working.fileDecisions[key] !== 'accepted'
+        (key) =>
+          !isAuthorizedReviewDecisionKey(canonicalFiles, key, false) ||
+          working.fileDecisions[key] !== 'accepted'
       )
     ) {
       throw new Error('Generic bulk history does not match an authoritative Accept transition');
@@ -2558,7 +2553,7 @@ function assertExactGenericReviewHistoryTransition(
             affectedReviewKeys.size === 1 &&
             normalizeReviewPathForIdentity(action.descriptor.filePath) ===
               normalizeReviewPathForIdentity(
-                canonicalFiles.get([...affectedReviewKeys][0]!)?.filePath ?? ''
+                canonicalFiles.get([...affectedReviewKeys][0])?.filePath ?? ''
               );
       if (!descriptorMatches) {
         throw new Error('Generic bulk history descriptor does not match its Accept transition');
@@ -3751,8 +3746,7 @@ function assertRecoverableJournalContent(
 ): void {
   if (
     record.persistedState &&
-    (!Number.isSafeInteger(record.expectedDecisionRevision) ||
-      (record.expectedDecisionRevision as number) < 0)
+    (!Number.isSafeInteger(record.expectedDecisionRevision) || record.expectedDecisionRevision! < 0)
   ) {
     throw new Error('Review mutation recovery revision is unavailable');
   }
@@ -4069,11 +4063,7 @@ async function handleLoadDecisionConflictCandidates(
         requireIdentity: true,
       });
       await recoverReviewMutationJournal(teamName, persistenceScope);
-      return reviewDecisionStore.loadConflictCandidateSummaries(
-        teamName,
-        scopeKey,
-        scopeToken
-      );
+      return reviewDecisionStore.loadConflictCandidateSummaries(teamName, scopeKey, scopeToken);
     });
   });
 }
@@ -4135,7 +4125,7 @@ async function handleSaveDecisions(
   reviewRedoHistory: ReviewRedoAction[] = []
 ): Promise<IpcResult<SaveReviewDecisionsResult>> {
   return wrapReviewHandler('saveDecisions', async () => {
-    if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0) {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision! < 0) {
       throw new Error('Saving review decisions requires an exact decision revision');
     }
     const persistenceScope = { scopeKey, scopeToken };
@@ -4169,13 +4159,7 @@ async function handleSaveDecisions(
         const { authorization } = await resolveReviewPathAuthorization(scope, {
           requireIdentity: true,
         });
-        if (
-          isGenericReviewSnapshotContainedByCurrent(
-            incomingState,
-            current,
-            authorization
-          )
-        ) {
+        if (isGenericReviewSnapshotContainedByCurrent(incomingState, current, authorization)) {
           if (!current) {
             throw new Error('Canonical review state disappeared during retry reconciliation');
           }
@@ -4202,7 +4186,7 @@ async function handleSaveDecisions(
         const revision = await reviewDecisionStore.save(teamName, scopeKey, {
           scopeToken,
           ...boundCandidate,
-          expectedRevision: expectedRevision as number,
+          expectedRevision: expectedRevision!,
         });
         return { revision };
       }
@@ -4236,7 +4220,7 @@ async function handleSaveDecisions(
       const revision = await reviewDecisionStore.save(teamName, scopeKey, {
         scopeToken,
         ...boundState,
-        expectedRevision: expectedRevision as number,
+        expectedRevision,
       });
       return { revision };
     });
@@ -4344,9 +4328,7 @@ async function handleLoadDraftHistoryConflictCandidates(
         candidates.map(async (candidate) => {
           const isCurrentReviewedFile =
             path.isAbsolute(path.normalize(candidate.filePath)) &&
-            authorization.reviewedFiles?.has(
-              normalizeReviewPathForIdentity(candidate.filePath)
-            );
+            authorization.reviewedFiles?.has(normalizeReviewPathForIdentity(candidate.filePath));
           if (candidate.origin === 'prior-snapshot' && !isCurrentReviewedFile) {
             return { ...candidate, recoverability: 'file-not-in-current-review' as const };
           }

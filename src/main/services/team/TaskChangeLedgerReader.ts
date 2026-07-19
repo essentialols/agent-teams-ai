@@ -1415,7 +1415,7 @@ export class TaskChangeLedgerReader {
       for (;;) {
         const index = nextIndex++;
         if (index >= events.length) return;
-        const event = events[index]!;
+        const event = events[index];
         const beforeContent = await this.readContentRef(projectDir, event.before);
         const afterContent = await this.readContentRef(projectDir, event.after);
         snippets[index] = this.eventToSnippet(event, beforeContent, afterContent);

@@ -46,16 +46,20 @@ interface StoredReviewDraftHistory {
   updatedAt: string;
 }
 
-interface StoredReviewDraftHistoryConflictCandidateV1
-  extends Omit<ReviewDraftHistoryConflictCandidate, 'origin'> {
+interface StoredReviewDraftHistoryConflictCandidateV1 extends Omit<
+  ReviewDraftHistoryConflictCandidate,
+  'origin'
+> {
   version: 1;
   scopeKey: string;
   scopeTokenHash: string;
   entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>;
 }
 
-interface StoredReviewDraftHistoryConflictCandidateV2
-  extends Omit<ReviewDraftHistoryConflictCandidate, 'origin'> {
+interface StoredReviewDraftHistoryConflictCandidateV2 extends Omit<
+  ReviewDraftHistoryConflictCandidate,
+  'origin'
+> {
   version: 2;
   scopeKey: string;
   scopeTokenHash: string;
@@ -240,11 +244,7 @@ export class ReviewDraftHistoryStore {
     return path.join(this.getScopeDir(teamName, scopeKey), `${getScopeTokenHash(scopeToken)}.json`);
   }
 
-  private getConflictCandidateDir(
-    teamName: string,
-    scopeKey: string,
-    scopeToken: string
-  ): string {
+  private getConflictCandidateDir(teamName: string, scopeKey: string, scopeToken: string): string {
     return this.getConflictCandidateDirByScopeHash(
       teamName,
       scopeKey,
@@ -384,10 +384,7 @@ export class ReviewDraftHistoryStore {
   ): Promise<StoredReviewDraftHistory | null> {
     const filePath = this.getFilePath(teamName, scopeKey, scopeToken);
     if (
-      !(await assertConstrainedPersistenceDirectory(
-        getTeamsBasePath(),
-        path.dirname(filePath)
-      ))
+      !(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), path.dirname(filePath)))
     ) {
       return null;
     }
@@ -577,31 +574,29 @@ export class ReviewDraftHistoryStore {
       candidate.filePath.length === 0 ||
       candidate.filePath.length > MAX_FILE_PATH_LENGTH ||
       candidate.filePath.includes('\0') ||
+      typeof candidate.expectedRevision !== 'number' ||
       !Number.isSafeInteger(candidate.expectedRevision) ||
-      (candidate.expectedRevision as number) < 0 ||
-      ((candidate.expectedRevision as number) === 0
+      candidate.expectedRevision < 0 ||
+      (candidate.expectedRevision === 0
         ? candidate.expectedGeneration !== null
         : !isValidGeneration(candidate.expectedGeneration)) ||
+      typeof candidate.observedCurrentRevision !== 'number' ||
       !Number.isSafeInteger(candidate.observedCurrentRevision) ||
-      (candidate.observedCurrentRevision as number) < 0 ||
-      ((candidate.observedCurrentRevision as number) === 0
+      candidate.observedCurrentRevision < 0 ||
+      (candidate.observedCurrentRevision === 0
         ? candidate.observedCurrentGeneration !== null
         : !isValidGeneration(candidate.observedCurrentGeneration)) ||
       (isTombstone
         ? candidate.expectedRevision !== 0 || candidate.expectedGeneration !== null
-        : !candidate.entry ||
-          typeof candidate.entry !== 'object' ||
-          Array.isArray(candidate.entry))
+        : !candidate.entry || typeof candidate.entry !== 'object' || Array.isArray(candidate.entry))
     ) {
       throw new InvalidReviewDraftHistoryError('Invalid review draft conflict candidate');
     }
-    const entry = isTombstone
-      ? null
-      : (candidate.entry as Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>);
+    const entry = isTombstone ? null : candidate.entry!;
     if (entry) {
       this.assertEntry({
         ...entry,
-        expectedRevision: candidate.expectedRevision as number,
+        expectedRevision: candidate.expectedRevision,
         expectedGeneration: candidate.expectedGeneration as string | null,
       });
       if (candidate.filePath !== entry.filePath) {
@@ -611,7 +606,7 @@ export class ReviewDraftHistoryStore {
     const identity = this.getConflictCandidateIdentityPayload({
       scopeKey,
       scopeTokenHash,
-      expectedRevision: candidate.expectedRevision as number,
+      expectedRevision: candidate.expectedRevision,
       expectedGeneration: candidate.expectedGeneration as string | null,
       filePath: candidate.filePath,
       entry,
@@ -623,12 +618,11 @@ export class ReviewDraftHistoryStore {
     return {
       id: candidate.id,
       capturedAt: candidate.capturedAt,
-      origin:
-        sourceScopeHash === currentScopeHash ? 'current-snapshot' : 'prior-snapshot',
+      origin: sourceScopeHash === currentScopeHash ? 'current-snapshot' : 'prior-snapshot',
       filePath: candidate.filePath,
-      expectedRevision: candidate.expectedRevision as number,
+      expectedRevision: candidate.expectedRevision,
       expectedGeneration: candidate.expectedGeneration as string | null,
-      observedCurrentRevision: candidate.observedCurrentRevision as number,
+      observedCurrentRevision: candidate.observedCurrentRevision,
       observedCurrentGeneration: candidate.observedCurrentGeneration as string | null,
       entry,
     };
@@ -722,10 +716,7 @@ export class ReviewDraftHistoryStore {
     const existing = candidates.filter(
       (entry): entry is string => entry !== null && entry !== replacementPath
     );
-    if (
-      !existing.includes(protectedPath) &&
-      existing.length >= MAX_CONFLICT_CANDIDATES_PER_SCOPE
-    ) {
+    if (!existing.includes(protectedPath) && existing.length >= MAX_CONFLICT_CANDIDATES_PER_SCOPE) {
       throw new Error(
         `Too many unresolved manual-edit recovery copies (${MAX_CONFLICT_CANDIDATES_PER_SCOPE}). Resolve one before saving another branch.`
       );
@@ -754,11 +745,7 @@ export class ReviewDraftHistoryStore {
     observedCurrentGeneration: string | null,
     replacementPath?: string
   ): Promise<ReviewDraftHistoryConflictCandidate> {
-    const {
-      expectedRevision,
-      expectedGeneration,
-      ...entry
-    } = input;
+    const { expectedRevision, expectedGeneration, ...entry } = input;
     const scopeTokenHash = getScopeTokenHash(scopeToken);
     const identity = this.getConflictCandidateIdentityPayload({
       scopeKey,
@@ -844,12 +831,7 @@ export class ReviewDraftHistoryStore {
       entry: null,
     };
     const serialized = JSON.stringify(candidate);
-    const candidatePath = this.getConflictCandidatePath(
-      teamName,
-      scopeKey,
-      scopeToken,
-      id
-    );
+    const candidatePath = this.getConflictCandidatePath(teamName, scopeKey, scopeToken, id);
     await this.ensureConflictCandidateDir(teamName, scopeKey, scopeToken);
     await this.assertConflictCandidateCapacity(
       teamName,
@@ -889,11 +871,7 @@ export class ReviewDraftHistoryStore {
     const candidates: T[] = [];
     let quarantinedCount = 0;
     for (const sourceScopeHash of [...conflictScopes.scopeHashes].sort()) {
-      const dirPath = this.getConflictCandidateDirByScopeHash(
-        teamName,
-        scopeKey,
-        sourceScopeHash
-      );
+      const dirPath = this.getConflictCandidateDirByScopeHash(teamName, scopeKey, sourceScopeHash);
       const entries = await fs.promises.readdir(dirPath);
       for (const entry of entries.filter((name) => /^[a-f0-9]{64}\.json$/.test(name))) {
         const candidatePath = path.join(dirPath, entry);
@@ -956,17 +934,17 @@ export class ReviewDraftHistoryStore {
     scopeToken: string
   ): Promise<ReviewDraftHistoryConflictCandidateSummary[]> {
     return this.mapConflictCandidates(teamName, scopeKey, scopeToken, (candidate) => ({
-        id: candidate.id,
-        capturedAt: candidate.capturedAt,
-        origin: candidate.origin,
-        recoverability: 'recoverable',
-        filePath: candidate.filePath,
-        expectedRevision: candidate.expectedRevision,
-        expectedGeneration: candidate.expectedGeneration,
-        observedCurrentRevision: candidate.observedCurrentRevision,
-        observedCurrentGeneration: candidate.observedCurrentGeneration,
-        entryRevision: candidate.entry?.revision ?? null,
-      }));
+      id: candidate.id,
+      capturedAt: candidate.capturedAt,
+      origin: candidate.origin,
+      recoverability: 'recoverable',
+      filePath: candidate.filePath,
+      expectedRevision: candidate.expectedRevision,
+      expectedGeneration: candidate.expectedGeneration,
+      observedCurrentRevision: candidate.observedCurrentRevision,
+      observedCurrentGeneration: candidate.observedCurrentGeneration,
+      entryRevision: candidate.entry?.revision ?? null,
+    }));
   }
 
   private async locateConflictCandidate(
@@ -1312,18 +1290,13 @@ export class ReviewDraftHistoryStore {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
     const filePath = this.getFilePath(teamName, scopeKey, scopeToken);
     if (
-      !(await assertConstrainedPersistenceDirectory(
-        getTeamsBasePath(),
-        path.dirname(filePath)
-      ))
+      !(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), path.dirname(filePath)))
     ) {
       return;
     }
-    await unlinkPathDurably(filePath).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-      }
-    );
+    await unlinkPathDurably(filePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
   }
 
   async clearUnreadableScope(

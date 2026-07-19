@@ -271,11 +271,11 @@ export function createTeamProvisioningCancellationBoundary<
         aliveRunId,
         primaryRun?.runId ?? null,
       ].some((ownerRunId) => ownerRunId !== null && ownerRunId !== run.runId);
+      const stops: Promise<void>[] = [];
+      if (primaryRun?.providerId === 'opencode' && primaryRun.runId === run.runId) {
+        stops.push(ports.stopOpenCodeRuntimeAdapterTeam(run.teamName, run.runId));
+      }
       if (!hasConflictingOwner) {
-        const stops: Promise<void>[] = [];
-        if (primaryRun?.providerId === 'opencode' && primaryRun.runId === run.runId) {
-          stops.push(ports.stopOpenCodeRuntimeAdapterTeam(run.teamName, run.runId));
-        }
         // Secondary runtime registration happens before adapter.launch, so the
         // secondary-run store is the cleanup ownership handoff for every lane
         // that can have spawned. Do not wait for primary/tracked ownership: an
@@ -287,12 +287,12 @@ export function createTeamProvisioningCancellationBoundary<
         if (ports.hasSecondaryRuntimeRuns(run.teamName)) {
           stops.push(ports.stopMixedSecondaryRuntimeLanes(run.teamName));
         }
-        if (stops.length > 0) {
-          const stopResults = await Promise.allSettled(stops);
-          failedStop = stopResults.find(
-            (result): result is PromiseRejectedResult => result.status === 'rejected'
-          );
-        }
+      }
+      if (stops.length > 0) {
+        const stopResults = await Promise.allSettled(stops);
+        failedStop = stopResults.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected'
+        );
       }
       try {
         const progress = ports.updateProgress(run, 'cancelled', 'Provisioning cancelled by user');

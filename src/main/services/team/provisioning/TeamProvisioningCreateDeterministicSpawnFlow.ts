@@ -319,6 +319,7 @@ export async function runDeterministicCreateSpawnFlow<
   let mcpConfigPath: string;
   let bootstrapSpecPath: string;
   let bootstrapUserPromptPath: string | null = null;
+  let runtimeArgsPlan: TeamRuntimeLaunchArgsPlan;
   try {
     // Pre-save our meta files before native app-managed briefing generation.
     // member_briefing intentionally reads canonical team metadata/inboxes, so
@@ -353,6 +354,17 @@ export async function runDeterministicCreateSpawnFlow<
     mcpConfigPath = materializedBootstrapFiles.mcpConfigPath;
     bootstrapSpecPath = materializedBootstrapFiles.bootstrapSpecPath;
     bootstrapUserPromptPath = materializedBootstrapFiles.bootstrapUserPromptPath;
+    const extraCliArgs = parseCliArgs(request.extraCliArgs);
+    runtimeArgsPlan = await ports.buildTeamRuntimeLaunchArgsPlan({
+      teamName: request.teamName,
+      providerId: resolvedProviderId,
+      launchIdentity,
+      envResolution: { ...provisioningEnv, providerArgs: providerArgsForLaunch },
+      extraArgs: extraCliArgs,
+      inheritedProviderArgs: inheritedProviderArgsForLaunch,
+      includeAnthropicHelper: resolvedProviderId === 'anthropic',
+      contextLabel: 'Team create launch',
+    });
   } catch (error) {
     await cleanupDeterministicCreateMaterializationFailure(run, request, provisioningEnv, ports);
     throw error;
@@ -362,17 +374,6 @@ export async function runDeterministicCreateSpawnFlow<
     request.model,
     launchIdentity
   );
-  const extraCliArgs = parseCliArgs(request.extraCliArgs);
-  const runtimeArgsPlan = await ports.buildTeamRuntimeLaunchArgsPlan({
-    teamName: request.teamName,
-    providerId: resolvedProviderId,
-    launchIdentity,
-    envResolution: { ...provisioningEnv, providerArgs: providerArgsForLaunch },
-    extraArgs: extraCliArgs,
-    inheritedProviderArgs: inheritedProviderArgsForLaunch,
-    includeAnthropicHelper: resolvedProviderId === 'anthropic',
-    contextLabel: 'Team create launch',
-  });
   const spawnArgs = buildDeterministicCreateSpawnArgs({
     mcpConfigPath,
     bootstrapSpecPath,

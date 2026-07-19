@@ -7,6 +7,7 @@ import {
   cleanupDeterministicLaunchSpawnFailure,
   type DeterministicLaunchSpawnFlowRun,
   isDeterministicLaunchSpawnCancelled,
+  persistDeterministicLaunchMetadata,
   registerDeterministicLaunchChildHandlers,
 } from '../TeamProvisioningLaunchDeterministicSpawnFlow';
 import { buildLaunchSyntheticRequest } from '../TeamProvisioningLaunchTeamFlow';
@@ -149,7 +150,7 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
     });
   });
 
-  it('persists normalized synthetic metadata when the relaunch request is sparse', () => {
+  it('persists normalized synthetic metadata and tombstones when the relaunch request is sparse', async () => {
     const sparseRequest: TeamLaunchRequest = {
       teamName: 'demo',
       cwd: '/repo',
@@ -160,29 +161,50 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
       members: syntheticRequest.members,
       configRaw: '{}',
     });
+    const writeMeta = vi.fn(async () => undefined);
+    const writeMembers = vi.fn(async () => undefined);
+    const removedAt = Date.parse('2026-07-14T17:00:00.000Z');
 
-    expect(
-      buildLaunchTeamMetaPayload({
+    await persistDeterministicLaunchMetadata(
+      {
         request: sparseRequest,
         syntheticRequest: normalizedSyntheticRequest,
         launchIdentity,
-        nowMs: 123,
+        allEffectiveMemberSpecs: normalizedSyntheticRequest.members,
+      },
+      {
+        teamMetaStore: { writeMeta },
+        membersMetaStore: {
+          getMembers: vi.fn(async () => [{ name: 'builder', role: 'Removed builder', removedAt }]),
+          writeMembers,
+        },
+        nowMs: () => 123,
+      }
+    );
+
+    expect(writeMeta).toHaveBeenCalledWith(
+      'demo',
+      expect.objectContaining({
+        cwd: '/repo',
+        prompt: 'resume work',
+        providerId: 'codex',
+        providerBackendId: 'codex-native',
+        model: 'gpt-5',
+        effort: 'high',
+        fastMode: 'inherit',
+        skipPermissions: false,
+        worktree: 'feature-a',
+        extraCliArgs: '--flag',
+        limitContext: true,
+        launchIdentity,
+        createdAt: 123,
       })
-    ).toMatchObject({
-      cwd: '/repo',
-      prompt: 'resume work',
-      providerId: 'codex',
-      providerBackendId: 'codex-native',
-      model: 'gpt-5',
-      effort: 'high',
-      fastMode: 'inherit',
-      skipPermissions: false,
-      worktree: 'feature-a',
-      extraCliArgs: '--flag',
-      limitContext: true,
-      launchIdentity,
-      createdAt: 123,
-    });
+    );
+    expect(writeMembers).toHaveBeenCalledWith(
+      'demo',
+      [{ name: 'builder', role: 'Removed builder', removedAt }],
+      { providerBackendId: undefined }
+    );
   });
 
   it('centralizes deterministic launch cancellation decisions', () => {

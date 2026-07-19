@@ -223,6 +223,39 @@ describe('TeamProvisioningConfigMaintenance', () => {
     expect(logs.warn).toEqual([]);
   });
 
+  it('retains removed-member tombstones when launch persistence rewrites members metadata', async () => {
+    const writeMembers = vi.fn(async () => undefined);
+    const removedAt = Date.parse('2026-07-14T17:00:00.000Z');
+    const { maintenance } = createHarness({
+      metaMembers: [
+        { name: 'Builder', role: 'Removed builder', removedAt },
+        { name: 'Reviewer', role: 'Existing reviewer' },
+      ],
+      writeMembers,
+    });
+
+    await maintenance.persistMembersMeta(
+      'launch-team',
+      makeRequest([
+        { name: 'builder', role: 'Stale builder' },
+        { name: 'Reviewer', role: 'Current reviewer' },
+      ])
+    );
+
+    expect(writeMembers).toHaveBeenCalledWith(
+      'launch-team',
+      [
+        expect.objectContaining({
+          name: 'Reviewer',
+          role: 'Current reviewer',
+          joinedAt: 123_456,
+        }),
+        { name: 'Builder', role: 'Removed builder', removedAt },
+      ],
+      { providerBackendId: undefined }
+    );
+  });
+
   it('logs and suppresses members.meta.json write errors', async () => {
     const writeMembers = vi.fn(async () => {
       throw new Error('readonly');

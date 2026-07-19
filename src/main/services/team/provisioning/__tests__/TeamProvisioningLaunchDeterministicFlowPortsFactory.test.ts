@@ -95,6 +95,7 @@ class BoundCallbackHost {
     writeMeta: vi.fn(async () => undefined),
   };
   readonly membersMetaStore = {
+    getMembers: vi.fn(async () => []),
     writeMembers: vi.fn(async () => undefined),
   };
 

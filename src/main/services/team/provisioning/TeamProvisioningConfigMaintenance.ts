@@ -6,6 +6,7 @@ import {
   collectConfigLaunchBaseNamesFromConfigMembers,
   collectConfigLaunchBaseNamesFromMetaMembers,
   getPrelaunchConfigBackupPath,
+  mergeMembersMetaForLaunch,
   planCliAutoSuffixedConfigMemberCleanup,
   planCliAutoSuffixedMetaMemberCleanup,
   planTeamConfigLaunchNormalization,
@@ -330,11 +331,15 @@ export class TeamProvisioningConfigMaintenance {
     const joinedAt = this.options.ports.now();
 
     try {
-      const membersToWrite = buildMembersMetaWritePayload(
-        teammateMembers.map((member) => ({
-          ...member,
-          joinedAt,
-        }))
+      const existingMembers = await this.options.ports.membersMetaStore.getMembers(teamName);
+      const membersToWrite = mergeMembersMetaForLaunch(
+        buildMembersMetaWritePayload(
+          teammateMembers.map((member) => ({
+            ...member,
+            joinedAt,
+          }))
+        ),
+        existingMembers
       );
       await this.options.ports.membersMetaStore.writeMembers(teamName, membersToWrite, {
         providerBackendId: request.providerBackendId,

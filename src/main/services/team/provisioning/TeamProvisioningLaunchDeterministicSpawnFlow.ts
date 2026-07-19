@@ -16,7 +16,10 @@ import {
   writeDeterministicBootstrapSpecFile,
   writeDeterministicBootstrapUserPromptFile,
 } from './TeamProvisioningBootstrapSpec';
-import { buildMembersMetaWritePayload } from './TeamProvisioningConfigLaunchNormalization';
+import {
+  buildMembersMetaWritePayload,
+  mergeMembersMetaForLaunch,
+} from './TeamProvisioningConfigLaunchNormalization';
 import { applyAppManagedRuntimeSettingsPathEnv } from './TeamProvisioningEnvGuards';
 import { mergeProvisioningWarnings } from './TeamProvisioningLaunchCompatibility';
 import {
@@ -135,6 +138,7 @@ export interface RunDeterministicLaunchSpawnFlowPorts<
     writeMeta(teamName: string, payload: LaunchTeamMetaPayload): Promise<void>;
   };
   membersMetaStore: {
+    getMembers(teamName: string): Promise<TeamMember[]>;
     writeMembers(
       teamName: string,
       members: TeamMember[],
@@ -197,6 +201,43 @@ export function buildLaunchTeamMetaPayload(input: {
     launchIdentity: launchIdentity ?? undefined,
     createdAt: nowMs,
   };
+}
+
+export async function persistDeterministicLaunchMetadata<
+  TRun extends DeterministicLaunchSpawnFlowRun,
+>(
+  input: {
+    request: TeamLaunchRequest;
+    syntheticRequest: TeamCreateRequest;
+    launchIdentity: ProviderModelLaunchIdentity | null;
+    allEffectiveMemberSpecs: TeamCreateRequest['members'];
+  },
+  ports: Pick<
+    RunDeterministicLaunchSpawnFlowPorts<TRun>,
+    'teamMetaStore' | 'membersMetaStore' | 'nowMs'
+  >
+): Promise<void> {
+  const { request, syntheticRequest, launchIdentity, allEffectiveMemberSpecs } = input;
+  await ports.teamMetaStore.writeMeta(
+    request.teamName,
+    buildLaunchTeamMetaPayload({
+      request,
+      syntheticRequest,
+      launchIdentity,
+      nowMs: ports.nowMs(),
+    })
+  );
+  const existingMembers = await ports.membersMetaStore.getMembers(request.teamName);
+  await ports.membersMetaStore.writeMembers(
+    request.teamName,
+    mergeMembersMetaForLaunch(
+      buildMembersMetaWritePayload(allEffectiveMemberSpecs),
+      existingMembers
+    ),
+    {
+      providerBackendId: request.providerBackendId,
+    }
+  );
 }
 
 export function isDeterministicLaunchSpawnCancelled(input: {
@@ -484,21 +525,9 @@ export async function runDeterministicLaunchSpawnFlow<TRun extends Deterministic
   );
 
   emitProvisioningCheckpoint(run, 'Persisting team metadata before spawn');
-  await ports.teamMetaStore.writeMeta(
-    request.teamName,
-    buildLaunchTeamMetaPayload({
-      request,
-      syntheticRequest,
-      launchIdentity,
-      nowMs: ports.nowMs(),
-    })
-  );
-  await ports.membersMetaStore.writeMembers(
-    request.teamName,
-    buildMembersMetaWritePayload(allEffectiveMemberSpecs),
-    {
-      providerBackendId: request.providerBackendId,
-    }
+  await persistDeterministicLaunchMetadata(
+    { request, syntheticRequest, launchIdentity, allEffectiveMemberSpecs },
+    ports
   );
 
   let child: ChildProcess;

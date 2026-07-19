@@ -511,21 +511,6 @@ class CdpClient {
     assert.equal(clicked, true, `Element not clickable: ${expression}`);
   }
 
-  async domMouseDown(expression) {
-    const dispatched = await this.evaluate(`(() => {
-      const element = (${expression});
-      if (!(element instanceof HTMLElement)) return false;
-      element.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        view: window,
-      }));
-      return true;
-    })()`);
-    assert.equal(dispatched, true, `Element cannot receive mouse down: ${expression}`);
-  }
-
   async pressEscape() {
     const key = {
       key: 'Escape',
@@ -568,15 +553,41 @@ async function openReview() {
   const fileRow = `(${taskDialog})?.querySelector(
     '[role="button"][aria-label="src/review-history.ts"]'
   )`;
-  const expandChanges = `Array.from((${taskDialog})?.querySelectorAll('section') ?? [])
+  const changesSection = `Array.from((${taskDialog})?.querySelectorAll('section') ?? [])
     .find((section) => Array.from(section.querySelectorAll('span'))
-      .some((span) => span.textContent?.trim() === 'Changes'))
-    ?.querySelector('button[aria-label="Expand section"]')`;
-  await client.waitFor(`(${fileRow}) || (${expandChanges})`, 'Changes section readiness');
-  if (!(await client.evaluate(`Boolean(${fileRow})`))) {
-    await client.domClick(expandChanges);
-    await client.waitFor(fileRow, 'task file change');
+      .some((span) => span.textContent?.trim() === 'Changes'))`;
+  const expandChanges = `(${changesSection})?.querySelector(
+    'button[aria-label="Expand section"]'
+  )`;
+  const collapseChanges = `(${changesSection})?.querySelector(
+    'button[aria-label="Collapse section"]'
+  )`;
+  await client.waitFor(
+    `(${fileRow}) || (${expandChanges}) || (${collapseChanges})`,
+    'Changes section readiness',
+    45_000
+  );
+  const changesDeadline = Date.now() + 45_000;
+  while (!(await client.evaluate(`Boolean(${fileRow})`)) && Date.now() < changesDeadline) {
+    if (await client.evaluate(`Boolean(${expandChanges})`)) {
+      await client.domClick(expandChanges);
+    }
+    try {
+      await client.waitFor(
+        `(${fileRow}) || (${expandChanges})`,
+        'task file change or remounted collapsed section',
+        Math.min(5_000, Math.max(250, changesDeadline - Date.now()))
+      );
+    } catch {
+      // A slow task refresh can keep the section open while its file summaries load.
+      // Retry until the total deadline, and reopen if a remount collapsed the section.
+    }
   }
+  assert.equal(
+    await client.evaluate(`Boolean(${fileRow})`),
+    true,
+    'Task Changes section did not expose the synthetic file before the deadline'
+  );
   await client.domClick(fileRow);
   await client.waitFor(
     `/\\b\\d+ (?:pending|accepted|rejected)\\b/.test(document.body?.innerText ?? '')`,
@@ -784,18 +795,26 @@ async function main() {
     }
     throw new Error(`Unable to close ${label}`);
   };
-  const activateFirstHunkAction = async (buttonExpression, label) => {
+  const performFirstHunkAction = async (buttonExpression, label) => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await client.moveTo(reviewedLine(0, 'after-0'));
-      try {
-        await client.waitFor(buttonExpression, label, 750);
-        return;
-      } catch {
-        // CodeMirror can finish an async extension update after the pointer event and hide
-        // the floating toolbar. Re-hover, but never act unless its exact hunk counter is 1.
-      }
+      const dispatched = await client.evaluate(`(() => {
+        const element = (${buttonExpression});
+        if (!(element instanceof HTMLElement)) return false;
+        element.dispatchEvent(new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          view: window,
+        }));
+        return true;
+      })()`);
+      if (dispatched) return;
+      // CodeMirror can finish an async extension update after the pointer event and hide
+      // the floating toolbar. Re-hover, but select and act in one renderer evaluation so
+      // the live toolbar cannot disappear between separate CDP round trips.
     }
-    throw new Error(`Unable to activate ${label} for exact hunk 1`);
+    throw new Error(`Unable to perform ${label} for exact hunk 1`);
   };
   const restoreConfirm = `Array.from(document.querySelectorAll('[role="alertdialog"] button'))
     .find((button) => button.textContent?.trim() === 'Restore' && !button.disabled)`;
@@ -915,8 +934,7 @@ async function main() {
       'empty conflict-test base revision'
     );
 
-    await activateFirstHunkAction(visibleAcceptHunkButton, 'conflict branch hunk Accept');
-    await client.domMouseDown(visibleAcceptHunkButton);
+    await performFirstHunkAction(visibleAcceptHunkButton, 'conflict branch hunk Accept');
     await client.waitFor(
       `document.body?.innerText.includes('11 pending') &&
         document.body?.innerText.includes('1 accepted')`,
@@ -1044,8 +1062,7 @@ async function main() {
     return;
   }
 
-  await activateFirstHunkAction(visibleRejectHunkButton, 'hunk Reject');
-  await client.domMouseDown(visibleRejectHunkButton);
+  await performFirstHunkAction(visibleRejectHunkButton, 'hunk Reject');
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'one rejected hunk');
   await waitForDiskLines(fixture.changedFile, 'before-0', 'after-1');
 
@@ -1129,8 +1146,7 @@ async function main() {
   );
   await client.screenshot(finalScreenshot);
 
-  await activateFirstHunkAction(visibleAcceptHunkButton, 'hunk Accept');
-  await client.domMouseDown(visibleAcceptHunkButton);
+  await performFirstHunkAction(visibleAcceptHunkButton, 'hunk Accept');
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'one accepted hunk');
   await client.waitFor(
     `document.querySelector('button[aria-label^="Review history:"][aria-label$="; saved"]')`,
@@ -1156,8 +1172,7 @@ async function main() {
   await assertDiskLines(fixture.changedFile, 'external-0', 'after-1');
   await ensureHistoryClosed('closed accepted history before the guarded-close action');
 
-  await activateFirstHunkAction(visibleAcceptHunkButton, 'hunk Accept');
-  await client.domMouseDown(visibleAcceptHunkButton);
+  await performFirstHunkAction(visibleAcceptHunkButton, 'hunk Accept');
   await client.waitFor(`document.body?.innerText.includes('11 pending')`, 'accepted before close');
   await client.evaluate(`void window.electronAPI?.windowControls?.close()`);
   await waitForAppExit();

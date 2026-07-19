@@ -81,6 +81,21 @@ async function stopTeamRuntimeFlow<TRun extends TeamProvisioningStopRun>(
   ports.pauseActiveIntervalsForTeam(teamName);
   ports.stopPersistentTeamMembers(teamName);
   ports.openCodeRuntimeDeliveryAdvisory.cancelTeam(teamName);
+  const stopRuntimeLanesForRun = async (targetRunId: string): Promise<void> => {
+    const runtimeRun = ports.runtimeAdapterRunByTeam.get(teamName);
+    const stopPrimaryRuntimeLane =
+      runtimeRun?.runId === targetRunId && runtimeRun.providerId === 'opencode'
+        ? ports.stopOpenCodeRuntimeAdapterTeam(teamName, runtimeRun.runId)
+        : null;
+    const stopSecondaryRuntimeLanes = ports.hasSecondaryRuntimeRuns(teamName)
+      ? ports.stopMixedSecondaryRuntimeLanes(teamName)
+      : null;
+    await Promise.all(
+      [stopPrimaryRuntimeLane, stopSecondaryRuntimeLanes].filter(
+        (stop): stop is Promise<void> => stop !== null
+      )
+    );
+  };
 
   let runId = ports.getTrackedRunId(teamName);
   if (!runId) {
@@ -126,41 +141,18 @@ async function stopTeamRuntimeFlow<TRun extends TeamProvisioningStopRun>(
     return;
   }
   if (run.processKilled || run.cancelRequested) {
-    const runtimeRun = ports.runtimeAdapterRunByTeam.get(teamName);
-    const stopPrimaryRuntimeLane =
-      runtimeRun?.runId === run.runId && runtimeRun.providerId === 'opencode'
-        ? ports.stopOpenCodeRuntimeAdapterTeam(teamName, runtimeRun.runId)
-        : null;
-    const stopSecondaryRuntimeLanes = ports.hasSecondaryRuntimeRuns(teamName)
-      ? ports.stopMixedSecondaryRuntimeLanes(teamName)
-      : null;
-    await Promise.all(
-      [stopPrimaryRuntimeLane, stopSecondaryRuntimeLanes].filter(
-        (stop): stop is Promise<void> => stop !== null
-      )
-    );
+    await stopRuntimeLanesForRun(run.runId);
     return;
   }
   run.processKilled = true;
   run.cancelRequested = true;
   ports.killTeamProcess(run.child);
-  const runtimeRun = ports.runtimeAdapterRunByTeam.get(teamName);
-  const stopPrimaryRuntimeLane =
-    runtimeRun?.runId === run.runId && runtimeRun.providerId === 'opencode'
-      ? ports.stopOpenCodeRuntimeAdapterTeam(teamName, runtimeRun.runId)
-      : null;
-  const stopSecondaryRuntimeLanes = ports.hasSecondaryRuntimeRuns(teamName)
-    ? ports.stopMixedSecondaryRuntimeLanes(teamName)
-    : null;
+  const stopCurrentRuntimeLanes = stopRuntimeLanesForRun(run.runId);
   const progress = ports.updateProgress(run, 'disconnected', 'Team stopped by user');
   run.onProgress(progress);
   ports.cleanupRun(run);
   ports.logger.info(`[${teamName}] Process stopped (SIGKILL)`);
-  await Promise.all(
-    [stopPrimaryRuntimeLane, stopSecondaryRuntimeLanes].filter(
-      (stop): stop is Promise<void> => stop !== null
-    )
-  );
+  await stopCurrentRuntimeLanes;
 }
 
 export async function stopTeamFlow<TRun extends TeamProvisioningStopRun>(

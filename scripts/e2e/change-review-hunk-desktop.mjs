@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -639,10 +639,19 @@ async function readPersistedReviewScope(fixture) {
   );
   const entries = (await readdir(scopeDir)).filter((entry) => entry.endsWith('.json'));
   assert.equal(entries.length, 1, 'Expected one exact persisted Changes scope');
-  const persisted = JSON.parse(await readFile(path.join(scopeDir, entries[0]), 'utf8'));
+  const filePath = path.join(scopeDir, entries[0]);
+  const raw = await readFile(filePath, 'utf8');
+  const persisted = JSON.parse(raw);
+  const fileStats = await stat(filePath, { bigint: true });
   assert.equal(persisted.scopeKey, scopeKey, 'Persisted Changes scope key mismatch');
   assert.equal(typeof persisted.scopeToken, 'string', 'Persisted Changes scope token missing');
-  return { scopeKey, scopeToken: persisted.scopeToken };
+  return {
+    scopeKey,
+    scopeToken: persisted.scopeToken,
+    revision: persisted.revision,
+    raw,
+    mtimeNs: fileStats.mtimeNs,
+  };
 }
 
 async function invokeReviewApi(method, args) {
@@ -890,6 +899,16 @@ async function main() {
   // Keep this mode focused on durable Restore and divergent-branch recovery; the
   // production-preview path below continues to exercise guarded process-close recovery.
   if (devMcpMode) {
+    await client.waitFor(
+      `Boolean(document.querySelector('button[aria-label*="; saved"]'))`,
+      'settled history before final dev restart'
+    );
+    const persistenceBeforeHydration = await readPersistedReviewScope(fixture);
+    const decisionsBeforeHydration = await waitForStableReviewDecisions(
+      persistenceBeforeHydration,
+      'Durable history did not settle before hydration'
+    );
+
     await restartApp(port, fixture);
     await openReview();
     await client.waitFor(
@@ -904,6 +923,26 @@ async function main() {
     await client.waitFor(
       `Boolean(document.querySelector('button[aria-label*="; saved"]'))`,
       'hydrated history persistence acknowledgement'
+    );
+    const decisionsAfterHydration = await waitForStableReviewDecisions(
+      persistenceScope,
+      'Hydrated history revision did not settle'
+    );
+    const persistenceAfterHydration = await readPersistedReviewScope(fixture);
+    assert.equal(
+      decisionsAfterHydration.revision,
+      decisionsBeforeHydration.revision,
+      'Passive history hydration must not advance the durable revision'
+    );
+    assert.equal(
+      persistenceAfterHydration.raw,
+      persistenceBeforeHydration.raw,
+      'Passive history hydration must not rewrite the durable payload'
+    );
+    assert.equal(
+      persistenceAfterHydration.mtimeNs,
+      persistenceBeforeHydration.mtimeNs,
+      'Passive history hydration must not touch the durable file'
     );
     const reviewCloseButton = `Array.from(document.querySelectorAll('h2'))
       .find((heading) => heading.textContent?.startsWith('Changes for task #'))

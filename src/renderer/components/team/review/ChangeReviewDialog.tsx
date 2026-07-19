@@ -563,9 +563,37 @@ export const ChangeReviewDialog = ({
   const draftHistoryWriteErrorsRef = useRef(new Map<string, unknown>());
   const draftHistoryPersistedVersionsRef = useRef(new Map<string, DraftHistoryVersion>());
   const expectedDraftHistoryKeyRef = useRef<string | null>(null);
+  const reviewConflictRefreshGenerationRef = useRef(0);
+  const conflictResolutionOperationRef = useRef<object | null>(null);
   const suppressedDraftHistoryFilesRef = useRef(new Set<string>());
 
+  const hydrateDecisionsFromDisk = useCallback(
+    async (
+      scopeTeamName: string,
+      scopeKeyValue: string,
+      scopeTokenValue: string,
+      hydrationKey: string
+    ): Promise<void> => {
+      await loadDecisionsFromDisk(scopeTeamName, scopeKeyValue, scopeTokenValue);
+      if (expectedDraftHistoryKeyRef.current !== hydrationKey) return;
+      const hydrated = useStore.getState();
+      if (
+        hydrated.decisionHydrationScopeKey === hydrationKey &&
+        hydrated.decisionHydrationStatus === 'loaded'
+      ) {
+        // Hydration is already durable. Mark the exact snapshot so the generic
+        // auto-persist effect cannot turn a plain open/reload into a revision write.
+        immediatelyPersistedReviewSnapshotRef.current = captureReviewPersistenceSnapshotIdentity(
+          scopeTokenValue,
+          hydrated
+        );
+      }
+    },
+    [loadDecisionsFromDisk]
+  );
+
   const refreshReviewConflictCandidates = useCallback(async (): Promise<void> => {
+    const refreshGeneration = ++reviewConflictRefreshGenerationRef.current;
     if (!decisionHydrationKey || !decisionScopeToken) {
       setDecisionConflictCandidates([]);
       setDraftHistoryConflictCandidates([]);
@@ -588,10 +616,25 @@ export const ChangeReviewDialog = ({
           decisionScopeToken
         ),
       ]);
-      if (expectedDraftHistoryKeyRef.current !== hydrationKey) return;
+      if (
+        expectedDraftHistoryKeyRef.current !== hydrationKey ||
+        reviewConflictRefreshGenerationRef.current !== refreshGeneration
+      ) {
+        return;
+      }
       if (decisionCandidates.length > 0) {
-        await loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
-        if (expectedDraftHistoryKeyRef.current !== hydrationKey) return;
+        await hydrateDecisionsFromDisk(
+          teamName,
+          decisionScopeKey,
+          decisionScopeToken,
+          hydrationKey
+        );
+        if (
+          expectedDraftHistoryKeyRef.current !== hydrationKey ||
+          reviewConflictRefreshGenerationRef.current !== refreshGeneration
+        ) {
+          return;
+        }
       }
       setDecisionConflictCandidates(decisionCandidates);
       setDraftHistoryConflictCandidates(draftCandidates);
@@ -602,14 +645,22 @@ export const ChangeReviewDialog = ({
           : {}
       );
     } catch (error) {
-      if (expectedDraftHistoryKeyRef.current !== hydrationKey) return;
+      if (
+        expectedDraftHistoryKeyRef.current !== hydrationKey ||
+        reviewConflictRefreshGenerationRef.current !== refreshGeneration
+      ) {
+        return;
+      }
       const message = `${REVIEW_CONFLICT_LOAD_ERROR_PREFIX} ${String(error)}`;
       setReviewConflictLoadError(message);
       useStore.setState({
         applyError: message,
       });
     } finally {
-      if (expectedDraftHistoryKeyRef.current === hydrationKey) {
+      if (
+        expectedDraftHistoryKeyRef.current === hydrationKey &&
+        reviewConflictRefreshGenerationRef.current === refreshGeneration
+      ) {
         setReviewConflictRefreshPending(false);
       }
     }
@@ -617,7 +668,7 @@ export const ChangeReviewDialog = ({
     decisionHydrationKey,
     decisionScopeKey,
     decisionScopeToken,
-    loadDecisionsFromDisk,
+    hydrateDecisionsFromDisk,
     teamName,
   ]);
 
@@ -642,9 +693,21 @@ export const ChangeReviewDialog = ({
     [markRecentReviewWrite]
   );
 
-  useEffect(() => {
-    expectedDraftHistoryKeyRef.current = decisionHydrationKey;
-  }, [decisionHydrationKey]);
+  useLayoutEffect(() => {
+    const activeHydrationKey =
+      open && lifecycleAuthorized ? decisionHydrationKey : null;
+    expectedDraftHistoryKeyRef.current = activeHydrationKey;
+    reviewConflictRefreshGenerationRef.current += 1;
+    conflictResolutionOperationRef.current = null;
+    setResolvingConflictCandidateId(null);
+    return () => {
+      if (expectedDraftHistoryKeyRef.current === activeHydrationKey) {
+        expectedDraftHistoryKeyRef.current = null;
+      }
+      reviewConflictRefreshGenerationRef.current += 1;
+      conflictResolutionOperationRef.current = null;
+    };
+  }, [decisionHydrationKey, lifecycleAuthorized, open]);
 
   useEffect(() => {
     if (!open || !lifecycleAuthorized || !decisionHydrationKey) {
@@ -1421,6 +1484,8 @@ export const ChangeReviewDialog = ({
       }
       const selected = activeReviewConflictCandidate;
       const resolutionHydrationKey = decisionHydrationKey;
+      const resolutionOperation = {};
+      conflictResolutionOperationRef.current = resolutionOperation;
       setResolvingConflictCandidateId(selected.value.id);
       try {
         if (selected.kind === 'decision') {
@@ -1433,7 +1498,12 @@ export const ChangeReviewDialog = ({
             selected.value.observedCurrentRevision
           );
           if (expectedDraftHistoryKeyRef.current !== resolutionHydrationKey) return;
-          await loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
+          await hydrateDecisionsFromDisk(
+            teamName,
+            decisionScopeKey,
+            decisionScopeToken,
+            resolutionHydrationKey
+          );
           if (expectedDraftHistoryKeyRef.current !== resolutionHydrationKey) return;
           const hydrated = useStore.getState();
           if (
@@ -1504,7 +1574,10 @@ export const ChangeReviewDialog = ({
         });
         await refreshReviewConflictCandidates();
       } finally {
-        setResolvingConflictCandidateId(null);
+        if (conflictResolutionOperationRef.current === resolutionOperation) {
+          conflictResolutionOperationRef.current = null;
+          setResolvingConflictCandidateId(null);
+        }
       }
     },
     [
@@ -1512,7 +1585,7 @@ export const ChangeReviewDialog = ({
       decisionHydrationKey,
       decisionScopeKey,
       decisionScopeToken,
-      loadDecisionsFromDisk,
+      hydrateDecisionsFromDisk,
       publishReviewActionPersistenceStatus,
       refreshReviewConflictCandidates,
       resolvingConflictCandidateId,
@@ -3986,7 +4059,7 @@ export const ChangeReviewDialog = ({
   ]);
 
   const handleRetrySavedReviewState = useCallback(async (): Promise<void> => {
-    if (!decisionScopeToken || reviewMutationBusy) return;
+    if (!decisionScopeToken || !decisionHydrationKey || reviewMutationBusy) return;
     setUndoInFlight(true);
     try {
       if (decisionHydrationFailed) {
@@ -3998,7 +4071,12 @@ export const ChangeReviewDialog = ({
           },
         });
         markCommittedReviewPostimages(recovered.diskPostimages);
-        await loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
+        await hydrateDecisionsFromDisk(
+          teamName,
+          decisionScopeKey,
+          decisionScopeToken,
+          decisionHydrationKey
+        );
       }
       if (draftHistoryHydrationFailed) {
         setDraftHistoryRetryNonce((value) => value + 1);
@@ -4015,7 +4093,8 @@ export const ChangeReviewDialog = ({
     decisionScopeKey,
     decisionScopeToken,
     draftHistoryHydrationFailed,
-    loadDecisionsFromDisk,
+    decisionHydrationKey,
+    hydrateDecisionsFromDisk,
     markCommittedReviewPostimages,
     reviewMutationBusy,
     reviewScope,
@@ -4190,13 +4269,19 @@ export const ChangeReviewDialog = ({
   ]);
 
   useEffect(() => {
-    if (!open || !lifecycleAuthorized || !decisionScopeToken) return;
-    void loadDecisionsFromDisk(teamName, decisionScopeKey, decisionScopeToken);
+    if (!open || !lifecycleAuthorized || !decisionScopeToken || !decisionHydrationKey) return;
+    void hydrateDecisionsFromDisk(
+      teamName,
+      decisionScopeKey,
+      decisionScopeToken,
+      decisionHydrationKey
+    );
   }, [
+    decisionHydrationKey,
     decisionScopeKey,
     decisionScopeToken,
     lifecycleAuthorized,
-    loadDecisionsFromDisk,
+    hydrateDecisionsFromDisk,
     open,
     teamName,
   ]);

@@ -2569,7 +2569,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     });
 
     expect(onProviderChange).toHaveBeenCalledWith('opencode');
-    expect(host.textContent).toContain('OpenCode free models are available');
+    expect(host.textContent).toContain('Free models are in OpenCode Zen');
     expect(
       host
         .querySelector('[data-testid="team-model-selector-provider-status"]')
@@ -2577,7 +2577,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     ).toBe('info');
     expect(host.textContent).not.toContain('provider connection optional');
     expect(host.textContent).toContain(
-      'You can use free OpenCode models such as Big Pickle without connecting a provider.'
+      'Choose OpenCode Zen in the sidebar to use free models without connecting a provider.'
     );
     expect(host.textContent).not.toContain('OpenCode is not ready for team launch');
     expect(host.textContent).not.toContain('team launch available');

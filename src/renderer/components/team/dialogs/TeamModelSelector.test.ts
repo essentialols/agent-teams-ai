@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   shouldElevateOpenCodeVirtualRow,
   shouldShowOpenCodeNeedsTestBadge,
+  shouldShowOpenCodeOverviewStatus,
 } from './teamModelSelectorUi';
 
 describe('shouldShowOpenCodeNeedsTestBadge', () => {
@@ -40,5 +41,14 @@ describe('shouldElevateOpenCodeVirtualRow', () => {
 
   it('never raises model rows', () => {
     expect(shouldElevateOpenCodeVirtualRow('models', 5, 4)).toBe(false);
+  });
+});
+
+describe('shouldShowOpenCodeOverviewStatus', () => {
+  it('shows overview guidance only on the unfiltered OpenCode tab', () => {
+    expect(shouldShowOpenCodeOverviewStatus('opencode', 0, 0)).toBe(true);
+    expect(shouldShowOpenCodeOverviewStatus('opencode', 1, 0)).toBe(false);
+    expect(shouldShowOpenCodeOverviewStatus('opencode', 0, 1)).toBe(false);
+    expect(shouldShowOpenCodeOverviewStatus('anthropic', 0, 0)).toBe(false);
   });
 });

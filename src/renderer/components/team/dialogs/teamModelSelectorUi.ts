@@ -20,3 +20,11 @@ export function shouldElevateOpenCodeVirtualRow(
 ): boolean {
   return rowKind === 'heading' && rowIndex !== activeStickyHeadingIndex;
 }
+
+export function shouldShowOpenCodeOverviewStatus(
+  providerId: string,
+  selectedSourceCount: number,
+  selectedRouteTagCount: number
+): boolean {
+  return providerId === 'opencode' && selectedSourceCount === 0 && selectedRouteTagCount === 0;
+}

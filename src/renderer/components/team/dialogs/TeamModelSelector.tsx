@@ -87,6 +87,7 @@ import { CodexModelCatalogFallbackNotice } from './CodexModelCatalogFallbackNoti
 import {
   shouldElevateOpenCodeVirtualRow,
   shouldShowOpenCodeNeedsTestBadge,
+  shouldShowOpenCodeOverviewStatus,
 } from './teamModelSelectorUi';
 
 import type { RuntimeLocalProviderListEntryDto } from '@features/runtime-provider-management/contracts';
@@ -2494,6 +2495,11 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
   const canActivateInspectedOpenCode =
     effectiveProviderId === 'opencode' && isInspectingInactiveProvider && activeProviderSelectable;
   const openCodeHasFreeModelRoute = hasFreeOpenCodeModelRoute(runtimeProviderStatus);
+  const showOpenCodeOverviewStatus = shouldShowOpenCodeOverviewStatus(
+    effectiveProviderId,
+    selectedOpenCodeSourceIds.size,
+    selectedOpenCodeRouteTags.size
+  );
   const activeProviderStatusPanel =
     activeProviderDisabledReason && effectiveProviderId === 'opencode'
       ? {
@@ -2504,7 +2510,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
           reason: activeProviderDisabledReason,
           actionLabel: null,
         }
-      : effectiveProviderId === 'opencode' &&
+      : showOpenCodeOverviewStatus &&
           runtimeProviderStatus?.supported === true &&
           runtimeProviderStatus.authenticated === false &&
           openCodeHasFreeModelRoute
@@ -2516,7 +2522,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
             reason: null,
             actionLabel: null,
           }
-        : effectiveProviderId === 'opencode' &&
+        : showOpenCodeOverviewStatus &&
             runtimeProviderStatus?.supported === true &&
             runtimeProviderStatus.authenticated === false
           ? {
@@ -2527,7 +2533,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
               reason: null,
               actionLabel: null,
             }
-          : canActivateInspectedOpenCode
+          : showOpenCodeOverviewStatus && canActivateInspectedOpenCode
             ? {
                 tone: 'ready' as const,
                 title: t('modelSelector.openCodeStatus.readyTitle'),

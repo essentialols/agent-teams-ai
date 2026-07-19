@@ -4824,11 +4824,11 @@ export default interface Resources {
           install: 'Install';
           setup: 'Setup';
         };
-        freeModelsAvailableTitle: 'OpenCode free models are available';
+        freeModelsAvailableTitle: 'Free models are in OpenCode Zen';
         loadingRuntime: 'OpenCode runtime status is still loading.';
         messages: {
           checking: 'The app is still checking the OpenCode runtime. Wait for provider status to finish, then try again.';
-          freeAvailable: 'OpenCode is detected. You can use free OpenCode models such as Big Pickle without connecting a provider. Connect a provider only when you want provider-backed models.';
+          freeAvailable: 'Choose OpenCode Zen in the sidebar to use free models without connecting a provider. Local models and connected providers use their own setup.';
           launchBlocked: 'OpenCode is installed and authenticated, but Agent Teams launch readiness is blocked.';
           noFreeListed: 'OpenCode is detected, but no free OpenCode model is listed yet. Refresh provider status, or connect a provider in OpenCode for provider-backed models.';
           ready: 'OpenCode is ready for team launch.';

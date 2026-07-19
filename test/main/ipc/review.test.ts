@@ -580,7 +580,22 @@ describe('review IPC path confinement', () => {
         [firstAction],
         0
       )
-    ).resolves.toEqual({ success: true, data: { revision: 2 } });
+    ).resolves.toEqual({
+      success: true,
+      data: {
+        revision: 2,
+        reconciledState: {
+          hunkDecisions: {
+            [projectFile + ':0']: 'accepted',
+            [projectFile + ':1']: 'rejected',
+          },
+          fileDecisions: {},
+          hunkContextHashesByFile: undefined,
+          reviewActionHistory: [firstAction, secondAction],
+          reviewRedoHistory: [],
+        },
+      },
+    });
     await expect(
       ipcMain.invoke(
         REVIEW_LOAD_DECISION_CONFLICT_CANDIDATES,
@@ -1022,7 +1037,7 @@ describe('review IPC path confinement', () => {
       [],
       1
     );
-    expect(saved).toEqual({ success: true, data: { revision: 2 } });
+    expect(saved).toEqual({ success: true, data: { revision: 1 } });
     await expect(journal.list('safe-team', persistenceScope)).resolves.toEqual([]);
   });
 

@@ -340,6 +340,7 @@ import type {
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
   ReviewUndoAction,
+  SaveReviewDecisionsResult,
   Schedule,
   ScheduleChangeEvent,
   ScheduleRun,
@@ -1661,7 +1662,7 @@ const electronAPI: ElectronAPI = {
       expectedRevision?: number,
       reviewRedoHistory?: ReviewRedoAction[]
     ) => {
-      return invokeIpcWithResult<{ revision: number }>(
+      return invokeIpcWithResult<SaveReviewDecisionsResult>(
         REVIEW_SAVE_DECISIONS,
         teamName,
         scopeKey,

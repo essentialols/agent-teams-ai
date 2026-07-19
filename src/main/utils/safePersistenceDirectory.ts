@@ -9,6 +9,55 @@ function isPathInside(rootPath: string, candidatePath: string): boolean {
 }
 
 /**
+ * Validates an existing persistence directory without creating any paths.
+ * Returns false when the root or a descendant does not exist.
+ */
+export async function assertConstrainedPersistenceDirectory(
+  storageRoot: string,
+  directoryPath: string
+): Promise<boolean> {
+  const lexicalRoot = path.resolve(storageRoot);
+  const lexicalDirectory = path.resolve(directoryPath);
+  if (!isPathInside(lexicalRoot, lexicalDirectory)) {
+    throw new Error('Persistence directory escapes its configured storage root');
+  }
+
+  let realRoot: string;
+  try {
+    realRoot = await fs.promises.realpath(lexicalRoot);
+    const rootStats = await fs.promises.stat(lexicalRoot);
+    if (!rootStats.isDirectory()) {
+      throw new Error(`Unsafe persistence directory: ${lexicalRoot}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+
+  const relative = path.relative(lexicalRoot, lexicalDirectory);
+  let current = lexicalRoot;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    let stats: fs.Stats;
+    try {
+      stats = await fs.promises.lstat(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error(`Unsafe persistence directory: ${current}`);
+    }
+  }
+
+  const realDirectory = await fs.promises.realpath(lexicalDirectory);
+  if (!isPathInside(realRoot, realDirectory)) {
+    throw new Error('Persistence directory resolves outside its configured storage root');
+  }
+  return true;
+}
+
+/**
  * Creates a private persistence directory without following symlinked descendants
  * below the configured storage root. The root itself may intentionally be a symlink.
  */

@@ -6,6 +6,10 @@ import {
   unlinkPathDurably,
 } from '@main/utils/atomicWrite';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
+import {
+  assertConstrainedPersistenceDirectory,
+  ensureConstrainedPersistenceDirectory,
+} from '@main/utils/safePersistenceDirectory';
 import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -154,7 +158,9 @@ export class ReviewMutationJournalStore {
     if (Buffer.byteLength(serialized, 'utf8') > MAX_JOURNAL_BYTES) {
       throw new Error('Review mutation journal record exceeds the storage limit');
     }
-    await atomicWriteAsync(this.getRecordPath(record), serialized, {
+    const recordPath = this.getRecordPath(record);
+    await ensureConstrainedPersistenceDirectory(getTeamsBasePath(), path.dirname(recordPath));
+    await atomicWriteAsync(recordPath, serialized, {
       mode: 0o600,
       durability: 'strict',
       syncDirectory: true,
@@ -293,7 +299,16 @@ export class ReviewMutationJournalStore {
   }
 
   async remove(record: ReviewMutationJournalRecord): Promise<void> {
-    await unlinkPathDurably(this.getRecordPath(record)).catch((error: NodeJS.ErrnoException) => {
+    const recordPath = this.getRecordPath(record);
+    if (
+      !(await assertConstrainedPersistenceDirectory(
+        getTeamsBasePath(),
+        path.dirname(recordPath)
+      ))
+    ) {
+      return;
+    }
+    await unlinkPathDurably(recordPath).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
     });
   }
@@ -322,6 +337,9 @@ export class ReviewMutationJournalStore {
   ): Promise<ReviewMutationJournalDiscardInspection> {
     this.assertSafeScope(teamName, persistenceScope);
     const scopeDir = this.getScopeDir(teamName, persistenceScope);
+    if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), scopeDir))) {
+      return { records: [], corruptRecordCount: 0 };
+    }
     const recordNames = await this.listRecordNames(scopeDir);
     const records: ReviewMutationJournalRecord[] = [];
     let corruptRecordCount = 0;
@@ -367,6 +385,7 @@ export class ReviewMutationJournalStore {
   ): Promise<ReviewMutationJournalRecord[]> {
     this.assertSafeScope(teamName, persistenceScope);
     const scopeDir = this.getScopeDir(teamName, persistenceScope);
+    if (!(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), scopeDir))) return [];
     const recordNames = await this.listRecordNames(scopeDir);
     if (recordNames.length > MAX_JOURNAL_RECORDS_PER_SCOPE) {
       throw new Error('Too many pending review mutation journal records');

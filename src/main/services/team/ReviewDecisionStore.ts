@@ -1,6 +1,7 @@
 import { atomicWriteAsync, unlinkPathDurably } from '@main/utils/atomicWrite';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import {
+  assertConstrainedPersistenceDirectory,
   ensureConstrainedPersistenceDirectory,
   quarantineConstrainedPersistenceFile,
 } from '@main/utils/safePersistenceDirectory';
@@ -162,6 +163,7 @@ export interface LoadedReviewDecisions {
 
 interface InternalLoadedReviewDecisions extends LoadedReviewDecisions {
   lastMutationId?: string;
+  storageVersion: number;
 }
 
 class InvalidReviewDecisionDataError extends Error {}
@@ -615,7 +617,8 @@ export class ReviewDecisionStore {
     teamName: string,
     scopeKey: string,
     scopeToken: string,
-    protectedPath: string
+    protectedPath: string,
+    replacementPath?: string
   ): Promise<void> {
     const dirPath = this.getConflictCandidateDir(teamName, scopeKey, scopeToken);
     let entries: string[];
@@ -639,7 +642,9 @@ export class ReviewDecisionStore {
           }
         })
     );
-    const existing = candidates.filter((entry): entry is string => entry !== null);
+    const existing = candidates.filter(
+      (entry): entry is string => entry !== null && entry !== replacementPath
+    );
     if (
       !existing.includes(protectedPath) &&
       existing.length >= MAX_RETAINED_CONFLICT_CANDIDATES
@@ -656,7 +661,8 @@ export class ReviewDecisionStore {
     scopeToken: string,
     expectedRevision: number,
     observedCurrentRevision: number,
-    state: ReviewPersistedStateSnapshot
+    state: ReviewPersistedStateSnapshot,
+    replacementPath?: string
   ): Promise<void> {
     const encodedHistory = this.encodeHistoryV6(
       state.reviewActionHistory,
@@ -688,7 +694,13 @@ export class ReviewDecisionStore {
     }
     const filePath = this.getConflictCandidatePath(teamName, scopeKey, scopeToken, id);
     await this.ensureConflictCandidateDir(teamName, scopeKey, scopeToken);
-    await this.assertConflictCandidateCapacity(teamName, scopeKey, scopeToken, filePath);
+    await this.assertConflictCandidateCapacity(
+      teamName,
+      scopeKey,
+      scopeToken,
+      filePath,
+      replacementPath
+    );
     await atomicWriteAsync(filePath, serialized, {
       mode: 0o600,
       durability: 'strict',
@@ -1172,6 +1184,7 @@ export class ReviewDecisionStore {
       hunkContextHashesByFile,
       reviewActionHistory,
       reviewRedoHistory,
+      storageVersion: 'version' in data ? data.version : 1,
       revision:
         'version' in data && (data.version === 4 || data.version === 5 || data.version === 6)
           ? data.revision
@@ -1189,6 +1202,14 @@ export class ReviewDecisionStore {
     scopeToken?: string,
     expectedScopeKey?: string
   ): Promise<InternalLoadedReviewDecisions | null> {
+    if (
+      !(await assertConstrainedPersistenceDirectory(
+        getTeamsBasePath(),
+        path.dirname(filePath)
+      ))
+    ) {
+      return null;
+    }
     let handle: fs.promises.FileHandle | null = null;
     let raw: string;
     try {
@@ -1269,6 +1290,11 @@ export class ReviewDecisionStore {
       'mutation-journal',
       scopeKey
     );
+    if (
+      !(await assertConstrainedPersistenceDirectory(getTeamsBasePath(), journalScopeDir))
+    ) {
+      return new Set();
+    }
     let entries: string[];
     try {
       entries = await fs.promises.readdir(journalScopeDir);
@@ -1297,6 +1323,7 @@ export class ReviewDecisionStore {
     protectedPath: string
   ): Promise<void> {
     const dirPath = this.getV2DirPath(teamName, scopeKey);
+    await ensureConstrainedPersistenceDirectory(getTeamsBasePath(), dirPath);
     let entries: string[];
     try {
       entries = await fs.promises.readdir(dirPath);
@@ -1374,7 +1401,11 @@ export class ReviewDecisionStore {
   ): Promise<LoadedReviewDecisions | null> {
     const loaded = await this.loadInternal(teamName, scopeKey, scopeToken);
     if (!loaded) return null;
-    const { lastMutationId: _lastMutationId, ...publicSnapshot } = loaded;
+    const {
+      lastMutationId: _lastMutationId,
+      storageVersion: _storageVersion,
+      ...publicSnapshot
+    } = loaded;
     return publicSnapshot;
   }
 
@@ -1567,7 +1598,8 @@ export class ReviewDecisionStore {
       scopeToken,
       currentRevision,
       currentRevision + 1,
-      currentSnapshot
+      currentSnapshot,
+      candidatePath
     );
     const revision = await this.save(teamName, scopeKey, {
       scopeToken,
@@ -1614,14 +1646,16 @@ export class ReviewDecisionStore {
         reviewActionHistory: data.reviewActionHistory ?? [],
         reviewRedoHistory: data.reviewRedoHistory ?? [],
       };
+      const currentSnapshot = current
+        ? {
+            hunkDecisions: current.hunkDecisions,
+            fileDecisions: current.fileDecisions,
+            hunkContextHashesByFile: current.hunkContextHashesByFile,
+            reviewActionHistory: current.reviewActionHistory,
+            reviewRedoHistory: current.reviewRedoHistory,
+          }
+        : null;
       if (data.expectedRevision !== undefined && data.expectedRevision !== currentRevision) {
-        const currentSnapshot = current && {
-          hunkDecisions: current.hunkDecisions,
-          fileDecisions: current.fileDecisions,
-          hunkContextHashesByFile: current.hunkContextHashesByFile,
-          reviewActionHistory: current.reviewActionHistory,
-          reviewRedoHistory: current.reviewRedoHistory,
-        };
         const exactSnapshotMatches =
           currentSnapshot !== null && isDeepStrictEqual(currentSnapshot, targetSnapshot);
         const committedMutationRetry =
@@ -1647,6 +1681,17 @@ export class ReviewDecisionStore {
           );
         }
         throw new Error('Review decisions changed; refusing stale state overwrite');
+      }
+      // Opening or reloading Changes must be read-only. Generic renderer saves can be
+      // redundantly scheduled after hydration; an exact current snapshot is already
+      // durable and must not advance the CAS revision or rewrite the file.
+      if (
+        data.mutationId === undefined &&
+        current?.storageVersion === 6 &&
+        currentSnapshot !== null &&
+        isDeepStrictEqual(currentSnapshot, targetSnapshot)
+      ) {
+        return currentRevision;
       }
       const revision = currentRevision + 1;
       const compactedHistory = this.encodeHistoryV6(
@@ -1743,11 +1788,19 @@ export class ReviewDecisionStore {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
     try {
       if (scopeToken) {
-        await unlinkPathDurably(this.getV2FilePath(teamName, scopeKey, scopeToken)).catch(
-          (error: NodeJS.ErrnoException) => {
-            if (error.code !== 'ENOENT') throw error;
-          }
-        );
+        const exactPath = this.getV2FilePath(teamName, scopeKey, scopeToken);
+        if (
+          await assertConstrainedPersistenceDirectory(
+            getTeamsBasePath(),
+            path.dirname(exactPath)
+          )
+        ) {
+          await unlinkPathDurably(exactPath).catch(
+            (error: NodeJS.ErrnoException) => {
+              if (error.code !== 'ENOENT') throw error;
+            }
+          );
+        }
         const legacyPath = this.getLegacyFilePath(teamName, scopeKey);
         let legacy;
         try {
@@ -1768,13 +1821,27 @@ export class ReviewDecisionStore {
         }
         return;
       }
-      await fs.promises.unlink(this.getLegacyFilePath(teamName, scopeKey)).catch((error) => {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      });
-      await fs.promises.rm(this.getV2DirPath(teamName, scopeKey), {
-        recursive: true,
-        force: true,
-      });
+      if (
+        await assertConstrainedPersistenceDirectory(
+          getTeamsBasePath(),
+          this.getLegacyDirPath(teamName)
+        )
+      ) {
+        await fs.promises.unlink(this.getLegacyFilePath(teamName, scopeKey)).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        });
+      }
+      if (
+        await assertConstrainedPersistenceDirectory(
+          getTeamsBasePath(),
+          this.getV2DirPath(teamName, scopeKey)
+        )
+      ) {
+        await fs.promises.rm(this.getV2DirPath(teamName, scopeKey), {
+          recursive: true,
+          force: true,
+        });
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         logger.error(

@@ -1,6 +1,7 @@
 import { atomicWriteAsync, unlinkPathDurably } from '@main/utils/atomicWrite';
 import { getTeamsBasePath } from '@main/utils/pathDecoder';
 import {
+  assertConstrainedPersistenceDirectory,
   ensureConstrainedPersistenceDirectory,
   quarantineConstrainedPersistenceFile,
 } from '@main/utils/safePersistenceDirectory';
@@ -331,6 +332,14 @@ export class ReviewDraftHistoryStore {
     scopeToken: string
   ): Promise<StoredReviewDraftHistory | null> {
     const filePath = this.getFilePath(teamName, scopeKey, scopeToken);
+    if (
+      !(await assertConstrainedPersistenceDirectory(
+        getTeamsBasePath(),
+        path.dirname(filePath)
+      ))
+    ) {
+      return null;
+    }
     let handle: fs.promises.FileHandle | null = null;
     try {
       const pathStats = await fs.promises.lstat(filePath);
@@ -392,7 +401,9 @@ export class ReviewDraftHistoryStore {
     if (Buffer.byteLength(serialized, 'utf8') > MAX_HISTORY_FILE_BYTES) {
       throw new Error('Review draft history exceeds the durable storage limit');
     }
-    await atomicWriteAsync(this.getFilePath(teamName, scopeKey, scopeToken), serialized, {
+    const filePath = this.getFilePath(teamName, scopeKey, scopeToken);
+    await ensureConstrainedPersistenceDirectory(getTeamsBasePath(), path.dirname(filePath));
+    await atomicWriteAsync(filePath, serialized, {
       mode: 0o600,
       durability: 'strict',
       syncDirectory: true,
@@ -406,6 +417,7 @@ export class ReviewDraftHistoryStore {
     protectedPath: string
   ): Promise<void> {
     const scopeDir = this.getScopeDir(teamName, scopeKey);
+    await ensureConstrainedPersistenceDirectory(getTeamsBasePath(), scopeDir);
     let entries: string[];
     try {
       entries = await fs.promises.readdir(scopeDir);
@@ -892,7 +904,8 @@ export class ReviewDraftHistoryStore {
           expectedGeneration: current.generation,
         },
         current.revision + 1,
-        current.generation
+        current.generation,
+        candidatePath
       );
     }
     const recovered = await this.saveEntry(teamName, scopeKey, scopeToken, {
@@ -1061,7 +1074,16 @@ export class ReviewDraftHistoryStore {
 
   async clearScope(teamName: string, scopeKey: string, scopeToken: string): Promise<void> {
     this.assertSafeScope(teamName, scopeKey, scopeToken);
-    await unlinkPathDurably(this.getFilePath(teamName, scopeKey, scopeToken)).catch(
+    const filePath = this.getFilePath(teamName, scopeKey, scopeToken);
+    if (
+      !(await assertConstrainedPersistenceDirectory(
+        getTeamsBasePath(),
+        path.dirname(filePath)
+      ))
+    ) {
+      return;
+    }
+    await unlinkPathDurably(filePath).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       }

@@ -54,6 +54,20 @@ const persistDecisionWriteChains = new Map<string, Promise<void>>();
 const decisionRevisionByScope = new Map<string, number>();
 const PERSIST_DEBOUNCE_MS = 500;
 
+function reviewPersistedSnapshotsEqual(
+  left: ReviewPersistedStateSnapshot,
+  right: ReviewPersistedStateSnapshot
+): boolean {
+  return (
+    JSON.stringify(left.hunkDecisions) === JSON.stringify(right.hunkDecisions) &&
+    JSON.stringify(left.fileDecisions) === JSON.stringify(right.fileDecisions) &&
+    JSON.stringify(left.hunkContextHashesByFile ?? {}) ===
+      JSON.stringify(right.hunkContextHashesByFile ?? {}) &&
+    JSON.stringify(left.reviewActionHistory) === JSON.stringify(right.reviewActionHistory) &&
+    JSON.stringify(left.reviewRedoHistory) === JSON.stringify(right.reviewRedoHistory)
+  );
+}
+
 import type { AppState } from '../types';
 import type {
   AgentChangeSet,
@@ -1018,6 +1032,13 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
       );
       const persistedReviewActionHistory = structuredClone(reviewActionHistory);
       const persistedReviewRedoHistory = structuredClone(reviewRedoHistory);
+      const queuedSnapshot: ReviewPersistedStateSnapshot = {
+        hunkDecisions: persistedHunkDecisions,
+        fileDecisions: persistedFileDecisions,
+        hunkContextHashesByFile: persistedHashes,
+        reviewActionHistory: persistedReviewActionHistory,
+        reviewRedoHistory: persistedReviewRedoHistory,
+      };
       const write = async (): Promise<void> => {
         const expectedRevision = decisionRevisionByScope.get(scopeStorageKey) ?? 0;
         const saved = await api.review.saveDecisions(
@@ -1033,6 +1054,40 @@ export const createChangeReviewSlice: StateCreator<AppState, [], [], ChangeRevie
         );
         decisionRevisionByScope.set(scopeStorageKey, saved.revision);
         const latest = get();
+        if (
+          saved.reconciledState &&
+          latest.decisionHydrationScopeKey === scopeStorageKey &&
+          latest.decisionHydrationStatus === 'loaded'
+        ) {
+          const liveSnapshot: ReviewPersistedStateSnapshot = {
+            hunkDecisions: latest.hunkDecisions,
+            fileDecisions: latest.fileDecisions,
+            hunkContextHashesByFile: latest.hunkContextHashesByFile,
+            reviewActionHistory: latest.reviewActionHistory,
+            reviewRedoHistory: latest.reviewRedoHistory,
+          };
+          if (!reviewPersistedSnapshotsEqual(liveSnapshot, queuedSnapshot)) {
+            set({
+              decisionHydrationStatus: 'error',
+              applyError:
+                'Saved review advanced while local actions changed. Reload Changes before continuing.',
+            });
+            throw new Error('Review reconciliation raced a newer local action');
+          }
+          const normalized = normalizePersistedReviewState(
+            latest.activeChangeSet?.files ?? [],
+            saved.reconciledState
+          );
+          set({
+            hunkDecisions: normalized.hunkDecisions,
+            fileDecisions: normalized.fileDecisions,
+            hunkContextHashesByFile: normalized.hunkContextHashesByFile,
+            reviewActionHistory: saved.reconciledState.reviewActionHistory,
+            reviewRedoHistory: saved.reconciledState.reviewRedoHistory,
+            decisionRevision: saved.revision,
+          });
+          return;
+        }
         if (
           latest.decisionHydrationScopeKey === scopeStorageKey &&
           latest.decisionHydrationStatus === 'loaded'

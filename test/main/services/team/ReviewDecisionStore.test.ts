@@ -559,6 +559,30 @@ describe('ReviewDecisionStore', () => {
     await expect(
       store.loadConflictCandidates('demo', 'task-123', scopeToken)
     ).resolves.toEqual(before);
+
+    const selected = before[0]!;
+    await expect(
+      store.resolveConflictCandidate(
+        'demo',
+        'task-123',
+        scopeToken,
+        selected.id,
+        'recover-candidate',
+        1
+      )
+    ).resolves.toBe(2);
+    await expect(store.load('demo', 'task-123', scopeToken)).resolves.toMatchObject({
+      revision: 2,
+      hunkDecisions: selected.state.hunkDecisions,
+    });
+    const afterSwap = await store.loadConflictCandidates('demo', 'task-123', scopeToken);
+    expect(afterSwap).toHaveLength(8);
+    expect(afterSwap.some((candidate) => candidate.id === selected.id)).toBe(false);
+    expect(afterSwap).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: expect.objectContaining({ hunkDecisions: { canonical: 'accepted' } }) }),
+      ])
+    );
   });
 
   it('refuses a symlinked recovery directory without touching external files', async () => {
@@ -600,6 +624,40 @@ describe('ReviewDecisionStore', () => {
     ).rejects.toThrow('Unsafe persistence directory');
     await expect(readFile(path.join(external, sentinelName), 'utf8')).resolves.toBe('sentinel');
     await expect(readdir(external)).resolves.toEqual([sentinelName]);
+  });
+
+  it('fails closed for a symlinked canonical scope directory', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const external = await mkdtemp(path.join(tmpdir(), 'external-review-decisions-'));
+    const sentinelPath = path.join(external, 'sentinel.json');
+    try {
+      await writeFile(sentinelPath, 'sentinel', 'utf8');
+      const scopeParent = path.join(
+        teamsBasePath,
+        'demo',
+        'review-decisions',
+        'v2'
+      );
+      await mkdir(scopeParent, { recursive: true });
+      await symlink(external, path.join(scopeParent, 'task-123'), 'dir');
+
+      await expect(
+        store.save('demo', 'task-123', {
+          scopeToken: 'canonical-symlink-scope',
+          hunkDecisions: { local: 'accepted' },
+          fileDecisions: {},
+          expectedRevision: 0,
+        })
+      ).rejects.toThrow('Unsafe persistence directory');
+      await expect(store.clear('demo', 'task-123')).rejects.toThrow(
+        'Unsafe persistence directory'
+      );
+      await expect(readFile(sentinelPath, 'utf8')).resolves.toBe('sentinel');
+      await expect(readdir(external)).resolves.toEqual(['sentinel.json']);
+    } finally {
+      await rm(external, { recursive: true, force: true });
+    }
   });
 
   it('quarantines an unreadable decision candidate without hiding valid recovery branches', async () => {
@@ -728,10 +786,13 @@ describe('ReviewDecisionStore', () => {
       store.save('demo', 'task-123', { ...target, expectedRevision: 2 })
     ).rejects.toThrow('Review decisions changed; refusing stale state overwrite');
 
+    const exactPath = exactScopeFilePath('demo', 'task-123', scopeToken);
+    const beforeExactRetry = await readFile(exactPath, 'utf8');
     await expect(store.save('demo', 'task-123', { ...target, expectedRevision: 1 })).resolves.toBe(
-      2
+      1
     );
-    await expect(store.save('demo', 'task-123', target)).resolves.toBe(2);
+    await expect(readFile(exactPath, 'utf8')).resolves.toBe(beforeExactRetry);
+    await expect(store.save('demo', 'task-123', target)).resolves.toBe(1);
   });
 
   it('migrates a legacy revision zero snapshot through the first CAS write', async () => {

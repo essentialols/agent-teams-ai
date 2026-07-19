@@ -38,6 +38,7 @@ import type {
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
   ReviewUndoAction,
+  SaveReviewDecisionsResult,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
@@ -847,7 +848,7 @@ export interface ReviewAPI {
     reviewActionHistory?: ReviewUndoAction[],
     expectedRevision?: number,
     reviewRedoHistory?: ReviewRedoAction[]
-  ) => Promise<{ revision: number }>;
+  ) => Promise<SaveReviewDecisionsResult>;
   clearDecisions: (
     teamName: string,
     scopeKey: string,

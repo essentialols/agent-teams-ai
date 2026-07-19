@@ -246,6 +246,12 @@ export interface ReviewPersistedStateSnapshot {
   reviewRedoHistory: ReviewRedoAction[];
 }
 
+/** Save acknowledgement that can reconcile a response-loss retry with a newer canonical suffix. */
+export interface SaveReviewDecisionsResult {
+  revision: number;
+  reconciledState?: ReviewPersistedStateSnapshot;
+}
+
 /** Durable renderer branch preserved after a decision CAS conflict. */
 export interface ReviewDecisionConflictCandidate {
   id: string;

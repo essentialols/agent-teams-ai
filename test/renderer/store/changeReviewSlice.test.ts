@@ -2656,6 +2656,77 @@ describe('changeReviewSlice task changes', () => {
     vi.mocked(console.error).mockClear();
   });
 
+  it('hydrates a canonical suffix returned by a contained response-loss retry', async () => {
+    const store = createSliceStore();
+    const actionA = {
+      id: 'accepted-a',
+      createdAt: '2026-07-18T10:00:00.000Z',
+      kind: 'hunk' as const,
+      action: { filePath: '/repo/file.ts', originalIndex: 0 },
+    };
+    const actionB = {
+      ...actionA,
+      id: 'accepted-b',
+      createdAt: '2026-07-18T10:00:01.000Z',
+    };
+    const actionC = {
+      ...actionA,
+      id: 'accepted-c',
+      createdAt: '2026-07-18T10:00:02.000Z',
+    };
+    const scopeKey = 'team-a:agent-alice:response-loss-scope';
+    store.setState({
+      activeChangeSet: makeAgentChangeSet(),
+      hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+      reviewActionHistory: [actionA],
+      decisionHydrationScopeKey: scopeKey,
+      decisionHydrationStatus: 'loaded',
+    });
+    store.getState().recordDecisionRevision(
+      'team-a',
+      'agent-alice',
+      'response-loss-scope',
+      0
+    );
+    hoisted.saveDecisions.mockResolvedValueOnce({
+      revision: 2,
+      reconciledState: {
+        hunkDecisions: { '/repo/file.ts:0': 'accepted' },
+        fileDecisions: {},
+        hunkContextHashesByFile: { '/repo/file.ts': {} },
+        reviewActionHistory: [actionA, actionB],
+        reviewRedoHistory: [],
+      },
+    });
+
+    store.getState().persistDecisions('team-a', 'agent-alice', 'response-loss-scope');
+    await expect(
+      store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'response-loss-scope')
+    ).resolves.toBe(true);
+    expect(store.getState()).toMatchObject({
+      decisionRevision: 2,
+      reviewActionHistory: [actionA, actionB],
+    });
+
+    store.setState({ reviewActionHistory: [actionA, actionB, actionC] });
+    hoisted.saveDecisions.mockResolvedValueOnce({ revision: 3 });
+    store.getState().persistDecisions('team-a', 'agent-alice', 'response-loss-scope');
+    await expect(
+      store.getState().flushDecisionsToDisk('team-a', 'agent-alice', 'response-loss-scope')
+    ).resolves.toBe(true);
+    expect(hoisted.saveDecisions).toHaveBeenLastCalledWith(
+      'team-a',
+      'agent-alice',
+      'response-loss-scope',
+      { '/repo/file.ts:0': 'accepted' },
+      {},
+      { '/repo/file.ts': {} },
+      [actionA, actionB, actionC],
+      2,
+      []
+    );
+  });
+
   it('serializes a close flush behind an older in-flight decision write', async () => {
     vi.useFakeTimers();
     try {

@@ -120,6 +120,7 @@ import type {
   ReviewRedoAction,
   ReviewRenameRecoveryExpectation,
   ReviewUndoAction,
+  SaveReviewDecisionsResult,
   SnippetDiff,
   TaskChangeRequestOptions,
   TaskChangeSetV2,
@@ -4097,7 +4098,7 @@ async function handleSaveDecisions(
   reviewActionHistory: ReviewUndoAction[] = [],
   expectedRevision: number | undefined = undefined,
   reviewRedoHistory: ReviewRedoAction[] = []
-): Promise<IpcResult<{ revision: number }>> {
+): Promise<IpcResult<SaveReviewDecisionsResult>> {
   return wrapReviewHandler('saveDecisions', async () => {
     if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0) {
       throw new Error('Saving review decisions requires an exact decision revision');
@@ -4140,7 +4141,19 @@ async function handleSaveDecisions(
             authorization
           )
         ) {
-          return { revision: currentRevision };
+          if (!current) {
+            throw new Error('Canonical review state disappeared during retry reconciliation');
+          }
+          return {
+            revision: currentRevision,
+            reconciledState: {
+              hunkDecisions: current.hunkDecisions,
+              fileDecisions: current.fileDecisions,
+              hunkContextHashesByFile: current.hunkContextHashesByFile,
+              reviewActionHistory: current.reviewActionHistory,
+              reviewRedoHistory: current.reviewRedoHistory,
+            },
+          };
         }
         assertReviewCandidateWithinAuthorization(incomingState, authorization);
         const boundCandidate = await bindNewReviewHistorySnapshots(

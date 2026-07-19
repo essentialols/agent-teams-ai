@@ -29,6 +29,8 @@ export interface TeamProvisioningPersistedMessagePayload extends Record<string, 
   to: InboxMessage['to'];
   text: InboxMessage['text'];
   timestamp: InboxMessage['timestamp'];
+  actionMode: InboxMessage['actionMode'];
+  commentId: InboxMessage['commentId'];
   summary: InboxMessage['summary'];
   messageId: InboxMessage['messageId'];
   relayOfMessageId: InboxMessage['relayOfMessageId'];
@@ -59,11 +61,22 @@ export type TeamProvisioningPersistedInboxMessagePayload = Omit<
 function mapControllerMessagePayload(
   message: InboxMessage
 ): TeamProvisioningPersistedMessagePayload {
+  const actionMode =
+    message.actionMode === 'do' || message.actionMode === 'ask' || message.actionMode === 'delegate'
+      ? message.actionMode
+      : undefined;
+  const commentId =
+    typeof message.commentId === 'string' && message.commentId.trim()
+      ? message.commentId.trim()
+      : undefined;
+
   return {
     from: message.from,
     to: message.to,
     text: message.text,
     timestamp: message.timestamp,
+    actionMode,
+    commentId,
     summary: message.summary,
     messageId: message.messageId,
     relayOfMessageId: message.relayOfMessageId,
@@ -95,6 +108,8 @@ function mapControllerInboxMessagePayload(
     from: payload.from,
     text: payload.text,
     timestamp: payload.timestamp,
+    actionMode: payload.actionMode,
+    commentId: payload.commentId,
     summary: payload.summary,
     messageId: payload.messageId,
     relayOfMessageId: payload.relayOfMessageId,

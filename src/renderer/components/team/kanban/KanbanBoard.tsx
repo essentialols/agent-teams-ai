@@ -235,6 +235,7 @@ interface SortableKanbanTaskCardProps {
   teamName: string;
   kanbanState: KanbanState;
   compact?: boolean;
+  showSeparator: boolean;
   taskMap: Map<string, TeamTask>;
   memberColorMap: Map<string, string>;
   hasLiveTaskLogs?: boolean;
@@ -257,6 +258,7 @@ const SortableKanbanTaskCard = ({
   teamName,
   kanbanState,
   compact,
+  showSeparator,
   taskMap,
   memberColorMap,
   hasLiveTaskLogs,
@@ -294,6 +296,7 @@ const SortableKanbanTaskCard = ({
         kanbanTaskState={kanbanState.tasks[task.id]}
         hasReviewers={kanbanState.reviewers.length > 0}
         compact={compact}
+        showSeparator={showSeparator}
         taskMap={taskMap}
         memberColorMap={memberColorMap}
         hasLiveTaskLogs={hasLiveTaskLogs}
@@ -528,7 +531,7 @@ export const KanbanBoard = memo(function KanbanBoard({
         <button
           type="button"
           onClick={addHandler}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-emphasis)] hover:text-[var(--color-text-secondary)]"
+          className="ml-2 flex w-[calc(100%_-_0.5rem)] items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-emphasis)] hover:text-[var(--color-text-secondary)]"
         >
           <Plus size={13} />
           {t('kanban.board.addTask')}
@@ -538,7 +541,7 @@ export const KanbanBoard = memo(function KanbanBoard({
       if (columnTasks.length === 0) {
         return (
           addButton ?? (
-            <div className="rounded-md border border-dashed border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)]">
+            <div className="ml-2 w-[calc(100%_-_0.5rem)] rounded-md border border-dashed border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)]">
               {t('kanban.board.noTasks')}
             </div>
           )
@@ -567,7 +570,7 @@ export const KanbanBoard = memo(function KanbanBoard({
         return (
           <>
             <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-              {visibleTasks.map((task) => (
+              {visibleTasks.map((task, index) => (
                 <SortableKanbanTaskCard
                   key={task.id}
                   task={task}
@@ -575,6 +578,7 @@ export const KanbanBoard = memo(function KanbanBoard({
                   teamName={teamName}
                   kanbanState={kanbanState}
                   compact={compact}
+                  showSeparator={index < visibleTasks.length - 1}
                   taskMap={taskMap}
                   memberColorMap={memberColorMap}
                   hasLiveTaskLogs={Boolean(activeTaskLogActivity?.[task.id])}
@@ -599,7 +603,7 @@ export const KanbanBoard = memo(function KanbanBoard({
       }
       return (
         <>
-          {visibleTasks.map((task) => (
+          {visibleTasks.map((task, index) => (
             <KanbanTaskCard
               flat
               key={task.id}
@@ -609,6 +613,7 @@ export const KanbanBoard = memo(function KanbanBoard({
               kanbanTaskState={kanbanState.tasks[task.id]}
               hasReviewers={hasReviewers}
               compact={compact}
+              showSeparator={index < visibleTasks.length - 1}
               taskMap={taskMap}
               memberColorMap={memberColorMap}
               hasLiveTaskLogs={Boolean(activeTaskLogActivity?.[task.id])}
@@ -764,7 +769,7 @@ export const KanbanBoard = memo(function KanbanBoard({
     <div ref={boardRef} className="min-w-0 max-w-full overflow-x-hidden">
       <div
         className={cn(
-          'flex min-w-0 max-w-full items-center gap-2',
+          'flex min-w-0 max-w-full items-center gap-2 px-2',
           viewMode === 'columns' ? 'mb-0' : 'mb-2',
           toolbarLeft == null && 'justify-end'
         )}
@@ -854,8 +859,8 @@ export const KanbanBoard = memo(function KanbanBoard({
           columns={gridColumns}
         />
       ) : (
-        <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden px-1 pb-6 pr-4 pt-2">
-          <div className="flex min-w-max items-start pr-1">
+        <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden pb-6 pt-2">
+          <div className="flex min-w-max items-start">
             {visibleColumns.map((column, index) => {
               const columnTasks = groupedOrdered.get(column.id) ?? [];
               const accent = COLUMN_ACCENTS[column.id];

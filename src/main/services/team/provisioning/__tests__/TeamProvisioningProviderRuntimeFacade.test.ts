@@ -63,6 +63,7 @@ function createEnvRuntimePorts(): TeamProvisioningEnvRuntimePorts {
       ]),
       envPatch: { CODEX_HOME: '/repo/codex-home' },
       usesAnthropicApiKeyHelper: false,
+      ...({ anthropicApiKeyHelper: null } as const),
     })),
     resolveControlApiBaseUrl: vi.fn(async () => 'http://127.0.0.1:4567'),
   };

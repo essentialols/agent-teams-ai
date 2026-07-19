@@ -1,3 +1,4 @@
+import { createAppCloseCoordinationBridge } from '@features/app-close-coordination/preload';
 import { createCodexAccountBridge } from '@features/codex-account/preload';
 import { createCodexRuntimeInstallerBridge } from '@features/codex-runtime-installer/preload';
 import { createMemberLogStreamBridge } from '@features/member-log-stream/preload';
@@ -89,6 +90,9 @@ import {
   REVIEW_APPLY_DECISIONS,
   REVIEW_CHECK_CONFLICT,
   REVIEW_CLEAR_DECISIONS,
+  REVIEW_CLEAR_DRAFT_HISTORY,
+  REVIEW_DELETE_EDITED_FILE,
+  REVIEW_EXECUTE_MUTATION,
   REVIEW_FILE_CHANGE,
   REVIEW_GET_AGENT_CHANGES,
   REVIEW_GET_CHANGE_STATS,
@@ -98,10 +102,16 @@ import {
   REVIEW_GET_TEAM_TASK_CHANGE_SUMMARIES,
   REVIEW_INVALIDATE_TASK_CHANGE_SUMMARIES,
   REVIEW_LOAD_DECISIONS,
+  REVIEW_LOAD_DRAFT_HISTORY,
   REVIEW_PREVIEW_REJECT,
+  REVIEW_REAPPLY_REJECTED_RENAME,
   REVIEW_REJECT_FILE,
   REVIEW_REJECT_HUNKS,
+  REVIEW_RESTORE_HISTORY,
+  REVIEW_RESTORE_REJECTED_RENAME,
+  REVIEW_RETRY_MUTATION_RECOVERY,
   REVIEW_SAVE_DECISIONS,
+  REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
   REVIEW_SAVE_EDITED_FILE,
   REVIEW_UNWATCH_FILES,
   REVIEW_WATCH_FILES,
@@ -269,6 +279,10 @@ import {
 } from './constants/ipcChannels';
 
 import type {
+  ReviewDraftHistoryEntry,
+  ReviewDraftHistorySnapshot,
+} from '@features/change-review-history/contracts';
+import type {
   AddMemberRequest,
   AddTaskCommentRequest,
   AgentChangeSet,
@@ -298,6 +312,8 @@ import type {
   CrossTeamSendRequest,
   CrossTeamSendResult,
   ElectronAPI,
+  ExecuteReviewMutationRequest,
+  ExecuteReviewMutationResult,
   FileChangeWithContent,
   GlobalTask,
   HttpServerStatus,
@@ -316,7 +332,15 @@ import type {
   ProjectBranchChangeEvent,
   RejectResult,
   ReplaceMembersRequest,
+  RestoreReviewHistoryRequest,
+  RestoreReviewHistoryResult,
   RetryFailedOpenCodeSecondaryLanesResult,
+  RetryReviewMutationRecoveryRequest,
+  RetryReviewMutationRecoveryResult,
+  ReviewFileScope,
+  ReviewRedoAction,
+  ReviewRenameRecoveryExpectation,
+  ReviewUndoAction,
   Schedule,
   ScheduleChangeEvent,
   ScheduleRun,
@@ -588,6 +612,7 @@ ipcRenderer.on(
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 const electronAPI: ElectronAPI = {
+  appCloseCoordination: createAppCloseCoordinationBridge(ipcRenderer),
   ...createCodexAccountBridge({
     ipcRenderer,
   }),
@@ -1539,32 +1564,32 @@ const electronAPI: ElectronAPI = {
     applyDecisions: async (request: ApplyReviewRequest) => {
       return invokeIpcWithResult<ApplyReviewResult>(REVIEW_APPLY_DECISIONS, request);
     },
+    executeMutation: async (request: ExecuteReviewMutationRequest) => {
+      return invokeIpcWithResult<ExecuteReviewMutationResult>(REVIEW_EXECUTE_MUTATION, request);
+    },
+    retryMutationRecovery: async (request: RetryReviewMutationRecoveryRequest) => {
+      return invokeIpcWithResult<RetryReviewMutationRecoveryResult>(
+        REVIEW_RETRY_MUTATION_RECOVERY,
+        request
+      );
+    },
+    restoreHistory: async (request: RestoreReviewHistoryRequest) => {
+      return invokeIpcWithResult<RestoreReviewHistoryResult>(REVIEW_RESTORE_HISTORY, request);
+    },
     // Phase 2
-    checkConflict: async (filePath: string, expectedModified: string) => {
+    checkConflict: async (scope: ReviewFileScope, filePath: string, expectedModified: string) => {
       return invokeIpcWithResult<ConflictCheckResult>(
         REVIEW_CHECK_CONFLICT,
+        scope,
         filePath,
         expectedModified
       );
     },
-    rejectHunks: async (
-      filePath: string,
-      original: string,
-      modified: string,
-      hunkIndices: number[],
-      snippets: SnippetDiff[]
-    ) => {
-      return invokeIpcWithResult<RejectResult>(
-        REVIEW_REJECT_HUNKS,
-        filePath,
-        original,
-        modified,
-        hunkIndices,
-        snippets
-      );
+    rejectHunks: async (scope: ReviewFileScope, filePath: string, hunkIndices: number[]) => {
+      return invokeIpcWithResult<RejectResult>(REVIEW_REJECT_HUNKS, scope, filePath, hunkIndices);
     },
-    rejectFile: async (filePath: string, original: string, modified: string) => {
-      return invokeIpcWithResult<RejectResult>(REVIEW_REJECT_FILE, filePath, original, modified);
+    rejectFile: async (scope: ReviewFileScope, filePath: string) => {
+      return invokeIpcWithResult<RejectResult>(REVIEW_REJECT_FILE, scope, filePath);
     },
     previewReject: async (
       filePath: string,
@@ -1583,12 +1608,54 @@ const electronAPI: ElectronAPI = {
       );
     },
     // Editable diff
-    saveEditedFile: async (filePath: string, content: string, projectPath?: string) => {
+    saveEditedFile: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      content: string,
+      expectedCurrentContent: string | null
+    ) => {
       return invokeIpcWithResult<{ success: boolean }>(
         REVIEW_SAVE_EDITED_FILE,
+        scope,
         filePath,
         content,
-        projectPath
+        expectedCurrentContent
+      );
+    },
+    deleteEditedFile: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      expectedCurrentContent: string
+    ) => {
+      return invokeIpcWithResult<{ success: boolean }>(
+        REVIEW_DELETE_EDITED_FILE,
+        scope,
+        filePath,
+        expectedCurrentContent
+      );
+    },
+    restoreRejectedRename: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      expectation: ReviewRenameRecoveryExpectation
+    ) => {
+      return invokeIpcWithResult<{ success: boolean }>(
+        REVIEW_RESTORE_REJECTED_RENAME,
+        scope,
+        filePath,
+        expectation
+      );
+    },
+    reapplyRejectedRename: async (
+      scope: ReviewFileScope,
+      filePath: string,
+      expectation: ReviewRenameRecoveryExpectation
+    ) => {
+      return invokeIpcWithResult<{ success: boolean }>(
+        REVIEW_REAPPLY_REJECTED_RENAME,
+        scope,
+        filePath,
+        expectation
       );
     },
     watchFiles: async (projectPath: string, filePaths: string[]) => {
@@ -1611,6 +1678,9 @@ const electronAPI: ElectronAPI = {
         hunkDecisions: Record<string, HunkDecision>;
         fileDecisions: Record<string, HunkDecision>;
         hunkContextHashesByFile?: Record<string, Record<number, string>>;
+        reviewActionHistory: ReviewUndoAction[];
+        reviewRedoHistory: ReviewRedoAction[];
+        revision: number;
       } | null>(REVIEW_LOAD_DECISIONS, teamName, scopeKey, scopeToken ?? null);
     },
     saveDecisions: async (
@@ -1619,24 +1689,80 @@ const electronAPI: ElectronAPI = {
       scopeToken: string,
       hunkDecisions: Record<string, HunkDecision>,
       fileDecisions: Record<string, HunkDecision>,
-      hunkContextHashesByFile?: Record<string, Record<number, string>>
+      hunkContextHashesByFile?: Record<string, Record<number, string>>,
+      reviewActionHistory?: ReviewUndoAction[],
+      expectedRevision?: number,
+      reviewRedoHistory?: ReviewRedoAction[]
     ) => {
-      return invokeIpcWithResult<void>(
+      return invokeIpcWithResult<{ revision: number }>(
         REVIEW_SAVE_DECISIONS,
         teamName,
         scopeKey,
         scopeToken,
         hunkDecisions,
         fileDecisions,
-        hunkContextHashesByFile ?? null
+        hunkContextHashesByFile ?? null,
+        reviewActionHistory ?? [],
+        expectedRevision,
+        reviewRedoHistory ?? []
       );
     },
-    clearDecisions: async (teamName: string, scopeKey: string, scopeToken?: string) => {
-      return invokeIpcWithResult<void>(
+    clearDecisions: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken?: string,
+      expectedRevision?: number
+    ) => {
+      return invokeIpcWithResult<{ revision: number }>(
         REVIEW_CLEAR_DECISIONS,
         teamName,
         scopeKey,
-        scopeToken ?? null
+        scopeToken ?? null,
+        expectedRevision
+      );
+    },
+    loadDraftHistory: async (teamName: string, scopeKey: string, scopeToken: string) => {
+      return invokeIpcWithResult<ReviewDraftHistorySnapshot | null>(
+        REVIEW_LOAD_DRAFT_HISTORY,
+        teamName,
+        scopeKey,
+        scopeToken
+      );
+    },
+    saveDraftHistoryEntry: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken: string,
+      entry: Omit<ReviewDraftHistoryEntry, 'updatedAt' | 'generation'>,
+      expectedRevision: number,
+      expectedGeneration: string | null
+    ) => {
+      return invokeIpcWithResult<ReviewDraftHistoryEntry>(
+        REVIEW_SAVE_DRAFT_HISTORY_ENTRY,
+        teamName,
+        scopeKey,
+        scopeToken,
+        entry,
+        expectedRevision,
+        expectedGeneration
+      );
+    },
+    clearDraftHistory: async (
+      teamName: string,
+      scopeKey: string,
+      scopeToken: string,
+      filePath?: string,
+      expectedRevision?: number,
+      expectedGeneration?: string | null
+    ) => {
+      return invokeIpcWithResult<void>(
+        REVIEW_CLEAR_DRAFT_HISTORY,
+        teamName,
+        scopeKey,
+        scopeToken,
+        filePath ?? null,
+        expectedRevision ?? null,
+        expectedGeneration ?? null
       );
     },
     onCmdN: (callback: () => void): (() => void) => {

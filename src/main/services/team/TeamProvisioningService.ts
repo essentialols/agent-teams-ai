@@ -143,6 +143,11 @@ import {
   getAnthropicFastModeDefault,
   getTeamProviderLabel,
 } from './provisioning/TeamProvisioningRuntimeDiagnostics';
+import {
+  type LeadRuntimeFailureObservation,
+  type RuntimeFailureObservationInput,
+  TeamProvisioningRuntimeFailureObservationBoundary,
+} from './provisioning/TeamProvisioningRuntimeFailureObservationBoundary';
 import { type TeamProvisioningRuntimeProjection } from './provisioning/TeamProvisioningRuntimeProjectionFactory';
 import { createTeamProvisioningRuntimeResourceCacheBoundary } from './provisioning/TeamProvisioningRuntimeResourceCacheBoundary';
 import { TeamProvisioningRunTrackingDeliveryHelper } from './provisioning/TeamProvisioningRunTrackingDelivery';
@@ -218,6 +223,8 @@ import type {
 const logger = createLogger('Service:TeamProvisioning');
 const { AGENT_TEAMS_NAMESPACED_LEAD_BOOTSTRAP_TOOL_NAMES, createController } =
   agentTeamsControllerModule;
+
+export type { LeadRuntimeFailureObservation } from './provisioning/TeamProvisioningRuntimeFailureObservationBoundary';
 
 interface PrimaryRuntimeStoppingState {
   kind: 'manual' | 'replacement';
@@ -646,6 +653,8 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
   protected readonly memberLifecycleFacade: TeamProvisioningMemberLifecyclePublicFacade =
     this.memberLifecycleController;
   protected teamChangeEmitter: ((event: TeamChangeEvent) => void) | null = null;
+  private readonly runtimeFailureObservationBoundary =
+    new TeamProvisioningRuntimeFailureObservationBoundary();
   protected readonly helpOutputCache = { output: null as string | null, cachedAtMs: 0 };
   protected readonly pendingTimeouts = new Map<string, NodeJS.Timeout>();
   protected readonly toolApprovalFacade!: TeamProvisioningToolApprovalFacade<ProvisioningRun>;
@@ -943,10 +952,13 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
   protected override async sendOpenCodeMemberMessageToRuntimeSerialized(input: {
     teamName: string;
     laneId: string;
+    memberName?: string;
     send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
   }): Promise<OpenCodeTeamRuntimeMessageResult> {
+    const memberName = input.memberName?.trim().toLowerCase();
     return await super.sendOpenCodeMemberMessageToRuntimeSerialized({
-      ...input,
+      teamName: input.teamName,
+      laneId: memberName ? JSON.stringify([input.laneId.trim(), memberName]) : input.laneId,
       send: async () => {
         if (this.stoppingPrimaryRuntimeTeams.has(input.teamName)) {
           return {
@@ -963,6 +975,19 @@ export class TeamProvisioningService extends TeamProvisioningServiceFacadeDelega
 
   setTeamChangeEmitter(emitter: ((event: TeamChangeEvent) => void) | null): void {
     this.teamChangeEmitter = emitter;
+  }
+
+  setRuntimeRecoveryFailureObserver(
+    observer: ((failure: LeadRuntimeFailureObservation) => void) | null
+  ): void {
+    this.runtimeFailureObservationBoundary.setObserver(observer);
+  }
+
+  protected observeRuntimeFailure(
+    run: ProvisioningRun,
+    failure: RuntimeFailureObservationInput
+  ): void {
+    this.runtimeFailureObservationBoundary.observe(run, this.getRunLeadName(run), failure);
   }
 
   async createTeam(

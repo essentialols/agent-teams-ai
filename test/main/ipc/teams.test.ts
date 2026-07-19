@@ -124,6 +124,17 @@ vi.mock('@main/services/team/TeamDataWorkerClient', () => ({
     );
   },
 }));
+vi.mock('@main/services/team/AutoResumeService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@main/services/team/AutoResumeService')>();
+  return {
+    ...actual,
+    getAutoResumeService: () => ({
+      handleRateLimitMessage: () => undefined,
+      cancelPendingAutoResume: () => undefined,
+      clearAllPendingAutoResume: () => undefined,
+    }),
+  };
+});
 
 import {
   type CanonicalListTeamLifecycleResult,
@@ -142,7 +153,6 @@ import {
   computeTeamWatchScope,
   resetTeamWatchScopeForTests,
 } from '../../../src/main/services/infrastructure/teamWatchScope';
-import { getAutoResumeService } from '../../../src/main/services/team/AutoResumeService';
 import { LaunchIoGovernor } from '../../../src/main/services/team/LaunchIoGovernor';
 import { getAppDataPath } from '../../../src/main/utils/pathDecoder';
 import {
@@ -818,66 +828,26 @@ describe('ipc teams handlers', () => {
     });
   });
 
-  it('preserves narrow facade receivers when auto-resume invokes its IPC dependencies', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-04-17T12:00:00.000Z'));
-    const configManager = ConfigManager.getInstance();
-    const actualConfig = configManager.getConfig();
-    const getConfigSpy = vi.spyOn(configManager, 'getConfig').mockImplementation(
-      () =>
-        ({
-          ...actualConfig,
-          notifications: {
-            ...actualConfig.notifications,
-            autoResumeOnRateLimit: true,
-          },
-        }) as never
-    );
+  it('preserves narrow facade receivers when a team handler invokes its runtime dependency', async () => {
     const runtimeCalls: string[] = [];
-    const sentMessages: string[] = [];
     const runtimeFacade = {
       ...teamHandlerApis.runtime,
-      getCurrentRunId(teamName: string): string | null {
+      stopTeam(teamName: string): Promise<void> {
         if (this !== runtimeFacade) throw new Error('runtime facade receiver lost');
-        runtimeCalls.push(`run:${teamName}`);
-        return 'run-receiver';
-      },
-      isTeamAlive(teamName: string): boolean {
-        if (this !== runtimeFacade) throw new Error('runtime facade receiver lost');
-        runtimeCalls.push(`alive:${teamName}`);
-        return true;
-      },
-    };
-    const messagingFacade = {
-      ...teamHandlerApis.messaging,
-      sendMessageToTeam(teamName: string, message: string): Promise<void> {
-        if (this !== messagingFacade) throw new Error('messaging facade receiver lost');
-        sentMessages.push(`${teamName}:${message}`);
+        runtimeCalls.push(`stop:${teamName}`);
         return Promise.resolve();
       },
     };
 
-    try {
-      initializeTeamHandlers(service as never, {
-        ...teamHandlerApis,
-        runtime: runtimeFacade,
-        messaging: messagingFacade,
-      });
+    initializeTeamHandlers(service as never, {
+      ...teamHandlerApis,
+      runtime: runtimeFacade,
+    });
 
-      getAutoResumeService().handleRateLimitMessage(
-        'my-team',
-        "You've hit your limit. Resets in 1 minute.",
-        new Date()
-      );
-      await vi.advanceTimersByTimeAsync(90_000);
+    const result = await handlers.get(TEAM_STOP)!({} as never, 'my-team');
 
-      expect(runtimeCalls).toEqual(['run:my-team', 'alive:my-team', 'run:my-team']);
-      expect(sentMessages).toHaveLength(1);
-      expect(sentMessages[0]).toContain('my-team:Your rate limit has reset.');
-    } finally {
-      getAutoResumeService().clearAllPendingAutoResume();
-      getConfigSpy.mockRestore();
-    }
+    expect(result).toEqual({ success: true, data: undefined });
+    expect(runtimeCalls).toEqual(['stop:my-team']);
   });
 
   it('forwards selected model checks with effort to prepareProvisioning', async () => {
@@ -2662,7 +2632,7 @@ describe('ipc teams handlers', () => {
     }
   });
 
-  it('does not let a live duplicate of the same session rate-limit reply delay auto-resume', async () => {
+  it('does not schedule legacy auto-resume from duplicate rate-limit messages', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-17T12:00:30.000Z'));
     const configManager = ConfigManager.getInstance();
@@ -2731,7 +2701,7 @@ describe('ipc teams handlers', () => {
       expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       getConfigSpy.mockRestore();
     }
@@ -3076,7 +3046,7 @@ describe('ipc teams handlers', () => {
     expect(result.error).toContain('TEAM_DATA_WORKER_FAILED');
   });
 
-  it('rebuilds only the remaining auto-resume delay from persisted rate-limit history', async () => {
+  it('does not rebuild legacy auto-resume from persisted rate-limit history', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-17T12:02:00.000Z'));
     const configManager = ConfigManager.getInstance();
@@ -3128,13 +3098,13 @@ describe('ipc teams handlers', () => {
       expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       getConfigSpy.mockRestore();
     }
   });
 
-  it('can schedule auto-resume when the setting is enabled after an earlier history scan', async () => {
+  it('does not schedule legacy auto-resume when the old setting is enabled later', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-17T12:02:00.000Z'));
     const configManager = ConfigManager.getInstance();
@@ -3194,13 +3164,13 @@ describe('ipc teams handlers', () => {
       expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       getConfigSpy.mockRestore();
     }
   });
 
-  it('retries a previously over-ceiling history message once it becomes schedulable', async () => {
+  it('does not retry legacy auto-resume from persisted over-ceiling history', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-17T00:00:00.000Z'));
@@ -3260,7 +3230,7 @@ describe('ipc teams handlers', () => {
       expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1500);
-      expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledTimes(1);
+      expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
       getConfigSpy.mockRestore();

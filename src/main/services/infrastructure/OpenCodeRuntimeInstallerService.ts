@@ -1,4 +1,4 @@
-import { renamePathWithRetry } from '@main/utils/atomicWrite';
+import { atomicWriteAsync, renamePathWithRetry } from '@main/utils/atomicWrite';
 import { execCli } from '@main/utils/childProcess';
 import { getAppDataPath } from '@main/utils/pathDecoder';
 import {
@@ -161,10 +161,24 @@ function collectWindowsNativeOpenCodeBinaryCandidates(binaryPath: string): strin
 function collectNvmOpenCodeBinaryCandidates(): string[] {
   if (process.platform === 'win32') {
     const appdata = process.env.APPDATA;
-    if (!appdata) {
-      return [];
-    }
-    return collectVersionedOpenCodeBinaryCandidates(path.join(appdata, 'nvm'));
+    const activeNvmDirectory = process.env.NVM_SYMLINK;
+    const rootCandidates = [process.env.NVM_HOME, ...(appdata ? [path.join(appdata, 'nvm')] : [])];
+    const seenRoots = new Set<string>();
+    const versionedCandidates = rootCandidates.flatMap((rootPath) => {
+      if (!rootPath) return [];
+      const normalized = path.resolve(rootPath).toLowerCase();
+      if (seenRoots.has(normalized)) return [];
+      seenRoots.add(normalized);
+      return collectVersionedOpenCodeBinaryCandidates(rootPath);
+    });
+    return [
+      ...(activeNvmDirectory
+        ? getPathExecutableNames().map((executableName) =>
+            path.join(activeNvmDirectory, executableName)
+          )
+        : []),
+      ...versionedCandidates,
+    ];
   }
 
   return collectVersionedOpenCodeBinaryCandidates(
@@ -796,9 +810,12 @@ export class OpenCodeRuntimeInstallerService {
   }
 
   private publishProgress(progress: OpenCodeRuntimeInstallProgress): void {
+    const currentStatus = this.latestStatus;
     this.publish({
-      installed: false,
-      source: 'missing',
+      installed: currentStatus?.installed ?? false,
+      ...(currentStatus?.binaryPath ? { binaryPath: currentStatus.binaryPath } : {}),
+      ...(currentStatus?.version ? { version: currentStatus.version } : {}),
+      source: currentStatus?.source ?? 'missing',
       state: progress.phase,
       progress,
     });
@@ -852,7 +869,47 @@ export class OpenCodeRuntimeInstallerService {
     };
   }
 
+  private async resolveFreshInstalledStatusBeforeInstall(): Promise<OpenCodeRuntimeStatus | null> {
+    const latestStatus = this.latestStatus;
+    if (
+      latestStatus?.installed &&
+      latestStatus.source === 'path' &&
+      isAbsoluteExistingFile(latestStatus.binaryPath)
+    ) {
+      const version = await probeOpenCodeBinaryVersion(latestStatus.binaryPath);
+      if (version.ok) {
+        return {
+          installed: true,
+          binaryPath: latestStatus.binaryPath,
+          version: version.version ?? latestStatus.version,
+          source: 'path',
+          state: 'ready',
+        };
+      }
+    }
+
+    const manifest = await readCurrentManifest();
+    if (!isAbsoluteExistingFile(manifest?.binaryPath)) {
+      return null;
+    }
+    const version = await probeOpenCodeBinaryVersion(manifest.binaryPath);
+    if (!version.ok) {
+      return null;
+    }
+    return {
+      installed: true,
+      binaryPath: manifest.binaryPath,
+      version: version.version ?? manifest.version,
+      source: 'app-managed',
+      state: 'ready',
+    };
+  }
+
   private async installInternal(): Promise<OpenCodeRuntimeStatus> {
+    const previousStatus = await this.resolveFreshInstalledStatusBeforeInstall();
+    if (previousStatus) {
+      this.rememberStatus(previousStatus);
+    }
     try {
       this.publishProgress({ phase: 'checking', detail: 'Resolving latest OpenCode package...' });
       const rootMetadata = await fetchPackageMetadata(ROOT_PACKAGE_NAME);
@@ -889,25 +946,40 @@ export class OpenCodeRuntimeInstallerService {
       );
       const binaryPath = path.join(versionDir, getExecutableName());
 
-      await fsp.rm(tempDir, { recursive: true, force: true });
-      await fsp.mkdir(tempDir, { recursive: true });
-      const tempBinaryPath = path.join(tempDir, getExecutableName());
-      await fsp.writeFile(tempBinaryPath, binary);
-      if (process.platform !== 'win32') {
-        // Required so the downloaded OpenCode platform binary can be spawned.
-        // eslint-disable-next-line sonarjs/file-permissions -- app-managed CLI binary must be executable
-        await fsp.chmod(tempBinaryPath, 0o755);
+      let stdout = '';
+      try {
+        await fsp.rm(tempDir, { recursive: true, force: true });
+        await fsp.mkdir(tempDir, { recursive: true });
+        const tempBinaryPath = path.join(tempDir, getExecutableName());
+        await fsp.writeFile(tempBinaryPath, binary);
+        if (process.platform !== 'win32') {
+          // Required so the downloaded OpenCode platform binary can be spawned.
+          // eslint-disable-next-line sonarjs/file-permissions -- app-managed CLI binary must be executable
+          await fsp.chmod(tempBinaryPath, 0o755);
+        }
+
+        this.publishProgress({ phase: 'installing', detail: 'Verifying OpenCode binary...' });
+        ({ stdout } = await execCli(tempBinaryPath, ['--version'], {
+          timeout: VERSION_TIMEOUT_MS,
+          windowsHide: true,
+        }));
+
+        const currentManifest = await readCurrentManifest();
+        const canReuseExistingRuntime =
+          currentManifest?.platformPackage === selected.packageName &&
+          currentManifest.integrity === platformMetadata.dist!.integrity &&
+          normalizeBinaryCandidateForCompare(currentManifest.binaryPath) ===
+            normalizeBinaryCandidateForCompare(binaryPath) &&
+          isAbsoluteExistingFile(binaryPath) &&
+          (await probeOpenCodeBinaryVersion(binaryPath)).ok;
+        if (!canReuseExistingRuntime) {
+          await fsp.rm(versionDir, { recursive: true, force: true });
+          await fsp.mkdir(path.dirname(versionDir), { recursive: true });
+          await renamePathWithRetry(tempDir, versionDir);
+        }
+      } finally {
+        await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
-
-      this.publishProgress({ phase: 'installing', detail: 'Verifying OpenCode binary...' });
-      const { stdout } = await execCli(tempBinaryPath, ['--version'], {
-        timeout: VERSION_TIMEOUT_MS,
-        windowsHide: true,
-      });
-
-      await fsp.rm(versionDir, { recursive: true, force: true });
-      await fsp.mkdir(path.dirname(versionDir), { recursive: true });
-      await renamePathWithRetry(tempDir, versionDir);
       const manifest: OpenCodeRuntimeManifest = {
         schemaVersion: CURRENT_MANIFEST_SCHEMA_VERSION,
         version: stdout.trim() || platformMetadata.version!,
@@ -916,11 +988,7 @@ export class OpenCodeRuntimeInstallerService {
         integrity: platformMetadata.dist!.integrity!,
         installedAt: new Date().toISOString(),
       };
-      await fsp.writeFile(
-        getCurrentManifestPath(),
-        `${JSON.stringify(manifest, null, 2)}\n`,
-        'utf8'
-      );
+      await atomicWriteAsync(getCurrentManifestPath(), `${JSON.stringify(manifest, null, 2)}\n`);
       clearOpenCodeRuntimeBinaryResolverCache();
 
       const status: OpenCodeRuntimeStatus = {
@@ -939,8 +1007,10 @@ export class OpenCodeRuntimeInstallerService {
       return status;
     } catch (error) {
       const status: OpenCodeRuntimeStatus = {
-        installed: false,
-        source: 'missing',
+        ...(previousStatus ?? {
+          installed: false,
+          source: 'missing' as const,
+        }),
         state: 'failed',
         error: getErrorMessage(error),
         progress: {

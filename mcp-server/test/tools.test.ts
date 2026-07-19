@@ -167,6 +167,15 @@ describe('agent-teams-mcp tools', () => {
     ).toBe(true);
   });
 
+  it('accepts an omitted team_create roster while rejecting malformed provided rosters', () => {
+    const parameters = getTool('team_create').parameters;
+
+    expect(parameters?.safeParse({ teamName: 'alpha' }).success).toBe(true);
+    expect(parameters?.safeParse({ teamName: 'alpha', members: 'builder' }).success).toBe(false);
+    expect(parameters?.safeParse({ teamName: 'alpha', members: null }).success).toBe(false);
+    expect(parameters?.safeParse({ teamName: 'alpha', members: [{}] }).success).toBe(false);
+  });
+
   it('launches and stops teams through the runtime MCP tools', async () => {
     const claudeDir = makeClaudeDir();
     writeTeamConfig(claudeDir, 'alpha', {

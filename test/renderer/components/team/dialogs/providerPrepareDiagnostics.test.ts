@@ -568,6 +568,48 @@ describe('runProviderPrepareDiagnostics', () => {
     });
   });
 
+  it.each([
+    {
+      modelId: 'opencode/big-pickle',
+      providerError: 'Invalid API key.',
+      expected:
+        'OpenCode Zen rejected its API key. Reconnect OpenCode Zen in Plans & providers',
+    },
+    {
+      modelId: 'openrouter/openrouter/free',
+      providerError: 'Forbidden: Access denied by security policy.',
+      expected:
+        'OpenRouter blocked the request by account or security policy. Review its key restrictions, then reconnect it in Plans & providers',
+    },
+  ])('identifies the exact credential provider for $modelId failures', async (testCase) => {
+    const prepareProvisioning = vi.fn<
+      (
+        cwd?: string,
+        providerId?: TeamProviderId,
+        providerIds?: TeamProviderId[],
+        selectedModels?: string[]
+      ) => Promise<TeamProvisioningPrepareResult>
+    >(() =>
+      Promise.resolve({
+        ready: false,
+        message: `Selected model ${testCase.modelId} could not be verified. ${testCase.providerError}`,
+        warnings: [
+          `Selected model ${testCase.modelId} could not be verified. ${testCase.providerError}`,
+        ],
+      })
+    );
+
+    const result = await runProviderPrepareDiagnostics({
+      cwd: '/tmp/project',
+      providerId: 'opencode',
+      selectedModelIds: [testCase.modelId],
+      prepareProvisioning,
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.modelResultsById[testCase.modelId]?.line).toContain(testCase.expected);
+  });
+
   it('treats OpenCode busy model verification as deferred notes', async () => {
     const prepareProvisioning = vi.fn<
       (

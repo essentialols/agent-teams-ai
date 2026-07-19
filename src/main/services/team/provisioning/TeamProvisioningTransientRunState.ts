@@ -34,6 +34,8 @@ export interface TeamProvisioningTransientRunStatePorts {
   persistedTranscriptClaudeLogs: { invalidate(teamName: string): void };
   leadInboxRelayInFlight: DeleteByTeamName;
   relayedLeadInboxMessageIds: DeleteByTeamName;
+  leadRecoveryMessageIds: DeleteByTeamName;
+  successfulLeadRecoveryMessageIds: DeleteByTeamName;
   pendingCrossTeamFirstReplies: DeleteByTeamName;
   recentCrossTeamLeadDeliveryMessageIds: DeleteByTeamName;
   recentSameTeamNativeFingerprints: DeleteByTeamName;
@@ -79,6 +81,8 @@ export interface TeamProvisioningTransientRunStateServiceHost {
   };
   leadInboxRelayInFlight: TeamProvisioningTransientRunStatePorts['leadInboxRelayInFlight'];
   relayedLeadInboxMessageIds: TeamProvisioningTransientRunStatePorts['relayedLeadInboxMessageIds'];
+  leadRecoveryMessageIds: TeamProvisioningTransientRunStatePorts['leadRecoveryMessageIds'];
+  successfulLeadRecoveryMessageIds: TeamProvisioningTransientRunStatePorts['successfulLeadRecoveryMessageIds'];
   pendingCrossTeamFirstReplies: TeamProvisioningTransientRunStatePorts['pendingCrossTeamFirstReplies'];
   recentCrossTeamLeadDeliveryMessageIds: TeamProvisioningTransientRunStatePorts['recentCrossTeamLeadDeliveryMessageIds'];
   sameTeamNativeDelivery: TeamProvisioningTransientRunStatePorts['recentSameTeamNativeFingerprints'];
@@ -120,6 +124,8 @@ export function createTeamProvisioningTransientRunStatePortsFromService(
     },
     leadInboxRelayInFlight: service.leadInboxRelayInFlight,
     relayedLeadInboxMessageIds: service.relayedLeadInboxMessageIds,
+    leadRecoveryMessageIds: service.leadRecoveryMessageIds,
+    successfulLeadRecoveryMessageIds: service.successfulLeadRecoveryMessageIds,
     pendingCrossTeamFirstReplies: service.pendingCrossTeamFirstReplies,
     recentCrossTeamLeadDeliveryMessageIds: service.recentCrossTeamLeadDeliveryMessageIds,
     recentSameTeamNativeFingerprints: service.sameTeamNativeDelivery,
@@ -186,6 +192,8 @@ export class TeamProvisioningTransientRunState {
     this.ports.persistedTranscriptClaudeLogs.invalidate(teamName);
     this.ports.leadInboxRelayInFlight.delete(teamName);
     this.ports.relayedLeadInboxMessageIds.delete(teamName);
+    this.ports.leadRecoveryMessageIds.delete(teamName);
+    this.ports.successfulLeadRecoveryMessageIds.delete(teamName);
     this.ports.pendingCrossTeamFirstReplies.delete(teamName);
     this.ports.recentCrossTeamLeadDeliveryMessageIds.delete(teamName);
     this.ports.recentSameTeamNativeFingerprints.delete(teamName);

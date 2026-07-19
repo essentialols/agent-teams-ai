@@ -1,4 +1,5 @@
 import { getProviderScopedTeamModelLabel } from '@renderer/utils/teamModelCatalog';
+import { getOpenCodeQualifiedModelSourceLabel } from '@shared/utils/opencodeModelRef';
 import {
   isOpenCodeWindowsAccessDeniedDiagnostic,
   normalizeOpenCodeWindowsAccessDeniedDiagnostic,
@@ -296,10 +297,26 @@ function normalizeProviderAccountFailure(rawReason: string): string | null {
   return null;
 }
 
-function normalizeModelReason(rawReason: string | null | undefined): string | null {
+function normalizeModelReason(
+  rawReason: string | null | undefined,
+  modelId?: string
+): string | null {
   const trimmed = rawReason?.trim() ?? '';
   if (!trimmed) {
     return null;
+  }
+
+  const credentialProviderLabel = getOpenCodeQualifiedModelSourceLabel(modelId) ?? null;
+  if (
+    /\binvalid[\s_-]+api[\s_-]*key\b/i.test(trimmed) ||
+    /\bapi[\s_-]*key\s+(?:is\s+)?(?:invalid|expired|revoked)\b/i.test(trimmed)
+  ) {
+    const providerLabel = credentialProviderLabel ?? 'OpenCode provider';
+    return `${providerLabel} rejected its API key. Reconnect ${providerLabel} in Plans & providers`;
+  }
+  if (/access denied by security policy/i.test(trimmed)) {
+    const providerLabel = credentialProviderLabel ?? 'OpenCode provider';
+    return `${providerLabel} blocked the request by account or security policy. Review its key restrictions, then reconnect it in Plans & providers`;
   }
 
   if (
@@ -330,7 +347,7 @@ function normalizeModelReason(rawReason: string | null | undefined): string | nu
 
   const detailMatch = /"detail":"((?:\\"|[^"])*)"/i.exec(trimmed);
   if (detailMatch?.[1]) {
-    return normalizeModelReason(detailMatch[1].replace(/\\"/g, '"').trim());
+    return normalizeModelReason(detailMatch[1].replace(/\\"/g, '"').trim(), modelId);
   }
 
   const messageMatch = /"message":"((?:\\"|[^"])*)"/i.exec(trimmed);
@@ -338,9 +355,9 @@ function normalizeModelReason(rawReason: string | null | undefined): string | nu
     const decodedMessage = messageMatch[1].replace(/\\"/g, '"');
     const nestedDetailMatch = /"detail":"([^"]+)"/i.exec(decodedMessage);
     if (nestedDetailMatch?.[1]) {
-      return normalizeModelReason(nestedDetailMatch[1].trim());
+      return normalizeModelReason(nestedDetailMatch[1].trim(), modelId);
     }
-    return normalizeModelReason(decodeQuotedJsonString(decodedMessage).trim());
+    return normalizeModelReason(decodeQuotedJsonString(decodedMessage).trim(), modelId);
   }
 
   return trimmed;
@@ -470,7 +487,7 @@ function getResultReason(modelId: string, result: TeamProvisioningPrepareResult)
   for (const candidate of candidates) {
     const stripped = stripSelectedModelPrefix(modelId, candidate);
     if (stripped) {
-      return normalizeModelReason(stripped);
+      return normalizeModelReason(stripped, modelId);
     }
   }
 
@@ -524,7 +541,7 @@ function getScopedModelReason(modelId: string, entries: string[]): string | null
     if (!stripped) {
       continue;
     }
-    const normalized = normalizeModelReason(stripped);
+    const normalized = normalizeModelReason(stripped, modelId);
     if (normalized) {
       return normalized;
     }
@@ -748,7 +765,7 @@ function resolveModelResultFromBatch(
   const hasModelScopedEntries = modelScopedEntries.length > 0;
   const scopedReason = getScopedModelReason(modelId, modelScopedEntries);
   const fallbackBatchReason = isOnlyModel
-    ? (getResultReason(modelId, result) ?? normalizeModelReason(result.message))
+    ? (getResultReason(modelId, result) ?? normalizeModelReason(result.message, modelId))
     : null;
 
   const hasVerifiedLine = modelScopedEntries.some((entry) =>
@@ -879,7 +896,7 @@ function resolveModelResultFromCompatibilityBatch(
   const modelScopedEntries = getModelScopedEntries(modelId, result);
   const scopedReason = getScopedModelReason(modelId, modelScopedEntries);
   const fallbackBatchReason = isOnlyModel
-    ? (getResultReason(modelId, result) ?? normalizeModelReason(result.message))
+    ? (getResultReason(modelId, result) ?? normalizeModelReason(result.message, modelId))
     : null;
 
   const hasVerifiedLine = modelScopedEntries.some((entry) =>

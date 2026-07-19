@@ -1043,7 +1043,7 @@ describe('Team agent launch matrix safe e2e', () => {
       () => undefined
     );
 
-    expect(svc.isTeamAlive('mixed-opencode-safe-e2e')).toBe(true);
+    expect(svc.isTeamAlive('mixed-opencode-safe-e2e')).toBe(false);
     expect(adapter.stopInputs).toHaveLength(0);
 
     const statuses = await svc.getMemberSpawnStatuses('mixed-opencode-safe-e2e');

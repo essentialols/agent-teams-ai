@@ -308,9 +308,12 @@ describe('CrossTeamService', () => {
     });
 
     it('requires live runtime proof when requested by runtime delivery', async () => {
-      provisioning.relayInboxFileToLiveRecipient.mockResolvedValue({
-        kind: 'native_lead',
-        relayed: 1,
+      provisioning.relayInboxFileToLiveRecipient.mockImplementation((_team, _member, options) => {
+        return Promise.resolve({
+          kind: 'native_lead',
+          relayed: 1,
+          recentlyDeliveredMessageId: options?.onlyMessageId,
+        });
       });
 
       const result = await service.send(makeRequest({ requireRuntimeDelivery: true }));
@@ -361,7 +364,7 @@ describe('CrossTeamService', () => {
     it('rejects recent native lead delivery proof for a different message', async () => {
       provisioning.relayInboxFileToLiveRecipient.mockResolvedValue({
         kind: 'native_lead',
-        relayed: 0,
+        relayed: 1,
         recentlyDeliveredMessageId: 'cross-runtime-race-1',
       });
 
@@ -391,10 +394,12 @@ describe('CrossTeamService', () => {
         .mockResolvedValueOnce({
           kind: 'native_lead',
           relayed: 1,
+          recentlyDeliveredMessageId: 'cross-runtime-retry-1',
         })
         .mockResolvedValueOnce({
           kind: 'native_lead',
           relayed: 1,
+          recentlyDeliveredMessageId: 'cross-runtime-retry-1',
         });
 
       await expect(service.send(request)).rejects.toThrow('target runtime not ready');
@@ -471,11 +476,12 @@ describe('CrossTeamService', () => {
 
     it('writes runtime-required sender copy only after live runtime proof', async () => {
       const sentMessagesPath = `${MOCK_TEAMS_BASE_PATH}/teams/team-a/sentMessages.json`;
-      provisioning.relayInboxFileToLiveRecipient.mockImplementation(() => {
+      provisioning.relayInboxFileToLiveRecipient.mockImplementation((_team, _member, options) => {
         expect(fs.existsSync(sentMessagesPath)).toBe(false);
         return Promise.resolve({
           kind: 'native_lead',
           relayed: 1,
+          recentlyDeliveredMessageId: options?.onlyMessageId,
         });
       });
 

@@ -76,6 +76,14 @@ export abstract class TeamProvisioningLiveMessageRelayCompatibilityFacade<
     return this.leadInboxRelayFacade.relayedLeadInboxMessageIds;
   }
 
+  protected get successfulLeadRecoveryMessageIds(): Map<string, Set<string>> {
+    return this.leadInboxRelayFacade.successfulLeadRecoveryMessageIds;
+  }
+
+  protected get leadRecoveryMessageIds(): Map<string, Set<string>> {
+    return this.leadInboxRelayFacade.leadRecoveryMessageIds;
+  }
+
   protected get memberInboxRelayInFlight(): Map<string, Promise<number>> {
     return this.leadInboxRelayFacade.memberInboxRelayInFlight;
   }

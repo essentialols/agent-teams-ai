@@ -30,6 +30,8 @@ function createPorts(
     }),
     relayLeadInboxMessages: vi.fn().mockResolvedValue(0),
     wasRecentlyDeliveredToLead: vi.fn().mockReturnValue(false),
+    hasSuccessfulLeadRecoveryMessage: vi.fn().mockReturnValue(false),
+    isLeadRecoveryMessage: vi.fn().mockReturnValue(false),
     isTeamAlive: vi.fn().mockReturnValue(true),
     ...overrides,
   };
@@ -95,8 +97,10 @@ describe('TeamProvisioningLiveInboxRelayRouting', () => {
     ).resolves.toEqual({
       kind: LiveInboxRelayKind.NativeLead,
       relayed: 1,
+      recentlyDeliveredMessageId: 'message-1',
     });
     expect(relayLeadInboxMessages).toHaveBeenCalledWith('team-a', { onlyMessageId: 'message-1' });
+    expect(ports.wasRecentlyDeliveredToLead).not.toHaveBeenCalled();
   });
 
   it('returns exact recent delivery proof for a scoped native lead message', async () => {
@@ -135,6 +139,28 @@ describe('TeamProvisioningLiveInboxRelayRouting', () => {
     });
 
     expect(ports.wasRecentlyDeliveredToLead).toHaveBeenCalledWith('team-a', 'message-1');
+  });
+
+  it('returns terminal response proof for a successfully completed native recovery relay', async () => {
+    const ports = createPorts({
+      isLeadRecoveryMessage: vi.fn((_teamName, messageId) => messageId === 'recovery-1'),
+      hasSuccessfulLeadRecoveryMessage: vi.fn((_teamName, messageId) => messageId === 'recovery-1'),
+    });
+
+    await expect(
+      relayInboxFileToLiveRecipientWithPorts(
+        { teamName: 'team-a', inboxName: 'team-lead', options: { onlyMessageId: 'recovery-1' } },
+        ports
+      )
+    ).resolves.toMatchObject({
+      kind: LiveInboxRelayKind.NativeLead,
+      relayed: 0,
+      lastDelivery: {
+        delivered: true,
+        accepted: true,
+        responsePending: false,
+      },
+    });
   });
 
   it('routes OpenCode lead inbox files through OpenCode member delivery', async () => {

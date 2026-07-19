@@ -254,6 +254,8 @@ export class TeamProvisioningLeadInboxRelayCompatibilityFacade<
 > {
   readonly leadInboxRelayInFlight = new Map<string, Promise<number>>();
   readonly relayedLeadInboxMessageIds = new Map<string, Set<string>>();
+  readonly leadRecoveryMessageIds = new Map<string, Set<string>>();
+  readonly successfulLeadRecoveryMessageIds = new Map<string, Set<string>>();
   readonly memberInboxRelayInFlight = new Map<string, Promise<number>>();
   readonly relayedMemberInboxMessageIds = new Map<string, Set<string>>();
   readonly pendingCrossTeamFirstReplies = new Map<string, Map<string, number>>();
@@ -299,6 +301,10 @@ export class TeamProvisioningLeadInboxRelayCompatibilityFacade<
       emitTeamChange: (event) => this.host.emitTeamChange(event),
       scheduleLeadInboxFollowUpRelay: (teamName) =>
         this.host.scheduleLeadInboxFollowUpRelay(teamName),
+      rememberLeadRecoveryMessage: (teamName, messageId) =>
+        this.rememberLeadRecoveryMessage(teamName, messageId),
+      rememberSuccessfulLeadRecoveryMessage: (teamName, messageId) =>
+        this.rememberSuccessfulLeadRecoveryMessage(teamName, messageId),
       relayedLeadInboxMessageIds: this.relayedLeadInboxMessageIds,
       trimRelayedSet: (relayedIds) => this.host.trimRelayedSet(relayedIds),
       pendingCrossTeamFirstReplies: this.pendingCrossTeamFirstReplies,
@@ -517,6 +523,10 @@ export class TeamProvisioningLeadInboxRelayCompatibilityFacade<
             messageId,
             this.options.nowMs()
           ),
+        hasSuccessfulLeadRecoveryMessage: (relayTeamName, messageId) =>
+          this.hasSuccessfulLeadRecoveryMessage(relayTeamName, messageId),
+        isLeadRecoveryMessage: (relayTeamName, messageId) =>
+          this.leadRecoveryMessageIds.get(relayTeamName)?.has(messageId) === true,
         isTeamAlive: (teamName) => this.host.isTeamAlive(teamName),
       }
     );
@@ -532,5 +542,21 @@ export class TeamProvisioningLeadInboxRelayCompatibilityFacade<
 
   async relayLeadInboxMessages(teamName: string, options?: LeadInboxRelayOptions): Promise<number> {
     return this.leadInboxRelayBoundary.relayLeadInboxMessages(teamName, options);
+  }
+
+  private rememberLeadRecoveryMessage(teamName: string, messageId: string): void {
+    const ids = this.leadRecoveryMessageIds.get(teamName) ?? new Set<string>();
+    ids.add(messageId);
+    this.leadRecoveryMessageIds.set(teamName, this.host.trimRelayedSet(ids));
+  }
+
+  private rememberSuccessfulLeadRecoveryMessage(teamName: string, messageId: string): void {
+    const ids = this.successfulLeadRecoveryMessageIds.get(teamName) ?? new Set<string>();
+    ids.add(messageId);
+    this.successfulLeadRecoveryMessageIds.set(teamName, this.host.trimRelayedSet(ids));
+  }
+
+  private hasSuccessfulLeadRecoveryMessage(teamName: string, messageId: string): boolean {
+    return this.successfulLeadRecoveryMessageIds.get(teamName)?.has(messageId) === true;
   }
 }

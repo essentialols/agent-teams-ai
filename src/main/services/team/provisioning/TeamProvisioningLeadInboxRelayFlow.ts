@@ -48,6 +48,9 @@ export interface LeadInboxRelayCapture {
   startedAt: string;
   textParts: string[];
   textJoinMode?: 'block' | 'stream';
+  recoveryMessageId?: string;
+  requireTerminalResult?: boolean;
+  terminalResultSucceeded?: boolean;
   replyVisibility?: 'user' | 'internal_activity';
   hasVisibleSendMessage?: boolean;
   hasUserVisibleSendMessage?: boolean;
@@ -111,6 +114,8 @@ export interface LeadInboxRelayFlowPorts<TRun extends LeadInboxRelayFlowRun> {
   persistSentMessage(teamName: string, message: InboxMessage): void;
   emitTeamChange(event: TeamChangeEvent): void;
   scheduleLeadInboxFollowUpRelay(teamName: string): void;
+  rememberLeadRecoveryMessage(teamName: string, messageId: string): void;
+  rememberSuccessfulLeadRecoveryMessage(teamName: string, messageId: string): void;
   relayedLeadInboxMessageIds: Map<string, Set<string>>;
   trimRelayedSet(relayedIds: Set<string>): Set<string>;
   pendingCrossTeamFirstReplies: Map<string, Map<string, number>>;
@@ -328,16 +333,13 @@ async function runLeadInboxRelayForTeam<TRun extends LeadInboxRelayFlowRun>(
       .map((m) => m.messageId)
   );
 
-  let actionableUnread = selectActionableLeadRelayUnread({
+  const actionableUnread = selectActionableLeadRelayUnread({
     remainingUnread,
     nativeMatchedMessageIds,
     deferredIds,
     permissionRequestIds,
   });
   const onlyMessageId = options.onlyMessageId?.trim();
-  if (onlyMessageId) {
-    actionableUnread = actionableUnread.filter((message) => message.messageId === onlyMessageId);
-  }
 
   if (nativeMatchedMessageIds.size > 0 && !sameTeamPersisted) {
     ports.scheduleSameTeamPersistRetry(teamName);
@@ -346,14 +348,33 @@ async function runLeadInboxRelayForTeam<TRun extends LeadInboxRelayFlowRun>(
     ports.scheduleSameTeamDeferredRetry(teamName);
   }
 
-  if (actionableUnread.length === 0) return 0;
+  const requestedMessage = onlyMessageId
+    ? actionableUnread.find((message) => message.messageId === onlyMessageId)
+    : undefined;
+  const firstRecoveryMessage = actionableUnread.find(
+    (message) => String(message.messageKind) === 'runtime_recovery_nudge'
+  );
+  const scopedActionableUnread = onlyMessageId
+    ? requestedMessage
+      ? [requestedMessage]
+      : []
+    : firstRecoveryMessage
+      ? [firstRecoveryMessage]
+      : actionableUnread;
+  if (scopedActionableUnread.length === 0) return 0;
 
   const { batch, replyVisibility, hasPendingFollowUpRelay } = selectLeadInboxRelayBatch({
-    actionableUnread,
+    actionableUnread: scopedActionableUnread,
     unread,
     readOnlyIgnoredIds,
     maxRelay: DEFAULT_INBOX_RELAY_BATCH_SIZE,
   });
+  const recoveryMessageId = batch.find(
+    (message) => String(message.messageKind) === 'runtime_recovery_nudge'
+  )?.messageId;
+  if (recoveryMessageId) {
+    ports.rememberLeadRecoveryMessage(teamName, recoveryMessageId);
+  }
   const teammateRoster = (config.members ?? [])
     .filter((member) => {
       const name = member.name?.trim();
@@ -374,7 +395,13 @@ async function runLeadInboxRelayForTeam<TRun extends LeadInboxRelayFlowRun>(
     workSyncControlUrl,
   });
 
-  const capturePromise = startLeadRelayCapture(run, leadName, replyVisibility, ports);
+  const capturePromise = startLeadRelayCapture(
+    run,
+    leadName,
+    replyVisibility,
+    recoveryMessageId,
+    ports
+  );
 
   try {
     await ports.sendMessageToRun(run, message);
@@ -394,6 +421,9 @@ async function runLeadInboxRelayForTeam<TRun extends LeadInboxRelayFlowRun>(
     );
     ports.scheduleLeadInboxFollowUpRelay(teamName);
     return 0;
+  }
+  if (recoveryMessageId && captureResult.terminalResultSucceeded) {
+    ports.rememberSuccessfulLeadRecoveryMessage(teamName, recoveryMessageId);
   }
 
   rememberRecentCrossTeamLeadDeliveryMessageIds(
@@ -475,10 +505,14 @@ function startLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
   run: TRun,
   leadName: string,
   replyVisibility: 'user' | 'internal_activity',
+  recoveryMessageId: string | undefined,
   ports: Pick<LeadInboxRelayFlowPorts<TRun>, 'clearTimeout' | 'nowIso' | 'setTimeout'>
 ): Promise<string> {
   const captureTimeoutMs = 15_000;
-  const captureIdleMs = 800;
+  // The target stream parser resolves ordinary captures after a short text-idle window. Recovery
+  // delivery needs stronger proof: keep its idle deadline beyond the hard capture timeout so only
+  // a terminal result can resolve it before the timeout rejects the delivery.
+  const captureIdleMs = recoveryMessageId ? captureTimeoutMs + 1 : 800;
   return new Promise<string>((resolve, reject) => {
     const timeoutHandle = ports.setTimeout(() => {
       reject(new Error('Timed out waiting for lead reply'));
@@ -487,6 +521,7 @@ function startLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
       leadName,
       startedAt: ports.nowIso(),
       textParts: [],
+      ...(recoveryMessageId ? { recoveryMessageId, requireTerminalResult: true } : {}),
       replyVisibility,
       hasVisibleSendMessage: false,
       hasUserVisibleSendMessage: false,
@@ -496,6 +531,9 @@ function startLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
       timeoutHandle,
       resolveOnce: (text: string) => {
         if (capture.settled) return;
+        if (recoveryMessageId) {
+          capture.terminalResultSucceeded = true;
+        }
         capture.settled = true;
         if (capture.idleHandle) {
           ports.clearTimeout(capture.idleHandle);
@@ -528,14 +566,17 @@ async function finalizeLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
   capturedVisibleSendMessage: boolean;
   capturedUserVisibleSendMessage: boolean;
   deliveryConfirmed: boolean;
+  terminalResultSucceeded: boolean;
 }> {
   let replyText: string | null = null;
   let capturedVisibleSendMessage = false;
   let capturedUserVisibleSendMessage = false;
   let deliveryConfirmed = false;
+  let terminalResultSucceeded = false;
   try {
     replyText = (await capturePromise).trim() || null;
     deliveryConfirmed = true;
+    terminalResultSucceeded = run.leadRelayCapture?.terminalResultSucceeded === true;
   } catch {
     const partial = run.leadRelayCapture ? joinLeadRelayCaptureText(run.leadRelayCapture) : null;
     replyText = partial && partial.length > 0 ? partial : null;
@@ -556,5 +597,6 @@ async function finalizeLeadRelayCapture<TRun extends LeadInboxRelayFlowRun>(
     capturedVisibleSendMessage,
     capturedUserVisibleSendMessage,
     deliveryConfirmed,
+    terminalResultSucceeded,
   };
 }

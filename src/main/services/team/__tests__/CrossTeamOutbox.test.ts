@@ -156,7 +156,7 @@ describe('CrossTeamOutbox runtime delivery dedupe', () => {
     expect(onBeforeAppend).toHaveBeenCalledTimes(1);
   });
 
-  it('dedupes the same normalized stable payload beyond the legacy five-minute window', async () => {
+  it('dedupes a normalized cross-run retry beyond the legacy five-minute window', async () => {
     vi.useFakeTimers({ now: new Date('2026-07-09T00:00:00.000Z') });
     const outbox = new CrossTeamOutbox();
     const onBeforeAppend = vi.fn(async () => {});

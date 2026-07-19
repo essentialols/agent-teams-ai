@@ -65,6 +65,7 @@ function crossProviderMemberArgs(
     providerArgsByProvider: new Map(),
     envPatch: {},
     usesAnthropicApiKeyHelper: false,
+    ...({ anthropicApiKeyHelper: null } as const),
     ...overrides,
   };
 }
@@ -133,10 +134,7 @@ describe('TeamProvisioningWorkspaceTrustLaunchArgs', () => {
         providerArgsByProvider: new Map([['gemini', ['--gemini-provider']]]),
       }),
       workspaceTrustPatches: [
-        codexPatch(
-          'cross_provider_member_args',
-          'projects."/tmp/no-codex".trust_level="trusted"'
-        ),
+        codexPatch('cross_provider_member_args', 'projects."/tmp/no-codex".trust_level="trusted"'),
       ],
     });
 

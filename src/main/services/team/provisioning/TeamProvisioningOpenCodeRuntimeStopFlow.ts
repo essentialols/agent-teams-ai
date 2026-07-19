@@ -43,6 +43,7 @@ export interface OpenCodeRuntimeStopFlowPorts {
     teamsBasePath: string;
     teamName: string;
     laneId: string;
+    expectedRunId?: string;
   }): Promise<unknown>;
   deleteSecondaryRuntimeRun(teamName: string, laneId: string): void;
   clearSecondaryRuntimeRuns(teamName: string): void;
@@ -68,6 +69,7 @@ export interface SingleMixedSecondaryRuntimeLaneStopRun {
 
 export interface SingleMixedSecondaryRuntimeLaneStopPorts {
   teamsBasePath: string;
+  getSecondaryRuntimeRuns(teamName: string): SecondaryRuntimeRunEntry[];
   getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null;
   readLaunchState(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
   upsertOpenCodeRuntimeLaneIndexEntry(input: {
@@ -81,9 +83,32 @@ export interface SingleMixedSecondaryRuntimeLaneStopPorts {
     teamsBasePath: string;
     teamName: string;
     laneId: string;
+    expectedRunId?: string;
   }): Promise<unknown>;
   deleteSecondaryRuntimeRun(teamName: string, laneId: string): void;
   logger: StopLogger;
+}
+
+function isSecondaryRuntimeRunCurrent(
+  teamName: string,
+  expectedRun: Pick<SecondaryRuntimeRunEntry, 'laneId' | 'runId'>,
+  ports: Pick<OpenCodeRuntimeStopFlowPorts, 'getSecondaryRuntimeRuns'>
+): boolean {
+  return ports
+    .getSecondaryRuntimeRuns(teamName)
+    .some((run) => run.laneId === expectedRun.laneId && run.runId === expectedRun.runId);
+}
+
+function isPrimaryRuntimeRunCurrent(
+  teamName: string,
+  runId: string,
+  ports: Pick<OpenCodeRuntimeStopFlowPorts, 'provisioningRunByTeam' | 'runtimeAdapterRunByTeam'>
+): boolean {
+  const runtimeRun = ports.runtimeAdapterRunByTeam.get(teamName);
+  const provisioningRunId = ports.provisioningRunByTeam.get(teamName);
+  return (
+    runtimeRun?.runId === runId && (provisioningRunId === undefined || provisioningRunId === runId)
+  );
 }
 
 export async function stopSingleMixedSecondaryRuntimeLane(
@@ -92,15 +117,24 @@ export async function stopSingleMixedSecondaryRuntimeLane(
   reason: TeamRuntimeStopInput['reason'],
   ports: SingleMixedSecondaryRuntimeLaneStopPorts
 ): Promise<void> {
+  const stoppedRunId = lane.runId;
+  if (!stoppedRunId) {
+    return;
+  }
+  const stoppedRun = { laneId: lane.laneId, runId: stoppedRunId };
+  const isStoppedRunCurrent = () => isSecondaryRuntimeRunCurrent(run.teamName, stoppedRun, ports);
   const adapter = ports.getOpenCodeRuntimeAdapter();
   const previousLaunchState = await ports.readLaunchState(run.teamName);
+  if (!isStoppedRunCurrent()) {
+    return;
+  }
   try {
-    if (!adapter && lane.runId) {
+    if (!adapter && stoppedRunId) {
       throw new Error('OpenCode runtime adapter is unavailable; lane stop was not confirmed');
     }
-    if (adapter && lane.runId) {
+    if (adapter && stoppedRunId) {
       const result = await adapter.stop({
-        runId: lane.runId,
+        runId: stoppedRunId,
         laneId: lane.laneId,
         teamName: run.teamName,
         cwd: lane.member.cwd?.trim() || run.request.cwd,
@@ -113,6 +147,9 @@ export async function stopSingleMixedSecondaryRuntimeLane(
         throw new Error(
           result.diagnostics.join('\n') || `OpenCode lane ${lane.laneId} stop was not confirmed`
         );
+      }
+      if (!isStoppedRunCurrent()) {
+        return;
       }
     }
   } catch (error) {
@@ -133,11 +170,18 @@ export async function stopSingleMixedSecondaryRuntimeLane(
       diagnostics: [`OpenCode lane stop requested: ${reason}`],
     })
     .catch(() => undefined);
-  await ports.clearOpenCodeRuntimeLaneStorage({
+  if (!isStoppedRunCurrent()) {
+    return;
+  }
+  const clearResult = await ports.clearOpenCodeRuntimeLaneStorage({
     teamsBasePath: ports.teamsBasePath,
     teamName: run.teamName,
     laneId: lane.laneId,
+    expectedRunId: stoppedRunId,
   });
+  if (clearResult === 'owner_changed' || !isStoppedRunCurrent()) {
+    return;
+  }
   ports.deleteSecondaryRuntimeRun(run.teamName, lane.laneId);
   lane.runId = null;
   lane.state = 'finished';
@@ -192,12 +236,23 @@ export async function stopMixedSecondaryRuntimeLanes(
         continue;
       }
 
+      if (!isSecondaryRuntimeRunCurrent(teamName, secondaryRun, ports)) {
+        continue;
+      }
+
       try {
-        await ports.clearOpenCodeRuntimeLaneStorage({
+        const clearResult = await ports.clearOpenCodeRuntimeLaneStorage({
           teamsBasePath: ports.teamsBasePath,
           teamName,
           laneId: secondaryRun.laneId,
+          expectedRunId: secondaryRun.runId,
         });
+        if (clearResult === 'owner_changed') {
+          continue;
+        }
+        if (!isSecondaryRuntimeRunCurrent(teamName, secondaryRun, ports)) {
+          continue;
+        }
         ports.deleteSecondaryRuntimeRun(teamName, secondaryRun.laneId);
       } catch (error) {
         ports.logger.warn(
@@ -214,7 +269,9 @@ export async function stopMixedSecondaryRuntimeLanes(
         `[${teamName}] Failed to stop all OpenCode secondary lanes`
       );
     }
-    ports.clearSecondaryRuntimeRuns(teamName);
+    if (ports.getSecondaryRuntimeRuns(teamName).length === 0) {
+      ports.clearSecondaryRuntimeRuns(teamName);
+    }
   } finally {
     ports.stoppingSecondaryRuntimeTeams.delete(teamName);
   }
@@ -277,6 +334,9 @@ export async function stopOpenCodeRuntimeAdapterTeam(
         result.diagnostics.join('\n') || 'OpenCode runtime adapter stop was not confirmed'
       );
     }
+    if (!isPrimaryRuntimeRunCurrent(teamName, runId, ports)) {
+      return;
+    }
     await ports.writeLaunchStateSnapshot(
       teamName,
       createPersistedLaunchSnapshot({
@@ -287,11 +347,21 @@ export async function stopOpenCodeRuntimeAdapterTeam(
         members: previousLaunchState?.members ?? {},
       })
     );
-    await ports.clearOpenCodeRuntimeLaneStorage({
+    if (!isPrimaryRuntimeRunCurrent(teamName, runId, ports)) {
+      return;
+    }
+    const clearResult = await ports.clearOpenCodeRuntimeLaneStorage({
       teamsBasePath: ports.teamsBasePath,
       teamName,
       laneId: 'primary',
+      expectedRunId: runId,
     });
+    if (clearResult === 'owner_changed') {
+      return;
+    }
+    if (!isPrimaryRuntimeRunCurrent(teamName, runId, ports)) {
+      return;
+    }
   } catch (error) {
     recordFailure(error);
     throw error;

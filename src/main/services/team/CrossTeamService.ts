@@ -408,7 +408,7 @@ function hasRuntimeDeliveryProof(
   expectedMessageId: string
 ): boolean {
   if (relay.kind === 'native_lead') {
-    return relay.relayed > 0 || relay.recentlyDeliveredMessageId === expectedMessageId;
+    return relay.recentlyDeliveredMessageId === expectedMessageId;
   }
 
   if (relay.kind !== 'opencode_member') {

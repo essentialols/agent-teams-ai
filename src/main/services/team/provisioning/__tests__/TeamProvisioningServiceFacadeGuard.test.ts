@@ -25,6 +25,7 @@ const TEAM_PROVISIONING_SERVICE_CLASS_NAME = 'TeamProvisioningService';
 const DECLARED_PUBLIC_SERVICE_ENTRYPOINTS = [
   'createTeam',
   'launchTeam',
+  'setRuntimeRecoveryFailureObserver',
   'setTeamChangeEmitter',
 ] as const;
 const DOCUMENTED_EFFECTIVE_PUBLIC_SERVICE_INSTANCE_MEMBERS = [
@@ -94,6 +95,7 @@ const DOCUMENTED_EFFECTIVE_PUBLIC_SERVICE_INSTANCE_MEMBERS = [
   'setMemberWorkSyncAcceptedReportChecker',
   'setMemberWorkSyncProofMissingRecoveryScheduler',
   'setRuntimeAdapterRegistry',
+  'setRuntimeRecoveryFailureObserver',
   'setRuntimeTurnSettledEnvironmentProvider',
   'setRuntimeTurnSettledHookSettingsProvider',
   'setTeamChangeEmitter',

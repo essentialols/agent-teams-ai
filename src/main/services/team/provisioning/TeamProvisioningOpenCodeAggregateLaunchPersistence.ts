@@ -62,6 +62,7 @@ export interface LaunchOpenCodeAggregatePrimaryLanePorts {
     teamsBasePath: string;
     teamName: string;
     laneId: string;
+    runId?: string;
     state: 'active' | 'degraded';
     diagnostics?: string[];
   }): Promise<void>;
@@ -153,6 +154,7 @@ export async function launchOpenCodeAggregatePrimaryLane(
     teamsBasePath: ports.getTeamsBasePath(),
     teamName,
     laneId: 'primary',
+    runId,
     state: migration.degraded ? 'degraded' : 'active',
     diagnostics: migration.diagnostics,
   });
@@ -208,7 +210,11 @@ export async function launchOpenCodeAggregatePrimaryLane(
     teamColor: params.run.request.color,
     teamDisplayName: params.run.request.displayName,
   });
-  if (shouldRetainOpenCodeRuntimeLaunch(result)) {
+  // Persist exact run ownership for every non-terminal launch, plus a partial
+  // failure that still has retainable member runtime evidence. This preserves
+  // the live-base persistence contract without discarding a usable aggregate.
+  const retainRuntimeOwnership = shouldRetainOpenCodeRuntimeLaunch(result);
+  if (retainRuntimeOwnership) {
     const primaryMembers = result.members;
     const secondaryLanes = params.run.mixedSecondaryLanes ?? [];
     ports.setRuntimeAdapterRunByTeam(teamName, {

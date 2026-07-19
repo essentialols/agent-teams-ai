@@ -99,6 +99,7 @@ const setup: PreparedDeterministicLaunchSetup<TestLane> = {
     providerArgsByProvider: new Map(),
     envPatch: {},
     usesAnthropicApiKeyHelper: false,
+    ...({ anthropicApiKeyHelper: null } as const),
   },
   expectedMembers: ['Lead', 'Builder'],
   effectiveMemberSpecs: [

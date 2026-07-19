@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
   type LeadInboxRelayFlowPorts,
@@ -7,6 +7,23 @@ import {
 } from '../TeamProvisioningLeadInboxRelayFlow';
 
 import type { InboxMessage, TeamChangeEvent } from '@shared/types';
+
+type TestLeadInboxRelayFlowPorts = Omit<
+  LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>,
+  | 'rememberLeadRecoveryMessage'
+  | 'rememberSuccessfulLeadRecoveryMessage'
+  | 'sendMessageToRun'
+  | 'setTimeout'
+> & {
+  rememberLeadRecoveryMessage: Mock<
+    LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>['rememberLeadRecoveryMessage']
+  >;
+  rememberSuccessfulLeadRecoveryMessage: Mock<
+    LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>['rememberSuccessfulLeadRecoveryMessage']
+  >;
+  sendMessageToRun: Mock<LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>['sendMessageToRun']>;
+  setTimeout: Mock<LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun>['setTimeout']>;
+};
 
 function permissionText(id = 'req-1'): string {
   return JSON.stringify({
@@ -48,10 +65,16 @@ function createMessage(overrides: Partial<InboxMessage> = {}): InboxMessage {
   };
 }
 
+function createRecoveryMessage(): InboxMessage {
+  const message = createMessage({ messageId: 'recovery-1' });
+  Object.assign(message, { messageKind: 'runtime_recovery_nudge' });
+  return message;
+}
+
 function createPorts(
   run: LeadInboxRelayFlowRun,
   messages: InboxMessage[]
-): LeadInboxRelayFlowPorts<LeadInboxRelayFlowRun> & {
+): TestLeadInboxRelayFlowPorts & {
   emittedEvents: TeamChangeEvent[];
   persistedMessages: InboxMessage[];
   sentMessages: string[];
@@ -96,6 +119,8 @@ function createPorts(
       emittedEvents.push(event);
     }),
     scheduleLeadInboxFollowUpRelay: vi.fn(),
+    rememberLeadRecoveryMessage: vi.fn(),
+    rememberSuccessfulLeadRecoveryMessage: vi.fn(),
     relayedLeadInboxMessageIds: new Map(),
     trimRelayedSet: vi.fn((relayedIds) => relayedIds),
     pendingCrossTeamFirstReplies: new Map(),
@@ -160,6 +185,50 @@ describe('lead inbox relay flow', () => {
     ]);
     expect(run.leadRelayCapture).toBeNull();
   });
+
+  it('records recovery delivery only after terminal-result capture resolution', async () => {
+    const run = createRun();
+    const ports = createPorts(run, [createRecoveryMessage()]);
+
+    await expect(
+      relayLeadInboxMessagesForTeam('alpha', ports, { onlyMessageId: 'recovery-1' })
+    ).resolves.toBe(1);
+
+    expect(ports.rememberLeadRecoveryMessage).toHaveBeenCalledWith('alpha', 'recovery-1');
+    expect(ports.rememberSuccessfulLeadRecoveryMessage).toHaveBeenCalledWith('alpha', 'recovery-1');
+  });
+
+  it('times out recovery capture before text-idle can masquerade as terminal proof', async () => {
+    const run = createRun();
+    const ports = createPorts(run, [createRecoveryMessage()]);
+    const scheduled: { callback: () => void; ms: number }[] = [];
+    vi.mocked(ports.setTimeout).mockImplementation((callback, ms) => {
+      scheduled.push({ callback, ms });
+      return {} as NodeJS.Timeout;
+    });
+    vi.mocked(ports.sendMessageToRun).mockImplementation(async () => {
+      const capture = run.leadRelayCapture;
+      if (!capture) throw new Error('missing capture');
+      expect(capture.requireTerminalResult).toBe(true);
+      expect(capture.idleMs).toBe(15_001);
+      capture.textParts.push('Partial recovery reply.');
+      capture.idleHandle = ports.setTimeout(
+        () => capture.resolveOnce('Partial recovery reply.'),
+        capture.idleMs
+      );
+    });
+
+    const relay = relayLeadInboxMessagesForTeam('alpha', ports, {
+      onlyMessageId: 'recovery-1',
+    });
+    await vi.waitFor(() => expect(ports.sendMessageToRun).toHaveBeenCalledOnce());
+    scheduled.find(({ ms }) => ms === 15_000)?.callback();
+
+    await expect(relay).resolves.toBe(0);
+    expect(ports.rememberSuccessfulLeadRecoveryMessage).not.toHaveBeenCalled();
+    expect(ports.relayedLeadInboxMessageIds.get('alpha')?.has('recovery-1') ?? false).toBe(false);
+  });
+
   it('relays only the requested native lead inbox message when scoped by message id', async () => {
     const run = createRun();
     const ports = createPorts(run, [

@@ -59,6 +59,7 @@ interface KanbanTaskCardProps {
   hasReviewers: boolean;
   compact?: boolean;
   flat?: boolean;
+  showSeparator?: boolean;
   taskMap: Map<string, TeamTask>;
   memberColorMap: Map<string, string>;
   hasLiveTaskLogs?: boolean;
@@ -459,6 +460,7 @@ interface TaskActionIconButtonProps {
   className: string;
   variant?: 'outline' | 'ghost' | 'destructive';
   disabled?: boolean;
+  tooltipSide?: React.ComponentProps<typeof TooltipContent>['side'];
 }
 
 const TaskActionIconButton = ({
@@ -468,18 +470,23 @@ const TaskActionIconButton = ({
   className,
   variant = 'outline',
   disabled = false,
+  tooltipSide = 'top',
 }: TaskActionIconButtonProps): React.JSX.Element => (
-  <Button
-    variant={variant}
-    size="icon"
-    className={`size-6 shrink-0 rounded-full shadow-sm ${className}`}
-    aria-label={label}
-    title={label}
-    onClick={onClick}
-    disabled={disabled}
-  >
-    {icon}
-  </Button>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <Button
+        variant={variant}
+        size="icon"
+        className={`size-6 shrink-0 rounded-full shadow-sm ${className}`}
+        aria-label={label}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {icon}
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent side={tooltipSide}>{label}</TooltipContent>
+  </Tooltip>
 );
 
 interface TaskMetaActionsProps {
@@ -490,6 +497,7 @@ interface TaskMetaActionsProps {
   showComments: boolean;
   canOpenChanges: boolean;
   changesNeedAttention: boolean;
+  toolbarMode: boolean;
   onViewChanges?: (taskId: string) => void;
   onDeleteTask?: (taskId: string) => void;
 }
@@ -502,6 +510,7 @@ const TaskMetaActions = memo(function TaskMetaActions({
   showComments,
   canOpenChanges,
   changesNeedAttention,
+  toolbarMode,
   onViewChanges,
   onDeleteTask,
 }: TaskMetaActionsProps): React.JSX.Element {
@@ -517,6 +526,7 @@ const TaskMetaActions = memo(function TaskMetaActions({
               : t('kanban.taskCard.changes')
           }
           icon={<FileCode className="size-2.5" />}
+          tooltipSide={toolbarMode ? 'left' : 'top'}
           variant="ghost"
           className={
             changesNeedAttention
@@ -540,6 +550,7 @@ const TaskMetaActions = memo(function TaskMetaActions({
         <TaskActionIconButton
           label={t('kanban.taskCard.deleteTask')}
           icon={<Trash2 size={11} />}
+          tooltipSide={toolbarMode ? 'left' : 'top'}
           variant="ghost"
           className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
           onClick={(e) => {
@@ -584,12 +595,17 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
   const { t } = useAppTranslation('team');
 
   return (
-    <div className="flex min-w-0 flex-nowrap gap-2">
+    <div
+      className={
+        toolbarMode ? 'flex min-w-0 flex-col items-center gap-1' : 'flex min-w-0 flex-nowrap gap-2'
+      }
+    >
       {columnId === 'todo' ? (
         <>
           <TaskActionIconButton
             label={t('kanban.taskCard.start')}
             icon={<Play size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -599,6 +615,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.complete')}
             icon={<CheckCircle2 size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -613,6 +630,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.complete')}
             icon={<CheckCircle2 size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -633,6 +651,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.approve')}
             icon={<CheckCircle2 size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -642,6 +661,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
           <TaskActionIconButton
             label={t('kanban.taskCard.requestReview')}
             icon={<Eye size={11} />}
+            tooltipSide={toolbarMode ? 'left' : 'top'}
             className="border-violet-500/40 text-violet-400 hover:bg-violet-500/10 hover:text-violet-300"
             onClick={(e) => {
               e.stopPropagation();
@@ -658,10 +678,15 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
               {t('kanban.taskCard.manualReview')}
             </div>
           ) : null}
-          <div className="flex flex-wrap items-center gap-2">
+          <div
+            className={
+              toolbarMode ? 'flex flex-col items-center gap-1' : 'flex flex-wrap items-center gap-2'
+            }
+          >
             <TaskActionIconButton
               label={t('kanban.taskCard.approve')}
               icon={<CheckCircle2 size={11} />}
+              tooltipSide={toolbarMode ? 'left' : 'top'}
               className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
               onClick={(e) => {
                 e.stopPropagation();
@@ -671,6 +696,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
             <TaskActionIconButton
               label={t('kanban.taskCard.requestChanges')}
               icon={<FilePenLine size={11} />}
+              tooltipSide={toolbarMode ? 'left' : 'top'}
               variant={toolbarMode ? 'ghost' : 'destructive'}
               className={
                 toolbarMode
@@ -690,6 +716,7 @@ const TaskPrimaryActions = memo(function TaskPrimaryActions({
         <TaskActionIconButton
           label="Disapprove"
           icon={<RotateCcw size={11} />}
+          tooltipSide={toolbarMode ? 'left' : 'top'}
           className="border-amber-500/40 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
           onClick={(e) => {
             e.stopPropagation();
@@ -710,6 +737,7 @@ export const KanbanTaskCard = memo(
     hasReviewers,
     compact,
     flat = false,
+    showSeparator = false,
     taskMap,
     memberColorMap,
     hasLiveTaskLogs = false,
@@ -772,8 +800,11 @@ export const KanbanTaskCard = memo(
     const renderActionControls = (toolbarMode: boolean): React.JSX.Element => (
       <div
         data-kanban-task-toolbar={toolbarMode ? 'true' : undefined}
+        data-orientation={toolbarMode ? 'vertical' : undefined}
         className={
-          toolbarMode ? 'flex items-center gap-1' : 'flex items-center justify-between gap-2'
+          toolbarMode
+            ? 'flex flex-col items-center gap-1'
+            : 'flex items-center justify-between gap-2'
         }
       >
         <TaskPrimaryActions
@@ -793,7 +824,7 @@ export const KanbanTaskCard = memo(
 
         <div
           className={`flex shrink-0 flex-nowrap items-center gap-1.5 ${
-            toolbarMode ? 'border-l border-[var(--color-border)] pl-1' : ''
+            toolbarMode ? 'flex-col border-t border-[var(--color-border)] pt-1' : ''
           }`}
         >
           <TaskMetaActions
@@ -804,6 +835,7 @@ export const KanbanTaskCard = memo(
             showComments={!toolbarMode}
             canOpenChanges={canOpenChanges}
             changesNeedAttention={changesNeedAttention}
+            toolbarMode={toolbarMode}
             onViewChanges={onViewChanges}
             onDeleteTask={onDeleteTask}
           />
@@ -818,6 +850,7 @@ export const KanbanTaskCard = memo(
     const cardContent = (
       <div
         data-task-id={task.id}
+        data-task-separator={flat && showSeparator ? 'true' : undefined}
         className={`kanban-task-card relative cursor-pointer ${
           flat
             ? `kanban-task-card-flat group rounded-none bg-transparent py-3 pl-3 pr-1.5 ${
@@ -858,7 +891,12 @@ export const KanbanTaskCard = memo(
             </div>
             {task.owner ? (
               <span className="shrink-0">
-                <MemberBadge name={task.owner} color={memberColorMap.get(task.owner)} size="xs" />
+                <MemberBadge
+                  name={task.owner}
+                  color={memberColorMap.get(task.owner)}
+                  size="xs"
+                  variant="text"
+                />
               </span>
             ) : null}
           </div>
@@ -1004,11 +1042,11 @@ export const KanbanTaskCard = memo(
       >
         <HoverCardTrigger asChild>{cardContent}</HoverCardTrigger>
         <HoverCardContent
-          side="top"
-          align="end"
+          side="left"
+          align="start"
           sideOffset={0}
           avoidCollisions={false}
-          className="kanban-task-card-toolbar w-auto min-w-0 rounded-b-none border-b-0 bg-[var(--color-surface-raised)] p-1 shadow-none"
+          className="kanban-task-card-toolbar w-auto min-w-0 rounded-r-none border-r-0 bg-[var(--color-surface-raised)] p-1 shadow-none"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1025,6 +1063,7 @@ export const KanbanTaskCard = memo(
     prev.hasReviewers === next.hasReviewers &&
     prev.compact === next.compact &&
     prev.flat === next.flat &&
+    prev.showSeparator === next.showSeparator &&
     areTaskMapDependenciesEqual(prev.task, next.task, prev.taskMap, next.taskMap) &&
     prev.memberColorMap === next.memberColorMap &&
     prev.hasLiveTaskLogs === next.hasLiveTaskLogs &&

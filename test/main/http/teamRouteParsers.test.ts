@@ -167,10 +167,10 @@ describe('HTTP team route parsers', () => {
       'members must be an array'
     );
 
-    expectBadRequest(
-      () => parseCreateTeamRequest({ teamName: 'new-team' }),
-      'members must be an array'
-    );
+    expect(parseCreateTeamRequest({ teamName: 'new-team' })).toEqual({
+      teamName: 'new-team',
+      members: [],
+    });
 
     expectBadRequest(
       () =>

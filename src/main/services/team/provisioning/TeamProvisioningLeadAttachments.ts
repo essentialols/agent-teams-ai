@@ -8,22 +8,30 @@ import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 
 import type { AttachmentPayload } from '@shared/types';
 
-/** Deterministic artifact-dir key for one ordered Codex attachment payload. */
+/**
+ * Deterministic artifact-dir key for one ordered Codex attachment payload.
+ * Stable attachment ids preserve compose identity while metadata and decoded
+ * bytes prevent unrelated payloads with positional fallback ids from colliding.
+ */
 function buildCodexLeadAttachmentMessageId(
   runId: string,
   attachments: AttachmentPayload[]
 ): string {
-  const hash = createHash('sha256').update(`${runId}\n${attachments.length}\n`);
+  const hash = createHash('sha256');
+  const updateLengthFramed = (value: string | Buffer): void => {
+    const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : value;
+    hash.update(`${bytes.byteLength}:`);
+    hash.update(bytes);
+  };
+  updateLengthFramed(runId);
+  updateLengthFramed(String(attachments.length));
   attachments.forEach((attachment, index) => {
     const bytes = Buffer.from(attachment.data, 'base64');
-    const metadata = JSON.stringify({
-      index,
-      filename: attachment.filename.trim(),
-      mimeType: attachment.mimeType.trim().toLowerCase(),
-      size: bytes.byteLength,
-    });
-    hash.update(`${Buffer.byteLength(metadata)}:${metadata}${bytes.byteLength}:`);
-    hash.update(bytes);
+    updateLengthFramed(String(index));
+    updateLengthFramed(attachment.id.trim());
+    updateLengthFramed(attachment.filename.trim());
+    updateLengthFramed(attachment.mimeType.trim().toLowerCase());
+    updateLengthFramed(bytes);
   });
   const digest = hash.digest('hex');
   return `lead_${runId}_${digest}`;

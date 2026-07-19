@@ -90,6 +90,8 @@ function makeCleanupPorts(
   aliveRunByTeam: Map<string, string>;
   leadInboxRelayInFlight: Map<string, string>;
   relayedLeadInboxMessageIds: Map<string, string>;
+  leadRecoveryMessageIds: Map<string, string>;
+  successfulLeadRecoveryMessageIds: Map<string, string>;
   pendingCrossTeamFirstReplies: Map<string, string>;
   recentCrossTeamLeadDeliveryMessageIds: Map<string, string>;
   recentSameTeamNativeFingerprints: Map<string, string>;
@@ -127,6 +129,8 @@ function makeCleanupPorts(
     invalidateMemberSpawnStatusesCache: vi.fn(),
     leadInboxRelayInFlight: new Map(),
     relayedLeadInboxMessageIds: new Map(),
+    leadRecoveryMessageIds: new Map(),
+    successfulLeadRecoveryMessageIds: new Map(),
     pendingCrossTeamFirstReplies: new Map(),
     recentCrossTeamLeadDeliveryMessageIds: new Map(),
     recentSameTeamNativeFingerprints: new Map(),
@@ -165,6 +169,8 @@ function seedTeamScopedCleanupState(
   ports.aliveRunByTeam.set(run.teamName, trackedRunId);
   ports.leadInboxRelayInFlight.set(run.teamName, 'lead');
   ports.relayedLeadInboxMessageIds.set(run.teamName, 'lead-message');
+  ports.leadRecoveryMessageIds.set(run.teamName, 'known-recovery-message');
+  ports.successfulLeadRecoveryMessageIds.set(run.teamName, 'recovery-message');
   ports.pendingCrossTeamFirstReplies.set(run.teamName, 'cross-team');
   ports.recentCrossTeamLeadDeliveryMessageIds.set(run.teamName, 'cross-team-message');
   ports.recentSameTeamNativeFingerprints.set(run.teamName, 'same-team');
@@ -289,6 +295,8 @@ describe('team provisioning cleanup policy', () => {
     expect(ports.invalidateMemberSpawnStatusesCache).toHaveBeenCalledWith(cleanup.teamName);
     expect(ports.leadInboxRelayInFlight.has(cleanup.teamName)).toBe(false);
     expect(ports.relayedLeadInboxMessageIds.has(cleanup.teamName)).toBe(false);
+    expect(ports.leadRecoveryMessageIds.has(cleanup.teamName)).toBe(false);
+    expect(ports.successfulLeadRecoveryMessageIds.has(cleanup.teamName)).toBe(false);
     expect(ports.pendingCrossTeamFirstReplies.has(cleanup.teamName)).toBe(false);
     expect(ports.recentCrossTeamLeadDeliveryMessageIds.has(cleanup.teamName)).toBe(false);
     expect(ports.recentSameTeamNativeFingerprints.has(cleanup.teamName)).toBe(false);
@@ -357,6 +365,8 @@ describe('team provisioning cleanup policy', () => {
     expect(ports.invalidateRuntimeSnapshotCaches).not.toHaveBeenCalled();
     expect(ports.leadInboxRelayInFlight.get(cleanup.teamName)).toBe('lead');
     expect(ports.relayedLeadInboxMessageIds.get(cleanup.teamName)).toBe('lead-message');
+    expect(ports.leadRecoveryMessageIds.get(cleanup.teamName)).toBe('known-recovery-message');
+    expect(ports.successfulLeadRecoveryMessageIds.get(cleanup.teamName)).toBe('recovery-message');
     expect(ports.pendingCrossTeamFirstReplies.get(cleanup.teamName)).toBe('cross-team');
     expect(ports.recentSameTeamNativeFingerprints.get(cleanup.teamName)).toBe('same-team');
     expect(ports.memberInboxRelayInFlight.get(`${cleanup.teamName}:worker-a`)).toBe('member');

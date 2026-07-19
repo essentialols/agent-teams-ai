@@ -84,10 +84,7 @@ export class RuntimeTurnSettledDrainScheduler {
     }
 
     this.disposePromise = this.activeDrain
-      ? this.activeDrain.then(
-          () => undefined,
-          () => undefined
-        )
+      ? this.waitForActiveDrainDuringDispose(this.activeDrain)
       : Promise.resolve();
     return this.disposePromise;
   }
@@ -118,6 +115,28 @@ export class RuntimeTurnSettledDrainScheduler {
               new Error(`runtime turn settled drain timed out after ${this.drainTimeoutMs}ms`)
             );
           }, this.drainTimeoutMs);
+          unrefTimer(timeout);
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  private async waitForActiveDrainDuringDispose(
+    drain: Promise<RuntimeTurnSettledDrainSummary>
+  ): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        drain.then(
+          () => undefined,
+          () => undefined
+        ),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, this.drainTimeoutMs);
           unrefTimer(timeout);
         }),
       ]);

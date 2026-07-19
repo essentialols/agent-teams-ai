@@ -22,7 +22,7 @@ export enum LiveInboxRelayKind {
 export interface LiveInboxRelayResult {
   kind: LiveInboxRelayKind;
   relayed: number;
-  /** Exact scoped message confirmed by the recent native-lead delivery ledger. */
+  /** Exact scoped message confirmed by a native-lead relay or its recent-delivery ledger. */
   recentlyDeliveredMessageId?: string;
   diagnostics?: string[];
   lastDelivery?: OpenCodeMemberInboxDelivery;
@@ -53,6 +53,8 @@ export interface RelayInboxFileToLiveRecipientPorts {
   ): Promise<OpenCodeMemberInboxRelayResult>;
   relayLeadInboxMessages(teamName: string, options?: NativeLeadInboxRelayOptions): Promise<number>;
   wasRecentlyDeliveredToLead(teamName: string, messageId: string): boolean;
+  hasSuccessfulLeadRecoveryMessage(teamName: string, messageId: string): boolean;
+  isLeadRecoveryMessage(teamName: string, messageId: string): boolean;
   isTeamAlive(teamName: string): boolean;
 }
 
@@ -95,15 +97,30 @@ export async function relayInboxFileToLiveRecipientWithPorts(
         : await ports.relayLeadInboxMessages(teamName)
       : 0;
     const recentlyDeliveredMessageId =
-      relayed === 0 &&
       leadOptions?.onlyMessageId &&
-      ports.wasRecentlyDeliveredToLead(teamName, leadOptions.onlyMessageId)
+      (relayed > 0 ||
+        (relayed === 0 && ports.wasRecentlyDeliveredToLead(teamName, leadOptions.onlyMessageId)))
         ? leadOptions.onlyMessageId
         : undefined;
+    const responseProven = leadOptions?.onlyMessageId
+      ? ports.hasSuccessfulLeadRecoveryMessage(teamName, leadOptions.onlyMessageId)
+      : false;
+    const isRecoveryMessage = leadOptions?.onlyMessageId
+      ? ports.isLeadRecoveryMessage(teamName, leadOptions.onlyMessageId)
+      : false;
     return {
       kind: LiveInboxRelayKind.NativeLead,
       relayed,
       ...(recentlyDeliveredMessageId ? { recentlyDeliveredMessageId } : {}),
+      ...(leadOptions?.onlyMessageId && isRecoveryMessage
+        ? {
+            lastDelivery: {
+              delivered: relayed > 0 || responseProven,
+              accepted: relayed > 0 || responseProven,
+              responsePending: !responseProven,
+            },
+          }
+        : {}),
     };
   }
 

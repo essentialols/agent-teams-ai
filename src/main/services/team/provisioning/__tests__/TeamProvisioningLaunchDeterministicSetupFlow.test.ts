@@ -42,6 +42,19 @@ const configRaw = JSON.stringify({
   projectPath: '/tmp',
 });
 
+/* eslint-disable sonarjs/publicly-writable-directories -- Test fixture paths are never written. */
+const anthropicApiKeyHelper = {
+  teamName: 'demo',
+  directory: '/tmp/anthropic-helper',
+  helperPath: '/tmp/anthropic-helper/helper.sh',
+  keyPath: '/tmp/anthropic-helper/key',
+  settingsPath: '/tmp/anthropic-helper/settings.json',
+  settingsObject: { apiKeyHelper: '/tmp/anthropic-helper/helper.sh' },
+  settingsArgs: ['--settings', '/tmp/anthropic-helper/settings.json'],
+  envPatch: { ANTHROPIC_API_KEY_HELPER: '/tmp/anthropic-helper/helper.sh' },
+};
+/* eslint-enable sonarjs/publicly-writable-directories -- Re-enable after temp-path fixture. */
+
 function createMembers(): TeamCreateRequest['members'] {
   return [
     { name: 'Lead', role: 'Lead', providerId: 'codex' },
@@ -58,6 +71,7 @@ function createCrossProviderArgs(): CrossProviderMemberArgsResult {
       ANTHROPIC_AUTH_TOKEN: 'fake-token',
     },
     usesAnthropicApiKeyHelper: true,
+    ...({ anthropicApiKeyHelper } as const),
   };
 }
 

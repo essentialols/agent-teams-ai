@@ -72,7 +72,8 @@ const MAX_BUFFER_BYTES = 1024 * 1024;
 const WSL_NOT_AVAILABLE_DETAIL = 'WSL is not available on this Windows machine yet.';
 const WINDOWS_WSL_FEATURE_NAMES = ['Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform'];
 const POWERSHELL_FEATURE_QUERY = [
-  '$features = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux","VirtualMachinePlatform"',
+  '$featureNames = @("Microsoft-Windows-Subsystem-Linux","VirtualMachinePlatform")',
+  '$features = $featureNames | ForEach-Object { Get-WindowsOptionalFeature -Online -FeatureName $_ }',
   '$features | Select-Object FeatureName, State, RestartRequired | ConvertTo-Json -Compress',
 ].join('; ');
 const WINDOWS_OPTIONAL_FEATURE_CACHE_TTL_MS = 10_000;
@@ -98,6 +99,10 @@ export class TmuxWslService {
   ) {
     this.#execFile = execFileImpl;
     this.#preferenceStore = preferenceStore;
+  }
+
+  invalidateOptionalFeatureProbeCache(): void {
+    windowsOptionalFeatureProbeCache.delete(this.#execFile);
   }
 
   async probe(): Promise<TmuxWslProbeResult> {
@@ -628,11 +633,14 @@ export class TmuxWslService {
     });
     try {
       const value = await request;
-      windowsOptionalFeatureProbeCache.set(this.#execFile, {
-        value,
-        expiresAt: Date.now() + WINDOWS_OPTIONAL_FEATURE_CACHE_TTL_MS,
-        request: null,
-      });
+      const active = windowsOptionalFeatureProbeCache.get(this.#execFile);
+      if (active?.request === request) {
+        windowsOptionalFeatureProbeCache.set(this.#execFile, {
+          value,
+          expiresAt: Date.now() + WINDOWS_OPTIONAL_FEATURE_CACHE_TTL_MS,
+          request: null,
+        });
+      }
       return value ? { ...value } : null;
     } finally {
       const active = windowsOptionalFeatureProbeCache.get(this.#execFile);

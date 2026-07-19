@@ -19,6 +19,7 @@ import { CodexRuntimeUpdateDialog } from '@features/codex-runtime-installer/rend
 import { useAppTranslation } from '@features/localization/renderer';
 import {
   isOpenCodeProviderOAuthBridgeOutdated,
+  isOpenCodeRuntimeUsable,
   resolveOpenCodeQuickConnectGate,
   RuntimeProviderOnboardingDialog,
   RuntimeProviderQuickConnect,
@@ -75,6 +76,7 @@ import { refreshCliStatusForCurrentMode } from '@renderer/utils/refreshCliStatus
 import { getRuntimeDisplayName as getHumanRuntimeDisplayName } from '@renderer/utils/runtimeDisplayName';
 import { getVisibleTeamProviderModels } from '@renderer/utils/teamModelCatalog';
 import { CLI_PROVIDER_STATUS_DEFERRED_MESSAGE } from '@shared/types/cliInstaller';
+import { getOpenCodeModelRoutePresentationStatus } from '@shared/utils/opencodeModelRoute';
 import {
   AlertTriangle,
   CheckCircle,
@@ -103,6 +105,7 @@ import {
 
 import type { DashboardRateLimitItem } from './providerDashboardRateLimits';
 import type { CodexRuntimeStatus } from '@features/codex-runtime-installer/contracts';
+import type { AnalyticsProviderCheckReason } from '@renderer/analytics/productAnalytics';
 import type {
   CliProviderAuthMode,
   CliProviderId,
@@ -152,20 +155,30 @@ const DashboardRateLimitChips = ({
   providerId,
   items,
   refreshCycle,
+  refreshing,
 }: {
   providerId: CliProviderId;
   items: DashboardRateLimitItem[];
   refreshCycle: number;
+  refreshing: boolean;
 }): React.JSX.Element => {
   const { t } = useAppTranslation('dashboard');
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div
+      className="flex flex-wrap items-center gap-2"
+      aria-busy={refreshing}
+      aria-label={refreshing ? t('cliStatus.labels.loadingRateLimits') : undefined}
+    >
       {items.map((item) => (
         <div
           key={`${providerId}-${item.label}-${refreshCycle}`}
           className={`w-fit max-w-full rounded-md border px-2 py-1.5 ${
-            refreshCycle > 0 ? 'dashboard-rate-limit-refreshed' : ''
+            refreshing
+              ? 'skeleton-shimmer'
+              : refreshCycle > 0
+                ? 'dashboard-rate-limit-refreshed'
+                : ''
           }`}
           style={{
             borderColor: 'rgba(74, 222, 128, 0.2)',
@@ -245,11 +258,13 @@ const DashboardRateLimitStatus = ({
   items,
   successfulRefreshKey,
   showInitialSkeleton,
+  refreshing,
 }: {
   providerId: CliProviderId;
   items: DashboardRateLimitItem[] | null;
   successfulRefreshKey: number | string | null;
   showInitialSkeleton: boolean;
+  refreshing: boolean;
 }): React.JSX.Element | null => {
   const [displayedItems, setDisplayedItems] = useState<DashboardRateLimitItem[] | null>(items);
   const [refreshCycle, setRefreshCycle] = useState(0);
@@ -281,6 +296,7 @@ const DashboardRateLimitStatus = ({
         providerId={providerId}
         items={displayedItems}
         refreshCycle={refreshCycle}
+        refreshing={refreshing}
       />
     );
   }
@@ -654,14 +670,6 @@ function isOpenCodeProviderEffectivelyReady(provider: CliProviderStatus): boolea
   );
 }
 
-function isOpenCodeRuntimeReady(openCodeRuntimeStatus: OpenCodeRuntimeStatus | null): boolean {
-  return (
-    openCodeRuntimeStatus?.installed === true &&
-    (openCodeRuntimeStatus.source === 'path' ||
-      (openCodeRuntimeStatus.source === 'app-managed' && openCodeRuntimeStatus.state !== 'failed'))
-  );
-}
-
 function shouldShowOpenCodeInstallAction(
   provider: CliProviderStatus,
   showSkeleton: boolean,
@@ -671,7 +679,7 @@ function shouldShowOpenCodeInstallAction(
     provider.providerId === 'opencode' &&
     !showSkeleton &&
     ((!isOpenCodeProviderEffectivelyReady(provider) &&
-      !isOpenCodeRuntimeReady(openCodeRuntimeStatus)) ||
+      !isOpenCodeRuntimeUsable(openCodeRuntimeStatus)) ||
       isOpenCodeProviderOAuthBridgeOutdated(openCodeRuntimeStatus))
   );
 }
@@ -746,7 +754,18 @@ function getOpenCodeDashboardChips(
   const catalogModels = provider.modelCatalog?.models ?? [];
   const configuredLocalCount = new Set(
     catalogModels
-      .filter((model) => model.metadata?.opencode?.routeKind === 'configured_local')
+      .filter((model) => {
+        const route = model.metadata?.opencode;
+        return (
+          getOpenCodeModelRoutePresentationStatus({
+            modelId: model.launchModel,
+            catalogId: model.id,
+            providerId: route?.providerId,
+            routeKind: route?.routeKind,
+            accessKind: route?.accessKind,
+          }) === 'local'
+        );
+      })
       .map((model) => model.launchModel)
   ).size;
   const verifiedCount = new Set(
@@ -1159,6 +1178,7 @@ const InstalledBanner = ({
               (provider.providerId === 'anthropic' && anthropicRateLimitsRefreshing);
             const rateLimitsLoading =
               rateLimitsRefreshing || anthropicRateLimitsLoading || isSubscriptionRateLimitMode;
+            const rateLimitsUpdating = rateLimitsRefreshing || anthropicRateLimitsLoading;
             const showRateLimitSkeleton = shouldShowDashboardRateLimitSkeleton({
               provider,
               sourceProvider,
@@ -1471,6 +1491,7 @@ const InstalledBanner = ({
                             : null
                       }
                       showInitialSkeleton={showRateLimitSkeleton}
+                      refreshing={rateLimitsUpdating}
                     />
                   </div>
                 )}
@@ -1959,14 +1980,16 @@ export const CliStatusBanner = ({
   );
 
   const handleProviderRefresh = useCallback(
-    (providerId: CliProviderId) => {
-      void (async () => {
-        await invalidateCliStatus();
-        const refreshed = await fetchCliProviderStatus(providerId);
-        if (refreshed && providerId === 'anthropic') {
-          setAnthropicRateLimitsRefreshVersion((current) => current + 1);
-        }
-      })();
+    async (
+      providerId: CliProviderId,
+      checkReason: AnalyticsProviderCheckReason = 'manual_refresh'
+    ) => {
+      await invalidateCliStatus();
+      const refreshed = await fetchCliProviderStatus(providerId, { checkReason });
+      if (refreshed && providerId === 'anthropic') {
+        setAnthropicRateLimitsRefreshVersion((current) => current + 1);
+      }
+      return refreshed;
     },
     [fetchCliProviderStatus, invalidateCliStatus]
   );
@@ -1990,7 +2013,12 @@ export const CliStatusBanner = ({
       });
 
       try {
-        await fetchCliProviderStatus(providerId);
+        const refreshed = await fetchCliProviderStatus(providerId, {
+          checkReason: 'manual_refresh',
+        });
+        if (!refreshed) {
+          throw new Error('Provider status refresh failed');
+        }
       } catch {
         throw new Error(t('cliStatus.errors.runtimeUpdatedRefreshFailed'));
       }

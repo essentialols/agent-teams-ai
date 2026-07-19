@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy white-box service harnesses intentionally exercise private runtime state through structural mocks. */
 import {
   buildWorkspaceTrustPathCandidates,
   type WorkspaceTrustWorkspace,
@@ -280,6 +281,7 @@ import {
 } from './provisioningHarness';
 
 import type { TeamProvisioningConfigFacade } from '@main/services/team/provisioning/TeamProvisioningConfigFacade';
+import type { OpenCodeTeamRuntimeMessageResult } from '@main/services/team/runtime';
 import type { TeamConfig, TeamMember, TeamProvisioningMemberInput } from '@shared/types/team';
 
 const EXPECTED_RUNTIME_PIDUSAGE_OPTIONS =
@@ -1136,6 +1138,29 @@ async function waitForFile(filePath: string, timeoutMs = 2_000): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for file: ${filePath}`);
+}
+
+function parseDirectTmuxRestartLauncherPath(command: string | undefined): string | null {
+  if (!command?.startsWith("/bin/sh '") || !command.endsWith("'")) {
+    return null;
+  }
+  const scriptPath = command.slice(9, -1).replace(/'\\''/g, "'");
+  const scriptDir = path.dirname(scriptPath);
+  return path.basename(scriptPath) === 'launch.sh' &&
+    path.basename(scriptDir).startsWith('claude-team-direct-restart-')
+    ? scriptPath
+    : null;
+}
+
+function readDirectTmuxRestartLauncher(command: string | undefined): {
+  scriptPath: string;
+  script: string;
+} {
+  const scriptPath = parseDirectTmuxRestartLauncherPath(command);
+  if (!scriptPath) {
+    throw new Error(`Unexpected direct tmux restart launcher: ${command ?? '<missing>'}`);
+  }
+  return { scriptPath, script: fs.readFileSync(scriptPath, 'utf8') };
 }
 
 describe('TeamProvisioningService', () => {
@@ -6133,18 +6158,20 @@ describe('TeamProvisioningService', () => {
       expect(sendKeysToTmuxPaneForCurrentPlatform).toHaveBeenCalledTimes(1);
       const [paneId, command] = vi.mocked(sendKeysToTmuxPaneForCurrentPlatform).mock.calls[0] ?? [];
       expect(paneId).toBe('%1');
-      expect(command).toContain("cd '");
-      expect(command).toContain(projectPath);
-      expect(command).toContain("'/mock/claude'");
-      expect(command).toContain("'--agent-id' 'bob@forge-labs-10'");
-      expect(command).toContain("'--team-name' 'forge-labs-10'");
-      expect(command).toContain("'--parent-session-id' 'lead-session-1'");
-      expect(command).toContain("'--setting-sources' 'user,project,local'");
-      expect(command).toContain("'--mcp-config' '/mock/mcp-config.json'");
-      expect(command).not.toContain('--strict-mcp-config');
-      expect(command).toContain("'--model' 'gpt-5.4'");
-      expect(command).toContain("'--effort' 'high'");
-      expect(command).toContain('__CLAUDE_TEAMMATE_EXIT__');
+      const launcher = readDirectTmuxRestartLauncher(command);
+      expect(command).not.toContain('--agent-id');
+      expect(launcher.script).toContain("cd '");
+      expect(launcher.script).toContain(projectPath);
+      expect(launcher.script).toContain("'/mock/claude'");
+      expect(launcher.script).toContain("'--agent-id' 'bob@forge-labs-10'");
+      expect(launcher.script).toContain("'--team-name' 'forge-labs-10'");
+      expect(launcher.script).toContain("'--parent-session-id' 'lead-session-1'");
+      expect(launcher.script).toContain("'--setting-sources' 'user,project,local'");
+      expect(launcher.script).toContain("'--mcp-config' '/mock/mcp-config.json'");
+      expect(launcher.script).not.toContain('--strict-mcp-config');
+      expect(launcher.script).toContain("'--model' 'gpt-5.4'");
+      expect(launcher.script).toContain("'--effort' 'high'");
+      expect(launcher.script).toContain('__CLAUDE_TEAMMATE_EXIT__');
       expect(run.pendingMemberRestarts.has('bob')).toBe(true);
       expect(run.memberSpawnStatuses.get('bob')).toMatchObject({
         status: 'waiting',
@@ -7796,16 +7823,25 @@ describe('TeamProvisioningService', () => {
       );
     });
 
-    it('serializes OpenCode runtime sends by lane', async () => {
+    it('serializes OpenCode runtime sends by member lane', async () => {
       const svc = new TeamProvisioningService();
       const harness = privateHarness(svc);
+      const sendSerialized = harness.sendOpenCodeMemberMessageToRuntimeSerialized.bind(
+        harness
+      ) as unknown as (input: {
+        teamName: string;
+        laneId: string;
+        memberName: string;
+        send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
+      }) => Promise<OpenCodeTeamRuntimeMessageResult>;
       const firstStarted = createDeferred<void>();
       const releaseFirst = createDeferred<void>();
       const secondStarted = vi.fn();
 
-      const first = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const first = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           firstStarted.resolve(undefined);
           await releaseFirst.promise;
@@ -7819,9 +7855,10 @@ describe('TeamProvisioningService', () => {
       });
       await firstStarted.promise;
 
-      const second = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const second = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           secondStarted();
           return {
@@ -7844,13 +7881,22 @@ describe('TeamProvisioningService', () => {
     it('continues queued OpenCode lane sends after a failed send', async () => {
       const svc = new TeamProvisioningService();
       const harness = privateHarness(svc);
+      const sendSerialized = harness.sendOpenCodeMemberMessageToRuntimeSerialized.bind(
+        harness
+      ) as unknown as (input: {
+        teamName: string;
+        laneId: string;
+        memberName: string;
+        send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
+      }) => Promise<OpenCodeTeamRuntimeMessageResult>;
       const firstStarted = createDeferred<void>();
       const releaseFirst = createDeferred<void>();
       const secondStarted = vi.fn();
 
-      const first = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const first = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           firstStarted.resolve(undefined);
           await releaseFirst.promise;
@@ -7859,9 +7905,10 @@ describe('TeamProvisioningService', () => {
       });
       await firstStarted.promise;
 
-      const second = harness.sendOpenCodeMemberMessageToRuntimeSerialized({
+      const second = sendSerialized({
         teamName: 'team-a',
         laneId: 'primary',
+        memberName: 'bob',
         send: async () => {
           secondStarted();
           return {
@@ -15432,13 +15479,27 @@ describe('TeamProvisioningService', () => {
         teamsBasePath: tempTeamsBase,
         teamName,
         laneId: 'secondary:opencode:bob',
+        runId: 'opencode-run-1',
         state: 'active',
+      });
+      await setOpenCodeRuntimeActiveRunManifest({
+        teamsBasePath: tempTeamsBase,
+        teamName,
+        laneId: 'secondary:opencode:bob',
+        runId: 'opencode-run-1',
       });
       await upsertOpenCodeRuntimeLaneIndexEntry({
         teamsBasePath: tempTeamsBase,
         teamName,
         laneId: 'secondary:opencode:tom',
+        runId: 'opencode-run-2',
         state: 'active',
+      });
+      await setOpenCodeRuntimeActiveRunManifest({
+        teamsBasePath: tempTeamsBase,
+        teamName,
+        laneId: 'secondary:opencode:tom',
+        runId: 'opencode-run-2',
       });
       await fsPromises.mkdir(
         path.dirname(
@@ -15531,11 +15592,27 @@ describe('TeamProvisioningService', () => {
         diagnostics: [],
       };
 
+      (svc as any).setSecondaryRuntimeRun({
+        teamName: run.teamName,
+        runId: lane.runId,
+        providerId: lane.providerId,
+        laneId: lane.laneId,
+        memberName: lane.member.name,
+        cwd: run.request.cwd,
+      });
+
       await upsertOpenCodeRuntimeLaneIndexEntry({
         teamsBasePath: tempTeamsBase,
         teamName: run.teamName,
         laneId: lane.laneId,
+        runId: lane.runId,
         state: 'active',
+      });
+      await setOpenCodeRuntimeActiveRunManifest({
+        teamsBasePath: tempTeamsBase,
+        teamName: run.teamName,
+        laneId: lane.laneId,
+        runId: lane.runId,
       });
       await fsPromises.mkdir(
         path.dirname(
@@ -18123,6 +18200,8 @@ describe('TeamProvisioningService', () => {
       expect(adapterLaunch).toHaveBeenCalledWith(
         expect.objectContaining({
           laneId: 'secondary:opencode:tom',
+          providerId: 'opencode',
+          model: 'nemotron-3-super-free',
           cwd: tempClaudeRoot,
           expectedMembers: [
             expect.objectContaining({
@@ -20317,7 +20396,7 @@ describe('TeamProvisioningService', () => {
         run.provisioningComplete = true;
       });
 
-    const { runId } = await svc.launchTeam({ teamName, cwd: tempClaudeRoot }, () => {});
+    await svc.launchTeam({ teamName, cwd: tempClaudeRoot }, () => {});
 
     child.stdout.emit(
       'data',
@@ -20980,14 +21059,14 @@ describe('TeamProvisioningService', () => {
 
   it('fails before spawning when deterministic launch exceeds the current primary teammate cap', async () => {
     allowConsoleLogs();
-    const members = Array.from({ length: 21 }, (_, index) => `member-${index + 1}`);
+    const members = Array.from({ length: 31 }, (_, index) => `member-${index + 1}`);
 
     await expect(
       startDeterministicLaunchCloseHarness({
         teamName: 'launch-too-many-primary-members',
         members,
       })
-    ).rejects.toThrow(/up to 20 primary teammates/);
+    ).rejects.toThrow(/up to 30 primary teammates/);
     expect(spawnCli).not.toHaveBeenCalled();
   });
 

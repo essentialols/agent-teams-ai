@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { killProcessTree } from '@main/utils/childProcess';
 import { buildEnrichedEnv } from '@main/utils/cliEnv';
 import {
   findFirstRuntimePathBinaryCandidate,
@@ -97,12 +98,7 @@ async function runCommandDefault(
     const timer = setTimeout(() => {
       if (settled) return;
       if (process.platform === 'win32' && child.pid) {
-        const taskkill = spawn(
-          path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
-          ['/pid', String(child.pid), '/T', '/F'],
-          { windowsHide: true, stdio: 'ignore' }
-        );
-        taskkill.unref();
+        killProcessTree(child, 'SIGKILL');
       } else if (child.pid) {
         try {
           process.kill(-child.pid, 'SIGTERM');
@@ -199,6 +195,8 @@ function trimCommandOutput(result: RuntimeProviderCliCompanionCommandResult): st
 
 function summarizeCommandFailure(result: RuntimeProviderCliCompanionCommandResult): string | null {
   const ignored = /^(?:installation failed\. cleaning up\.\.\.|next steps:)$/i;
+  const actionableFailure =
+    /\b(?:failed|failure|error|mismatch|unavailable)\b|\bnot (?:available|found)\b|\bno .+ found\b|\b(?:exit|exited)(?: with)? code\b/i;
   const toLines = (value: string): string[] =>
     value
       .split(/\r?\n/)
@@ -206,7 +204,12 @@ function summarizeCommandFailure(result: RuntimeProviderCliCompanionCommandResul
       .filter((line) => line && !ignored.test(line));
   const stderrLines = toLines(result.stderr);
   const stdoutLines = toLines(result.stdout);
-  return stderrLines[0] ?? stdoutLines.at(-1) ?? trimCommandOutput(result);
+  return (
+    stderrLines[0] ??
+    stdoutLines.find((line) => actionableFailure.test(line)) ??
+    stdoutLines.at(-1) ??
+    trimCommandOutput(result)
+  );
 }
 
 function removeInheritedPowerShellModulePath(env: NodeJS.ProcessEnv): void {
@@ -255,6 +258,11 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
   readonly #runCommand: NonNullable<RuntimeProviderCliCompanionServiceDependencies['runCommand']>;
   readonly #emitProgress: (status: RuntimeProviderCompanionStatusDto) => void;
   #operation: Promise<RuntimeProviderCompanionStatusDto> | null = null;
+  #statusGeneration = 0;
+  #statusProbe: {
+    generation: number;
+    promise: Promise<RuntimeProviderCompanionStatusDto>;
+  } | null = null;
   #status: RuntimeProviderCompanionStatusDto;
 
   constructor(
@@ -295,11 +303,22 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
 
   async getStatus(): Promise<RuntimeProviderCompanionStatusDto> {
     if (this.#operation) return this.#operation;
-    return this.#probeStatus(true);
+    const generation = this.#statusGeneration;
+    if (this.#statusProbe?.generation === generation) {
+      return this.#statusProbe.promise;
+    }
+    const promise = this.#probeStatus(true, generation).finally(() => {
+      if (this.#statusProbe?.promise === promise) {
+        this.#statusProbe = null;
+      }
+    });
+    this.#statusProbe = { generation, promise };
+    return promise;
   }
 
   installAndConnect(): Promise<RuntimeProviderCompanionStatusDto> {
     if (this.#operation) return this.#operation;
+    this.#invalidateStatusProbes();
     const operation = this.#installAndConnectImpl().finally(() => {
       if (this.#operation === operation) this.#operation = null;
     });
@@ -309,6 +328,7 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
 
   connect(): Promise<RuntimeProviderCompanionStatusDto> {
     if (this.#operation) return this.#operation;
+    this.#invalidateStatusProbes();
     const operation = this.#connectImpl().finally(() => {
       if (this.#operation === operation) this.#operation = null;
     });
@@ -317,6 +337,7 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
   }
 
   setModelVerificationPending(): RuntimeProviderCompanionStatusDto {
+    this.#invalidateStatusProbes();
     return this.#publish({
       phase: 'verifying-model',
       authenticated: true,
@@ -328,6 +349,7 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
   }
 
   setModelVerificationResult(ok: boolean, detail: string): RuntimeProviderCompanionStatusDto {
+    this.#invalidateStatusProbes();
     return this.#publish({
       phase: ok ? 'connected' : 'error',
       authenticated: true,
@@ -570,7 +592,10 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
     return this.#probeStatus(true);
   }
 
-  async #probeStatus(emit: boolean): Promise<RuntimeProviderCompanionStatusDto> {
+  async #probeStatus(
+    emit: boolean,
+    generation = this.#statusGeneration
+  ): Promise<RuntimeProviderCompanionStatusDto> {
     const binaryPath = await this.#resolveBinary();
     if (!binaryPath) {
       const missing = this.#createStatus({
@@ -584,9 +609,7 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
         detail: 'Agent Teams can install it and then open the official browser sign-in.',
         error: null,
       });
-      this.#status = missing;
-      if (emit) this.#emitProgress(missing);
-      return { ...missing };
+      return this.#commitProbedStatus(missing, emit, generation);
     }
 
     const env = buildEnrichedEnv(binaryPath);
@@ -614,6 +637,22 @@ export class RuntimeProviderCliCompanionService implements RuntimeProviderCompan
         : `Sign in once in your browser. ${this.#definition.displayName} keeps the session in its normal local credential store.`,
       error: null,
     });
+    return this.#commitProbedStatus(next, emit, generation);
+  }
+
+  #invalidateStatusProbes(): void {
+    this.#statusGeneration += 1;
+    this.#statusProbe = null;
+  }
+
+  #commitProbedStatus(
+    next: RuntimeProviderCompanionStatusDto,
+    emit: boolean,
+    generation: number
+  ): RuntimeProviderCompanionStatusDto {
+    if (generation !== this.#statusGeneration) {
+      return { ...this.#status };
+    }
     this.#status = next;
     if (emit) this.#emitProgress(next);
     return { ...next };

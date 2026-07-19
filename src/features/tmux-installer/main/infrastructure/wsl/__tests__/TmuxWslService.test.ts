@@ -337,6 +337,16 @@ describe('TmuxWslService', () => {
       callback: (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => void
     ): void => {
       if (command === 'powershell.exe') {
+        const script = args.at(-1) ?? '';
+        expect(script).toContain(
+          '$featureNames = @("Microsoft-Windows-Subsystem-Linux","VirtualMachinePlatform")'
+        );
+        expect(script).toContain(
+          '$featureNames | ForEach-Object { Get-WindowsOptionalFeature -Online -FeatureName $_ }'
+        );
+        expect(script).not.toContain(
+          'Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux","VirtualMachinePlatform"'
+        );
         callback(
           null,
           JSON.stringify([
@@ -417,5 +427,122 @@ describe('TmuxWslService', () => {
     await second.probe();
 
     expect(powershellCalls).toBe(1);
+  });
+
+  it('refreshes the shared Windows feature probe after explicit invalidation', async () => {
+    let powershellCalls = 0;
+    const execFileMock = (
+      command: string,
+      _args: string[],
+      _options: {
+        timeout: number;
+        windowsHide: boolean;
+        maxBuffer: number;
+        encoding: 'buffer';
+      },
+      callback: (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => void
+    ): void => {
+      if (command === 'powershell.exe') {
+        powershellCalls += 1;
+        const state = powershellCalls === 1 ? 'Disabled' : 'Enabled';
+        callback(
+          null,
+          JSON.stringify([
+            { FeatureName: 'Microsoft-Windows-Subsystem-Linux', State: state },
+            { FeatureName: 'VirtualMachinePlatform', State: state },
+          ]),
+          ''
+        );
+        return;
+      }
+      callback(Object.assign(new Error('WSL unavailable'), { code: 1 }), '', '');
+    };
+
+    const first = new TmuxWslService(execFileMock, createPreferenceStore() as never);
+    const second = new TmuxWslService(execFileMock, createPreferenceStore() as never);
+
+    await expect(first.probe()).resolves.toMatchObject({
+      status: { wslInstalled: false },
+    });
+    await expect(second.probe()).resolves.toMatchObject({
+      status: { wslInstalled: false },
+    });
+    expect(powershellCalls).toBe(1);
+
+    second.invalidateOptionalFeatureProbeCache();
+
+    await expect(first.probe()).resolves.toMatchObject({
+      status: { wslInstalled: true },
+    });
+    expect(powershellCalls).toBe(2);
+  });
+
+  it('does not let an invalidated in-flight feature probe replace the fresh cache', async () => {
+    type ExecCallback = (
+      error: Error | null,
+      stdout: string | Buffer,
+      stderr: string | Buffer
+    ) => void;
+    const firstPowerShellCallback: { current: ExecCallback | null } = { current: null };
+    let markFirstPowerShellStarted: (() => void) | null = null;
+    const firstPowerShellStarted = new Promise<void>((resolve) => {
+      markFirstPowerShellStarted = resolve;
+    });
+    let powershellCalls = 0;
+    const execFileMock = (
+      command: string,
+      _args: string[],
+      _options: {
+        timeout: number;
+        windowsHide: boolean;
+        maxBuffer: number;
+        encoding: 'buffer';
+      },
+      callback: ExecCallback
+    ): void => {
+      if (command === 'powershell.exe') {
+        powershellCalls += 1;
+        if (powershellCalls === 1) {
+          firstPowerShellCallback.current = callback;
+          markFirstPowerShellStarted?.();
+          return;
+        }
+        callback(
+          null,
+          JSON.stringify([
+            { FeatureName: 'Microsoft-Windows-Subsystem-Linux', State: 'Enabled' },
+            { FeatureName: 'VirtualMachinePlatform', State: 'Enabled' },
+          ]),
+          ''
+        );
+        return;
+      }
+      callback(Object.assign(new Error('WSL unavailable'), { code: 1 }), '', '');
+    };
+    const service = new TmuxWslService(execFileMock, createPreferenceStore() as never);
+
+    const staleProbe = service.probe();
+    await firstPowerShellStarted;
+    service.invalidateOptionalFeatureProbeCache();
+    const freshProbe = service.probe();
+
+    await expect(freshProbe).resolves.toMatchObject({
+      status: { wslInstalled: true },
+    });
+    firstPowerShellCallback.current?.(
+      null,
+      JSON.stringify([
+        { FeatureName: 'Microsoft-Windows-Subsystem-Linux', State: 'Disabled' },
+        { FeatureName: 'VirtualMachinePlatform', State: 'Disabled' },
+      ]),
+      ''
+    );
+    await expect(staleProbe).resolves.toMatchObject({
+      status: { wslInstalled: false },
+    });
+    await expect(service.probe()).resolves.toMatchObject({
+      status: { wslInstalled: true },
+    });
+    expect(powershellCalls).toBe(2);
   });
 });

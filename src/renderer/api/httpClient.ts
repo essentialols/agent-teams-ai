@@ -1409,6 +1409,15 @@ export class HttpAPIClient implements ElectronAPI {
     applyDecisions: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
+    executeMutation: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    retryMutationRecovery: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    restoreHistory: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
     // Phase 2 stubs
     checkConflict: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
@@ -1424,6 +1433,15 @@ export class HttpAPIClient implements ElectronAPI {
     },
     // Editable diff stubs
     saveEditedFile: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    deleteEditedFile: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    restoreRejectedRename: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    reapplyRejectedRename: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
     watchFiles: async (): Promise<never> => {
@@ -1450,6 +1468,15 @@ export class HttpAPIClient implements ElectronAPI {
       throw new Error('Review is not available in browser mode');
     },
     clearDecisions: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    loadDraftHistory: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    saveDraftHistoryEntry: async (): Promise<never> => {
+      throw new Error('Review is not available in browser mode');
+    },
+    clearDraftHistory: async (): Promise<never> => {
       throw new Error('Review is not available in browser mode');
     },
     // Phase 4 stubs
@@ -1532,6 +1559,42 @@ export class HttpAPIClient implements ElectronAPI {
   };
 
   runtimeProviderManagement: RuntimeProviderManagementApi = {
+    listLocalProviders: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'config-invalid',
+        message: 'Local provider management is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
+    scanLocalProviders: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'endpoint-unreachable',
+        message: 'Local provider discovery is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
+    probeLocalProvider: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'endpoint-unreachable',
+        message: 'Local provider discovery is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
+    configureLocalProvider: async (input) => ({
+      schemaVersion: 1,
+      runtimeId: input.runtimeId,
+      error: {
+        code: 'write-failed',
+        message: 'Local provider configuration is available only in the desktop app.',
+        recoverable: true,
+      },
+    }),
     getCompanionStatus: async (input) => createBrowserCompanionStatus(input, 'status'),
     installAndConnectCompanion: async (input) => createBrowserCompanionStatus(input, 'install'),
     connectCompanion: async (input) => createBrowserCompanionStatus(input, 'connect'),

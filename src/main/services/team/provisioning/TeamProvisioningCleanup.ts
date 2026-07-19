@@ -1,5 +1,3 @@
-import { peekAutoResumeService } from '../AutoResumeService';
-
 import {
   removeDeterministicBootstrapSpecFile,
   removeDeterministicBootstrapUserPromptFile,
@@ -115,6 +113,8 @@ export interface TeamProvisioningCleanupPorts<TRun extends TeamProvisioningClean
   invalidateMemberSpawnStatusesCache(teamName: string): void;
   leadInboxRelayInFlight: DeleteStringMap;
   relayedLeadInboxMessageIds: DeleteStringMap;
+  leadRecoveryMessageIds: DeleteStringMap;
+  successfulLeadRecoveryMessageIds: DeleteStringMap;
   pendingCrossTeamFirstReplies: DeleteStringMap;
   recentCrossTeamLeadDeliveryMessageIds: DeleteStringMap;
   recentSameTeamNativeFingerprints: DeleteStringMap;
@@ -213,10 +213,6 @@ export function cleanupProvisioningRun<TRun extends TeamProvisioningCleanupRun>(
     isNewerTrackedRunId(currentAliveRunId);
   const retainedClaudeLogs = hasNewerTrackedRun ? null : ports.buildRetainedClaudeLogsSnapshot(run);
 
-  if (!hasNewerTrackedRun) {
-    peekAutoResumeService()?.cancelPendingAutoResume(run.teamName);
-  }
-
   if (!hasNewerTrackedRun && ports.shouldFinalizeIncompleteLaunchState(run)) {
     const cleanupReason = ports.buildIncompleteLaunchCleanupReason(run);
     ports.markIncompleteLaunchStateFinalized(run, cleanupReason);
@@ -272,6 +268,8 @@ export function cleanupProvisioningRun<TRun extends TeamProvisioningCleanupRun>(
     ports.invalidateMemberSpawnStatusesCache(run.teamName);
     ports.leadInboxRelayInFlight.delete(run.teamName);
     ports.relayedLeadInboxMessageIds.delete(run.teamName);
+    ports.leadRecoveryMessageIds.delete(run.teamName);
+    ports.successfulLeadRecoveryMessageIds.delete(run.teamName);
     ports.pendingCrossTeamFirstReplies.delete(run.teamName);
     ports.recentCrossTeamLeadDeliveryMessageIds.delete(run.teamName);
     ports.recentSameTeamNativeFingerprints.delete(run.teamName);

@@ -848,4 +848,98 @@ describe('TeamInboxReader', () => {
       summary: 'Mailbox turn execution failed',
     });
   });
+
+  it('preserves valid structured agent-error and runtime-recovery contracts', async () => {
+    hoisted.files.set(
+      '/mock/teams/my-team/inboxes/alice.json',
+      JSON.stringify([
+        {
+          from: 'bob',
+          text: 'API Error: 529 overloaded_error',
+          timestamp: '2026-01-01T03:00:00.000Z',
+          read: false,
+          messageId: 'm-agent-error-structured',
+          messageKind: 'agent_error',
+          agentError: {
+            schemaVersion: 1,
+            type: 'api_error',
+            phase: 'terminal',
+            detail: 'API Error: 529 overloaded_error',
+            failedMessageId: 'runtime-recovery-1-attempt-1',
+            runtimeSessionId: 'session-1',
+            bootstrapRunId: 'run-1',
+            innerRecoveryAttempts: 3,
+          },
+        },
+        {
+          from: 'system',
+          text: 'Continue safely',
+          timestamp: '2026-01-01T03:01:00.000Z',
+          read: false,
+          messageId: 'runtime-recovery-1-attempt-1',
+          messageKind: 'runtime_recovery_nudge',
+          runtimeRecovery: {
+            schemaVersion: 1,
+            recoveryId: 'runtime-recovery-1',
+            sourceFailureId: 'failure-1',
+            attempt: 1,
+            reasonCode: 'provider_overloaded',
+            payloadHash: 'sha256:payload',
+          },
+        },
+      ])
+    );
+
+    const messages = await reader.getMessagesFor('my-team', 'alice');
+    expect(
+      messages.find((message) => message.messageId === 'm-agent-error-structured')?.agentError
+    ).toMatchObject({
+      failedMessageId: 'runtime-recovery-1-attempt-1',
+      innerRecoveryAttempts: 3,
+    });
+    expect(
+      messages.find((message) => message.messageId === 'runtime-recovery-1-attempt-1')
+        ?.runtimeRecovery
+    ).toEqual({
+      schemaVersion: 1,
+      recoveryId: 'runtime-recovery-1',
+      sourceFailureId: 'failure-1',
+      attempt: 1,
+      reasonCode: 'provider_overloaded',
+      payloadHash: 'sha256:payload',
+    });
+  });
+
+  it('drops malformed structured metadata while keeping the compatible inbox row', async () => {
+    hoisted.files.set(
+      '/mock/teams/my-team/inboxes/alice.json',
+      JSON.stringify([
+        {
+          from: 'bob',
+          text: 'API Error: 529 overloaded_error',
+          timestamp: '2026-01-01T03:00:00.000Z',
+          read: false,
+          messageId: 'm-agent-error-malformed',
+          messageKind: 'agent_error',
+          agentError: {
+            schemaVersion: 1,
+            type: 'api_error',
+            phase: 'terminal',
+            detail: 'API Error: 529 overloaded_error',
+            failedMessageId: 'failed-1',
+            runtimeSessionId: 123,
+            innerRecoveryAttempts: -1,
+          },
+        },
+      ])
+    );
+
+    const messages = await reader.getMessagesFor('my-team', 'alice');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      messageId: 'm-agent-error-malformed',
+      messageKind: 'agent_error',
+      agentError: undefined,
+    });
+  });
 });

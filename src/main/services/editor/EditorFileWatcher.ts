@@ -12,6 +12,7 @@
 import { isPathWithinRoot } from '@main/utils/pathValidation';
 import { createLogger } from '@shared/utils/logger';
 import { watch } from 'chokidar';
+import { lstatSync } from 'node:fs';
 
 import type { EditorFileChangeEvent } from '@shared/types/editor';
 import type { FSWatcher } from 'chokidar';
@@ -24,6 +25,53 @@ const log = createLogger('EditorFileWatcher');
 
 const STARTUP_IGNORE_CHANGE_MS = 3000;
 const MAX_EMITTED_EVENTS_PER_FLUSH = 300;
+
+type FileIdentity =
+  | { status: 'missing' }
+  | { status: 'unavailable' }
+  | {
+      status: 'present';
+      device: bigint;
+      inode: bigint;
+      size: bigint;
+      modifiedAtNs: bigint;
+      changedAtNs: bigint;
+    };
+
+function readFileIdentity(filePath: string): FileIdentity {
+  try {
+    const stat = lstatSync(filePath, { bigint: true });
+    return {
+      status: 'present',
+      device: stat.dev,
+      inode: stat.ino,
+      size: stat.size,
+      modifiedAtNs: stat.mtimeNs,
+      changedAtNs: stat.ctimeNs,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { status: 'missing' };
+    }
+    return { status: 'unavailable' };
+  }
+}
+
+function identityChangeType(
+  before: FileIdentity,
+  after: FileIdentity
+): EditorFileChangeEvent['type'] | null {
+  if (before.status === 'unavailable' || after.status === 'unavailable') return null;
+  if (before.status === 'missing') return after.status === 'present' ? 'create' : null;
+  if (after.status === 'missing') return 'delete';
+  return before.device !== after.device ||
+    before.inode !== after.inode ||
+    before.size !== after.size ||
+    before.modifiedAtNs !== after.modifiedAtNs ||
+    before.changedAtNs !== after.changedAtNs
+    ? 'change'
+    : null;
+}
 
 export interface EditorFileWatcherOptions {
   /**
@@ -40,6 +88,7 @@ export interface EditorFileWatcherOptions {
 
 export class EditorFileWatcher {
   private watcher: FSWatcher | null = null;
+  private retiringWatchers = new Set<FSWatcher>();
   private dirWatcher: FSWatcher | null = null;
   private projectRoot: string | null = null;
   private pendingEvents = new Map<string, EditorFileChangeEvent['type']>();
@@ -77,7 +126,9 @@ export class EditorFileWatcher {
 
   /**
    * Update list of watched file paths (open tabs).
-   * Rebuilds chokidar watcher when the set changes.
+   * Rebuilds chokidar watcher when the set changes while retaining the previous
+   * subscription until the replacement is ready. A before/ready identity check
+   * recovers changes that happen while chokidar is arming its native watchers.
    */
   setWatchedFiles(filePaths: string[]): void {
     if (!this.projectRoot) {
@@ -94,30 +145,39 @@ export class EditorFileWatcher {
       const added = normalized.filter((filePath) => !this.watchedFiles.has(filePath));
       const removed = [...this.watchedFiles].filter((filePath) => !nextWatchedFiles.has(filePath));
       if (added.length === 0 && removed.length === 0) return;
-      // Add first so unchanged and newly-visible files remain continuously covered.
-      if (added.length > 0) this.watcher.add(added);
-      if (removed.length > 0) {
-        this.watcher.unwatch(removed);
-      }
-      this.watchedFiles = nextWatchedFiles;
-      return;
     }
 
     if (normalized.length === 0) {
       this.watchedFiles.clear();
+      if (this.watcher) {
+        void this.watcher.close();
+        this.watcher = null;
+      }
+      this.closeRetiringWatchers();
       return;
     }
 
+    const startupIdentities = new Map(
+      normalized.map((filePath) => [filePath, readFileIdentity(filePath)] as const)
+    );
+    const startupObservedPaths = new Set<string>();
+    let isReady = false;
+
     // Build a new watcher for the given file set.
     // disableGlobbing prevents chokidar from treating file names as patterns.
-    this.watcher = watch(normalized, {
+    const previousWatcher = this.watcher;
+    const nextWatcher = watch(normalized, {
       ignoreInitial: true,
       ignorePermissionErrors: true,
       followSymlinks: false,
     });
+    this.watcher = nextWatcher;
     this.watchedFiles = nextWatchedFiles;
+    if (previousWatcher) this.retiringWatchers.add(previousWatcher);
 
     const emitSafe = (type: EditorFileChangeEvent['type'], filePath: string): void => {
+      if (!isReady) startupObservedPaths.add(filePath);
+      if (!this.watchedFiles.has(filePath)) return;
       if (type === 'change' && Date.now() < this.ignoreChangeUntilMs) {
         return;
       }
@@ -129,11 +189,24 @@ export class EditorFileWatcher {
       this.scheduleFlush();
     };
 
-    this.watcher.on('change', (p) => emitSafe('change', p));
-    this.watcher.on('add', (p) => emitSafe('create', p));
-    this.watcher.on('unlink', (p) => emitSafe('delete', p));
+    nextWatcher.on('change', (p) => emitSafe('change', p));
+    nextWatcher.on('add', (p) => emitSafe('create', p));
+    nextWatcher.on('unlink', (p) => emitSafe('delete', p));
 
-    this.watcher.on('error', (error) => {
+    nextWatcher.on('ready', () => {
+      isReady = true;
+      if (this.watcher !== nextWatcher) return;
+
+      for (const [filePath, before] of startupIdentities) {
+        if (startupObservedPaths.has(filePath) || !this.watchedFiles.has(filePath)) continue;
+        const changeType = identityChangeType(before, readFileIdentity(filePath));
+        if (changeType) emitSafe(changeType, filePath);
+      }
+
+      this.closeRetiringWatchers();
+    });
+
+    nextWatcher.on('error', (error) => {
       log.error('Watcher error:', error);
     });
   }
@@ -210,6 +283,7 @@ export class EditorFileWatcher {
       void this.watcher.close();
       this.watcher = null;
     }
+    this.closeRetiringWatchers();
     if (this.dirWatcher) {
       log.info('Stopping directory watcher');
       void this.dirWatcher.close();
@@ -259,5 +333,12 @@ export class EditorFileWatcher {
    */
   isWatching(): boolean {
     return this.watcher !== null;
+  }
+
+  private closeRetiringWatchers(): void {
+    for (const watcher of this.retiringWatchers) {
+      void watcher.close();
+    }
+    this.retiringWatchers.clear();
   }
 }

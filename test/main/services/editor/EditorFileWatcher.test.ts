@@ -3,6 +3,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Mock chokidar
 const mockOn = vi.fn().mockReturnThis();
@@ -77,7 +80,7 @@ describe('EditorFileWatcher', () => {
       });
     });
 
-    it('registers change, add, unlink, and error handlers', () => {
+    it('registers change, add, unlink, ready, and error handlers', () => {
       const onChange = vi.fn();
       watcher.start('/Users/test/project', onChange);
       watcher.setWatchedFiles(['/Users/test/project/src/index.ts']);
@@ -86,6 +89,7 @@ describe('EditorFileWatcher', () => {
       expect(registeredEvents).toContain('change');
       expect(registeredEvents).toContain('add');
       expect(registeredEvents).toContain('unlink');
+      expect(registeredEvents).toContain('ready');
       expect(registeredEvents).toContain('error');
     });
 
@@ -176,17 +180,63 @@ describe('EditorFileWatcher', () => {
       expect(watch).toHaveBeenCalledTimes(1);
     });
 
-    it('updates watched files incrementally without a global subscription gap', () => {
+    it('keeps the previous subscription until its replacement is ready', () => {
       watcher.start('/Users/test/project', vi.fn());
       watcher.setWatchedFiles(['/Users/test/project/a.ts']);
 
       watcher.setWatchedFiles(['/Users/test/project/a.ts', '/Users/test/project/b.ts']);
-      watcher.setWatchedFiles(['/Users/test/project/b.ts']);
 
-      expect(watch).toHaveBeenCalledTimes(1);
-      expect(mockAdd).toHaveBeenCalledWith(['/Users/test/project/b.ts']);
-      expect(mockUnwatch).toHaveBeenCalledWith(['/Users/test/project/a.ts']);
+      expect(watch).toHaveBeenCalledTimes(2);
       expect(mockClose).not.toHaveBeenCalled();
+
+      const latestReadyHandler = [...mockOn.mock.calls]
+        .reverse()
+        .find((call) => call[0] === 'ready')?.[1];
+      latestReadyHandler?.();
+
+      expect(mockClose).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      {
+        name: 'change',
+        prepare: (filePath: string) => writeFileSync(filePath, 'before'),
+        mutate: (filePath: string) => writeFileSync(filePath, 'after with another size'),
+        expectedType: 'change',
+      },
+      {
+        name: 'create',
+        prepare: (_filePath: string) => undefined,
+        mutate: (filePath: string) => writeFileSync(filePath, 'created'),
+        expectedType: 'create',
+      },
+      {
+        name: 'delete',
+        prepare: (filePath: string) => writeFileSync(filePath, 'before'),
+        mutate: (filePath: string) => unlinkSync(filePath),
+        expectedType: 'delete',
+      },
+    ])('recovers a $name that happens before chokidar is ready', ({ prepare, mutate, expectedType }) => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'editor-watcher-ready-'));
+      const filePath = join(projectRoot, 'reviewed.ts');
+      const onChange = vi.fn();
+
+      try {
+        prepare(filePath);
+        const reviewWatcher = new EditorFileWatcher({ ignoreStartupChanges: false });
+        reviewWatcher.start(projectRoot, onChange);
+        reviewWatcher.setWatchedFiles([filePath]);
+
+        mutate(filePath);
+        const readyHandler = mockOn.mock.calls.find((call) => call[0] === 'ready')?.[1];
+        readyHandler?.();
+        vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS);
+
+        expect(onChange).toHaveBeenCalledWith({ type: expectedType, path: filePath });
+        reviewWatcher.stop();
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
   });
 

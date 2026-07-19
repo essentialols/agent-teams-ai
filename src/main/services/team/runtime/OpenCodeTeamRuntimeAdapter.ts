@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 
+import { isOpenCodeTerminalProbeTechnicalDiagnostic } from '../opencode/readiness/OpenCodeFailureDiagnostics';
 import { normalizeOpenCodeProjectIdentity } from '../opencode/readiness/OpenCodeProjectIdentity';
 
 import type {
@@ -1206,6 +1207,7 @@ function isGenericOpenCodeFailureMessage(message: string): boolean {
     message.startsWith('OpenCode command timed out after') ||
     message.startsWith('CLI-authenticated providers missing from live host') ||
     message.startsWith('OpenCode session status') ||
+    isOpenCodeTerminalProbeTechnicalDiagnostic(message) ||
     (message.startsWith('opencode_app_mcp_tool_proof_') && message.includes('cache_hit')) ||
     isOpenCodeLaunchTimingDiagnostic(message)
   );

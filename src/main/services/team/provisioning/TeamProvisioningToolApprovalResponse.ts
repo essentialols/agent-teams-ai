@@ -59,7 +59,7 @@ export async function answerRuntimeToolApprovalResponse<
   input: TeamProvisioningRuntimeToolApprovalAnswerInput,
   ports: OpenCodeRuntimeToolApprovalAnswerPorts<TRun>
 ): Promise<void> {
-  await answerOpenCodeRuntimeToolApproval(input.entry, input.allow, ports);
+  await answerOpenCodeRuntimeToolApproval(input.entry, input.allow, ports, input.message);
 }
 
 export async function respondToToolApprovalResponse<

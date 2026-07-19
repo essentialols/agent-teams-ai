@@ -86,7 +86,8 @@ export async function answerOpenCodeRuntimeToolApproval<
 >(
   entry: RuntimeToolApprovalEntry,
   allow: boolean,
-  ports: OpenCodeRuntimeToolApprovalAnswerPorts<TRun>
+  ports: OpenCodeRuntimeToolApprovalAnswerPorts<TRun>,
+  message?: string
 ): Promise<void> {
   if (entry.providerId !== 'opencode') {
     throw new Error(`Runtime approval provider is not supported: ${entry.providerId}`);
@@ -99,11 +100,13 @@ export async function answerOpenCodeRuntimeToolApproval<
 
   const previousLaunchState = await ports.readLaunchState(expectedIdentity.teamName);
   assertTrackedRuntimeApprovalIdentity(expectedIdentity, ports);
-  const permissionInput = ports.buildOpenCodeRuntimePermissionAnswerInput(
+  const basePermissionInput = ports.buildOpenCodeRuntimePermissionAnswerInput(
     entry,
     allow,
     previousLaunchState
   );
+  const permissionInput: TeamRuntimePermissionAnswerInput =
+    message === undefined ? basePermissionInput : { ...basePermissionInput, message };
   assertRuntimePermissionInputIdentity(expectedIdentity, permissionInput);
   const result = await adapter.answerRuntimePermission(permissionInput);
   assertTrackedRuntimeApprovalIdentity(expectedIdentity, ports);

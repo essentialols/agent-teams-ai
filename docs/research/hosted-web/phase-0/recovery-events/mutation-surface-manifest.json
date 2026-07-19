@@ -838,6 +838,33 @@
       "commandKind": "review.apply_decisions"
     },
     {
+      "id": "ReviewAPI.executeMutation",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "executeMutation",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
+    },
+    {
+      "id": "ReviewAPI.retryMutationRecovery",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "retryMutationRecovery",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
+    },
+    {
+      "id": "ReviewAPI.restoreHistory",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "restoreHistory",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
+    },
+    {
       "id": "ReviewAPI.checkConflict",
       "interfaceName": "ReviewAPI",
       "sourceMethod": "checkConflict",
@@ -879,6 +906,33 @@
       "disposition": "required_hosted_v1_mutation",
       "owner": "team-review",
       "commandKind": "review.save_edited_file"
+    },
+    {
+      "id": "ReviewAPI.deleteEditedFile",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "deleteEditedFile",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
+    },
+    {
+      "id": "ReviewAPI.restoreRejectedRename",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "restoreRejectedRename",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
+    },
+    {
+      "id": "ReviewAPI.reapplyRejectedRename",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "reapplyRejectedRename",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
     },
     {
       "id": "ReviewAPI.watchFiles",
@@ -929,6 +983,32 @@
       "disposition": "required_hosted_v1_mutation",
       "owner": "team-review",
       "commandKind": "review.clear_decisions"
+    },
+    {
+      "id": "ReviewAPI.loadDraftHistory",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "loadDraftHistory",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "query",
+      "owner": "team-review"
+    },
+    {
+      "id": "ReviewAPI.saveDraftHistoryEntry",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "saveDraftHistoryEntry",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
+    },
+    {
+      "id": "ReviewAPI.clearDraftHistory",
+      "interfaceName": "ReviewAPI",
+      "sourceMethod": "clearDraftHistory",
+      "sourceFile": "src/shared/types/api.ts",
+      "disposition": "deferred",
+      "owner": "team-review",
+      "reason": "hosted HTTP explicitly rejects this mutation and no admitted command descriptor exists"
     },
     {
       "id": "ReviewAPI.onCmdN",

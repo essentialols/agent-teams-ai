@@ -127,23 +127,32 @@
       "ReviewAPI.unwatchFiles",
       "ReviewAPI.onExternalFileChange",
       "ReviewAPI.loadDecisions",
+      "ReviewAPI.loadDraftHistory",
       "ReviewAPI.onCmdN",
       "ReviewAPI.getGitFileLog"
     ],
     "deferredOutsideHostedV1": [
+      "ReviewAPI.executeMutation",
+      "ReviewAPI.retryMutationRecovery",
+      "ReviewAPI.restoreHistory",
+      "ReviewAPI.deleteEditedFile",
+      "ReviewAPI.restoreRejectedRename",
+      "ReviewAPI.reapplyRejectedRename",
+      "ReviewAPI.saveDraftHistoryEntry",
+      "ReviewAPI.clearDraftHistory",
       "OpenCodeRuntimeControlApi.answerOpenCodeRuntimePermission",
       "ScheduleAPI mutations",
       "terminal input/tab/split commands"
     ],
-    "observedSurfaceCount": 114,
+    "observedSurfaceCount": 123,
     "observedMethodCount": 53,
     "dispositionCounts": {
-      "extracted": 114,
-      "dispositions": 114,
+      "extracted": 123,
+      "dispositions": 123,
       "required": 53,
-      "query": 45,
+      "query": 46,
       "ephemeral": 15,
-      "deferred": 1
+      "deferred": 9
     },
     "sourceFiles": [
       "src/shared/types/api.ts",

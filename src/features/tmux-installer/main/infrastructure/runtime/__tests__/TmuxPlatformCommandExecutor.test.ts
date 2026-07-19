@@ -204,7 +204,7 @@ describe('TmuxPlatformCommandExecutor', () => {
     );
 
     const first = await executor.listRuntimeProcesses();
-    first[0]!.command = 'mutated';
+    first[0].command = 'mutated';
     first.push({ pid: 99, ppid: 1, command: 'injected' });
 
     await expect(executor.listRuntimeProcesses()).resolves.toEqual([
@@ -215,7 +215,11 @@ describe('TmuxPlatformCommandExecutor', () => {
 
   it('does not reuse an in-flight process table request when bypassing the cache', async () => {
     setPlatform('win32');
-    type ExecResult = { exitCode: number; stdout: string; stderr: string };
+    interface ExecResult {
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }
     let resolveFirstRequest!: (value: ExecResult) => void;
     const firstRequest = new Promise<ExecResult>((resolve) => {
       resolveFirstRequest = resolve;

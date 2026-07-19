@@ -81,10 +81,7 @@ function openLockDatabase(): DatabaseSync {
   return database;
 }
 
-function assertSafeScope(
-  teamName: string,
-  persistenceScope: ReviewDecisionPersistenceScope
-): void {
+function assertSafeScope(teamName: string, persistenceScope: ReviewDecisionPersistenceScope): void {
   if (!TEAM_NAME_PATTERN.test(teamName)) {
     throw new Error('Invalid review persistence lock team name');
   }
@@ -100,10 +97,7 @@ function assertSafeScope(
   }
 }
 
-function buildScopeId(
-  teamName: string,
-  persistenceScope: ReviewDecisionPersistenceScope
-): string {
+function buildScopeId(teamName: string, persistenceScope: ReviewDecisionPersistenceScope): string {
   return createHash('sha256')
     .update(teamName)
     .update('\0')
@@ -188,11 +182,7 @@ function rollbackBestEffort(database: DatabaseSync): void {
   }
 }
 
-function tryAcquireLease(
-  database: DatabaseSync,
-  scopeId: string,
-  ownerToken: string
-): boolean {
+function tryAcquireLease(database: DatabaseSync, scopeId: string, ownerToken: string): boolean {
   const observed = database
     .prepare(
       'SELECT owner_token, owner_pid, owner_started_at FROM review_scope_locks WHERE scope_id = ?'
@@ -214,11 +204,7 @@ function tryAcquireLease(
       observed.owner_token === row.owner_token &&
       observed.owner_pid === row.owner_pid &&
       observed.owner_started_at === row.owner_started_at;
-    if (
-      row &&
-      row.owner_token !== ownerToken &&
-      (!observedOwnerIsUnchanged || !observedIsStale)
-    ) {
+    if (row && row.owner_token !== ownerToken && (!observedOwnerIsUnchanged || !observedIsStale)) {
       database.exec('COMMIT');
       return false;
     }
@@ -350,11 +336,11 @@ export async function withReviewPersistenceScopeLock<T>(
     operationError = error;
   }
   clearInterval(heartbeat);
-  let releaseError: unknown;
+  let releaseError: Error | undefined;
   try {
     await releaseLease(lease);
   } catch (error) {
-    releaseError = error;
+    releaseError = error instanceof Error ? error : new Error(String(error));
   }
   activeOwnerTokens.delete(lease.ownerToken);
   if (operationFailed) throw operationError;

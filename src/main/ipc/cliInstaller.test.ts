@@ -5,6 +5,7 @@ import {
   CLI_INSTALLER_VERIFY_PROVIDER_MODELS,
 } from '@preload/constants/ipcChannels';
 import { createDefaultCliExtensionCapabilities } from '@shared/utils/providerExtensionCapabilities';
+import * as path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { initializeCliInstallerHandlers, registerCliInstallerHandlers } from './cliInstaller';
@@ -250,29 +251,31 @@ describe('cliInstaller IPC provider runtime scheduling', () => {
       .mockImplementationOnce(() => secondDeferred.promise);
     const service = createInstallerService({ getProviderStatus });
     const { invoke } = setupHandlers(service);
+    const firstProjectPath = path.join(process.cwd(), 'local-model-project-a');
+    const secondProjectPath = path.join(process.cwd(), 'local-model-project-b');
 
     const firstRequest = invoke<IpcResult<CliProviderStatus | null>>(
       CLI_INSTALLER_GET_PROVIDER_STATUS,
       'opencode',
-      { projectPath: '/tmp/local-model-project-a' }
+      { projectPath: firstProjectPath }
     );
     const secondRequest = invoke<IpcResult<CliProviderStatus | null>>(
       CLI_INSTALLER_GET_PROVIDER_STATUS,
       'opencode',
-      { projectPath: '/tmp/local-model-project-b' }
+      { projectPath: secondProjectPath }
     );
 
     await flushMicrotasks();
     expect(getProviderStatus).toHaveBeenCalledTimes(1);
     expect(getProviderStatus).toHaveBeenNthCalledWith(1, 'opencode', {
-      projectPath: '/tmp/local-model-project-a',
+      projectPath: firstProjectPath,
     });
 
     firstDeferred.resolve(createProviderStatus('opencode'));
     await flushMicrotasks();
     expect(getProviderStatus).toHaveBeenCalledTimes(2);
     expect(getProviderStatus).toHaveBeenNthCalledWith(2, 'opencode', {
-      projectPath: '/tmp/local-model-project-b',
+      projectPath: secondProjectPath,
     });
 
     secondDeferred.resolve(createProviderStatus('opencode'));

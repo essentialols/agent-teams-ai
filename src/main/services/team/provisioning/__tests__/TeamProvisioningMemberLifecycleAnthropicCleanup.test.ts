@@ -19,9 +19,9 @@ type DirectProcessRestartInput = Parameters<
   TeamProvisioningMemberLifecycleController['launchDirectProcessMemberRestartInternal']
 >[0];
 type DirectTmuxRestartInput = Omit<DirectProcessRestartInput, 'operation'> & { paneId: string };
-type DirectTmuxRestartController = {
+interface DirectTmuxRestartController {
   launchDirectTmuxMemberRestart(input: DirectTmuxRestartInput): Promise<void>;
-};
+}
 
 const hoisted = vi.hoisted(() => ({ teamsBase: '' }));
 

@@ -94,7 +94,7 @@ export async function respondToToolApprovalResponse<
     return;
   }
 
-  const { run, approval } = leadResponse;
+  const { run, approval, claimOwnership } = leadResponse;
 
   // The lead boundary transfers its response claim with a non-lead redirect. Keep that
   // claim for the whole teammate response, then release it on every exit below.
@@ -121,6 +121,8 @@ export async function respondToToolApprovalResponse<
     }
     throw error;
   } finally {
-    ports.leadToolApprovalResponsePorts.inFlightResponses.delete(requestId);
+    if (claimOwnership === 'caller') {
+      ports.leadToolApprovalResponsePorts.inFlightResponses.delete(requestId);
+    }
   }
 }

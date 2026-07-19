@@ -139,6 +139,7 @@ function makePorts(
       return progress;
     }),
     clearOpenCodeRuntimeToolApprovals: vi.fn(),
+    getAliveRunId: vi.fn((teamName) => aliveRunByTeam.get(teamName) ?? null),
     deleteAliveRunId: vi.fn((teamName) => {
       aliveRunByTeam.delete(teamName);
     }),
@@ -717,6 +718,40 @@ describe('OpenCode runtime stop flow', () => {
     expect(ports.stoppingSecondaryRuntimeTeams.has('team-a')).toBe(false);
   });
 
+  it('does not stop a replacement secondary owner installed while reading launch state', async () => {
+    const stoppedRun: SecondaryRuntimeRunEntry = {
+      runId: 'run-worker-a',
+      providerId: 'opencode',
+      laneId: 'secondary-worker',
+      memberName: 'Worker',
+      cwd: '/worker-a',
+    };
+    const newerRun: SecondaryRuntimeRunEntry = {
+      ...stoppedRun,
+      runId: 'run-worker-b',
+      cwd: '/worker-b',
+    };
+    let trackedRuns = [stoppedRun];
+    const stop = vi.fn();
+    const ports = makePorts({ adapter: makeAdapter(stop), secondaryRuns: [stoppedRun] });
+    vi.mocked(ports.getSecondaryRuntimeRuns).mockImplementation(() => trackedRuns);
+    vi.mocked(ports.readLaunchState).mockImplementation(async () => {
+      trackedRuns = [newerRun];
+      return snapshot();
+    });
+
+    await stopMixedSecondaryRuntimeLanes('team-a', ports);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(ports.progressUpdates).toEqual([]);
+    expect(ports.clearCalls).toEqual([]);
+    expect(ports.deleteSecondaryRuntimeRun).not.toHaveBeenCalled();
+    expect(ports.clearSecondaryRuntimeRuns).not.toHaveBeenCalled();
+    expect(ports.emittedEvents).toEqual([]);
+    expect(ports.getSecondaryRuntimeRuns('team-a')).toEqual([newerRun]);
+    expect(ports.stoppingSecondaryRuntimeTeams.has('team-a')).toBe(false);
+  });
+
   it('does not clear secondary lane storage for a newer owner registered during stop', async () => {
     const stoppedRun: SecondaryRuntimeRunEntry = {
       runId: 'run-worker-a',
@@ -917,5 +952,78 @@ describe('OpenCode runtime stop flow', () => {
     expect(ports.runtimeAdapterRunByTeam.get('team-a')?.runId).toBe('run-B');
     expect(ports.provisioningRunByTeam.get('team-a')).toBe('run-B');
     expect(ports.aliveRunByTeam.get('team-a')).toBe('run-B');
+  });
+
+  it('does not stop an old primary when launch-state reading installs a new owner', async () => {
+    const stop = vi.fn();
+    const ports = makePorts({ adapter: makeAdapter(stop), previousLaunchState: snapshot() });
+    vi.mocked(ports.readLaunchState).mockImplementation(async () => {
+      ports.runtimeAdapterRunByTeam.set('team-a', {
+        runId: 'run-B',
+        providerId: 'opencode',
+        cwd: '/runtime-cwd-b',
+      });
+      ports.provisioningRunByTeam.set('team-a', 'run-B');
+      ports.aliveRunByTeam.set('team-a', 'run-B');
+      return snapshot();
+    });
+
+    await stopOpenCodeRuntimeAdapterTeam('team-a', 'run-primary', ports);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(ports.progressUpdates).toEqual([]);
+    expect(ports.writeLaunchStateSnapshot).not.toHaveBeenCalled();
+    expect(ports.clearCalls).toEqual([]);
+    expect(ports.clearOpenCodeRuntimeToolApprovals).not.toHaveBeenCalled();
+    expect(ports.invalidateRuntimeSnapshotCaches).not.toHaveBeenCalled();
+    expect(ports.emittedEvents).toEqual([]);
+    expect(ports.runtimeAdapterRunByTeam.get('team-a')).toEqual({
+      runId: 'run-B',
+      providerId: 'opencode',
+      cwd: '/runtime-cwd-b',
+    });
+    expect(ports.provisioningRunByTeam.get('team-a')).toBe('run-B');
+    expect(ports.aliveRunByTeam.get('team-a')).toBe('run-B');
+  });
+
+  it('stops the exact old primary without clearing state owned by a newer alive run', async () => {
+    const stop = vi.fn(async (input) => {
+      ports.aliveRunByTeam.set('team-a', 'run-B');
+      return {
+        runId: input.runId,
+        teamName: input.teamName,
+        stopped: true,
+        members: {},
+        warnings: [],
+        diagnostics: [],
+      };
+    });
+    const ports = makePorts({ adapter: makeAdapter(stop), previousLaunchState: snapshot() });
+
+    await stopOpenCodeRuntimeAdapterTeam('team-a', 'run-primary', ports);
+
+    expect(stop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-primary',
+        laneId: 'primary',
+        teamName: 'team-a',
+      })
+    );
+    expect(ports.writeLaunchStateSnapshot).not.toHaveBeenCalled();
+    expect(ports.clearCalls).toEqual([]);
+    expect(ports.clearOpenCodeRuntimeToolApprovals).not.toHaveBeenCalled();
+    expect(ports.invalidateRuntimeSnapshotCaches).not.toHaveBeenCalled();
+    expect(ports.runtimeAdapterRunByTeam.get('team-a')?.runId).toBe('run-primary');
+    expect(ports.provisioningRunByTeam.get('team-a')).toBe('run-primary');
+    expect(ports.aliveRunByTeam.get('team-a')).toBe('run-B');
+    expect(ports.deleteAliveRunId).not.toHaveBeenCalled();
+    expect(ports.progressUpdates).toEqual([
+      expect.objectContaining({
+        runId: 'run-primary',
+        state: 'disconnected',
+        message: 'Stopping OpenCode team through runtime adapter',
+      }),
+    ]);
+    expect(ports.emittedEvents).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import {
   collectConfigLaunchBaseNamesFromConfigMembers,
   collectConfigLaunchBaseNamesFromMetaMembers,
   getPrelaunchConfigBackupPath,
+  mergeMembersMetaForLaunch,
   planCliAutoSuffixedConfigMemberCleanup,
   planCliAutoSuffixedMetaMemberCleanup,
   planTeamConfigLaunchNormalization,
@@ -29,6 +30,11 @@ export interface TeamProvisioningConfigMaintenanceMembersMetaStore {
   writeMembers(
     teamName: string,
     members: TeamMember[],
+    options?: { providerBackendId?: TeamCreateRequest['providerBackendId'] }
+  ): Promise<void>;
+  updateMembers?(
+    teamName: string,
+    update: (members: readonly TeamMember[]) => TeamMember[] | Promise<TeamMember[]>,
     options?: { providerBackendId?: TeamCreateRequest['providerBackendId'] }
   ): Promise<void>;
 }
@@ -179,16 +185,25 @@ export class TeamProvisioningConfigMaintenance {
     try {
       const metaMembers = await this.options.ports.membersMetaStore.getMembers(teamName);
       if (metaMembers.length > 0) {
-        const cleanupPlan = planCliAutoSuffixedMetaMemberCleanup(metaMembers);
+        const updateMembers = this.options.ports.membersMetaStore.updateMembers;
+        if (!updateMembers) {
+          throw new Error('Atomic members metadata update is unavailable');
+        }
+        let plannedRemovedNames: string[] = [];
+        let plannedActiveNamesForInboxCleanup = new Set<string>();
+        await updateMembers.call(this.options.ports.membersMetaStore, teamName, (rawMembers) => {
+          const cleanupPlan = planCliAutoSuffixedMetaMemberCleanup(rawMembers);
+          plannedRemovedNames = cleanupPlan.removedNames;
+          plannedActiveNamesForInboxCleanup = cleanupPlan.activeNamesForInboxCleanup;
+          return cleanupPlan.nextMembers;
+        });
+        activeNamesForInboxCleanup = plannedActiveNamesForInboxCleanup;
 
-        if (cleanupPlan.removedNames.length > 0) {
-          await this.options.ports.membersMetaStore.writeMembers(teamName, cleanupPlan.nextMembers);
+        if (plannedRemovedNames.length > 0) {
           this.options.ports.logger.warn(
-            `[${teamName}] Removed CLI auto-suffixed members from members.meta.json: ${cleanupPlan.removedNames.join(', ')}`
+            `[${teamName}] Removed CLI auto-suffixed members from members.meta.json: ${plannedRemovedNames.join(', ')}`
           );
         }
-
-        activeNamesForInboxCleanup = cleanupPlan.activeNamesForInboxCleanup;
       }
     } catch {
       // best-effort
@@ -236,6 +251,7 @@ export class TeamProvisioningConfigMaintenance {
           error instanceof Error ? error.message : String(error)
         }`
       );
+      return;
     }
 
     // Write normalized config atomically.
@@ -330,15 +346,27 @@ export class TeamProvisioningConfigMaintenance {
     const joinedAt = this.options.ports.now();
 
     try {
-      const membersToWrite = buildMembersMetaWritePayload(
-        teammateMembers.map((member) => ({
-          ...member,
-          joinedAt,
-        }))
+      const updateMembers = this.options.ports.membersMetaStore.updateMembers;
+      if (!updateMembers) {
+        throw new Error('Atomic members metadata update is unavailable');
+      }
+      await updateMembers.call(
+        this.options.ports.membersMetaStore,
+        teamName,
+        (existingMembers) =>
+          mergeMembersMetaForLaunch(
+            buildMembersMetaWritePayload(
+              teammateMembers.map((member) => ({
+                ...member,
+                joinedAt,
+              }))
+            ),
+            existingMembers
+          ),
+        {
+          providerBackendId: request.providerBackendId,
+        }
       );
-      await this.options.ports.membersMetaStore.writeMembers(teamName, membersToWrite, {
-        providerBackendId: request.providerBackendId,
-      });
     } catch (error) {
       this.options.ports.logger.warn(
         `[${teamName}] Failed to persist members.meta.json: ${

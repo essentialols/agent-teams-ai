@@ -1,5 +1,6 @@
 import {
   killTmuxPaneForCurrentPlatformSync,
+  listRuntimeProcessTableForCurrentPlatform,
   listTmuxPanePidsForCurrentPlatform,
   listTmuxPaneRuntimeInfoForCurrentPlatform,
 } from '@features/tmux-installer/main';
@@ -7,8 +8,11 @@ import { isProcessAlive } from '@main/utils/processHealth';
 import { killProcessByPid } from '@main/utils/processKill';
 import { createLogger } from '@shared/utils/logger';
 
+import { commandArgEquals } from '../TeamRuntimeLivenessResolver';
+
 import { isInteractiveShellCommand } from './TeamProvisioningDirectRestart';
 import { matchesMemberNameOrBase } from './TeamProvisioningMemberIdentity';
+import { readProcessCommandByPid } from './TeamProvisioningOpenCodeRuntimeLaneCleanup';
 
 const logger = createLogger('Service:TeamProvisioning');
 
@@ -16,6 +20,7 @@ export interface PrimaryOwnedMemberRestartPersistedRuntimeMember {
   name?: string;
   tmuxPaneId?: string;
   backendType?: string;
+  runtimePid?: number;
 }
 
 export interface PrimaryOwnedMemberRestartLiveRuntimeMetadata {
@@ -40,10 +45,25 @@ export interface PreparePrimaryOwnedMemberRestartRuntimeResult {
   shouldDirectProcessRestart: boolean;
 }
 
+export interface PrimaryOwnedMemberRestartTmuxPaneRuntimeInfo {
+  panePid: number;
+  currentCommand?: string;
+}
+
+export interface PrimaryOwnedMemberRestartRuntimeProcessRow {
+  pid: number;
+  ppid: number;
+  command: string;
+}
+
 export interface PreparePrimaryOwnedMemberRestartRuntimeUseCasePorts {
   listTmuxPaneRuntimeInfo(
     paneIds: readonly string[]
-  ): Promise<Map<string, { currentCommand?: string }>>;
+  ): Promise<Map<string, PrimaryOwnedMemberRestartTmuxPaneRuntimeInfo>>;
+  listRuntimeProcesses(options: {
+    bypassCache: boolean;
+  }): Promise<readonly PrimaryOwnedMemberRestartRuntimeProcessRow[] | null>;
+  readProcessCommandByPid(pid: number): string | null;
   killTmuxPane(paneId: string): void;
   killProcess(pid: number): void;
   waitForPidsToExit(
@@ -56,6 +76,7 @@ export interface PreparePrimaryOwnedMemberRestartRuntimeUseCasePorts {
   ): Promise<string[]>;
   logInfo(message: string): void;
   logDebug(message: string): void;
+  logWarning(message: string): void;
 }
 
 export type PreparePrimaryOwnedMemberRestartRuntimeUseCase = (
@@ -65,12 +86,15 @@ export type PreparePrimaryOwnedMemberRestartRuntimeUseCase = (
 export function createNodePreparePrimaryOwnedMemberRestartRuntimeUseCase(): PreparePrimaryOwnedMemberRestartRuntimeUseCase {
   return createPreparePrimaryOwnedMemberRestartRuntimeUseCase({
     listTmuxPaneRuntimeInfo: (paneIds) => listTmuxPaneRuntimeInfoForCurrentPlatform(paneIds),
+    listRuntimeProcesses: (options) => listRuntimeProcessTableForCurrentPlatform(options),
+    readProcessCommandByPid,
     killTmuxPane: (paneId) => killTmuxPaneForCurrentPlatformSync(paneId),
     killProcess: (pid) => killProcessByPid(pid),
     waitForPidsToExit,
     waitForTmuxPanesToExit,
     logInfo: (message) => logger.info(message),
     logDebug: (message) => logger.debug(message),
+    logWarning: (message) => logger.warn(message),
   });
 }
 
@@ -78,8 +102,13 @@ export function createPreparePrimaryOwnedMemberRestartRuntimeUseCase(
   ports: PreparePrimaryOwnedMemberRestartRuntimeUseCasePorts
 ): PreparePrimaryOwnedMemberRestartRuntimeUseCase {
   return async (input) => {
+    const targetMemberName = input.memberName.trim();
+    const targetPersistedRuntimeMembers = input.persistedRuntimeMembers.filter((member) => {
+      const candidateName = typeof member.name === 'string' ? member.name.trim() : '';
+      return candidateName.length > 0 && matchesMemberNameOrBase(candidateName, targetMemberName);
+    });
     const backendTypes = new Set(
-      input.persistedRuntimeMembers
+      targetPersistedRuntimeMembers
         .map((member) => member.backendType?.trim().toLowerCase())
         .filter((value): value is string => Boolean(value))
     );
@@ -115,11 +144,18 @@ export function createPreparePrimaryOwnedMemberRestartRuntimeUseCase(
       );
     }
 
+    const tmuxRuntimeMembers = targetPersistedRuntimeMembers.flatMap((member) => {
+      const paneId = typeof member.tmuxPaneId === 'string' ? member.tmuxPaneId.trim() : '';
+      const concreteMemberName = typeof member.name === 'string' ? member.name.trim() : '';
+      return paneId &&
+        concreteMemberName &&
+        member.backendType?.trim().toLowerCase() === 'tmux' &&
+        matchesMemberNameOrBase(concreteMemberName, targetMemberName)
+        ? [{ member, paneId, concreteMemberName }]
+        : [];
+    });
     let directTmuxRestartPaneId: string | null = null;
-    const directTmuxRestartCandidatePaneId = getDirectTmuxRestartPaneId(
-      input.persistedRuntimeMembers,
-      input.memberName
-    );
+    const directTmuxRestartCandidatePaneId = tmuxRuntimeMembers[0]?.paneId ?? null;
     if (directTmuxRestartCandidatePaneId) {
       try {
         const paneInfo = (
@@ -138,26 +174,78 @@ export function createPreparePrimaryOwnedMemberRestartRuntimeUseCase(
     }
     input.assertStillCurrent?.();
 
+    const hasExactRuntimeIdentity = (command: string | null, concreteMemberName: string): boolean =>
+      commandArgEquals(command ?? '', '--team-name', input.teamName) &&
+      (commandArgEquals(command ?? '', '--agent-name', concreteMemberName) ||
+        commandArgEquals(command ?? '', '--agent-id', `${concreteMemberName}@${input.teamName}`));
+
     const tmuxPaneIdsToVerify: string[] = [];
     if (!directTmuxRestartPaneId) {
-      for (const persistedRuntimeMember of input.persistedRuntimeMembers) {
-        const paneId =
-          typeof persistedRuntimeMember.tmuxPaneId === 'string'
-            ? persistedRuntimeMember.tmuxPaneId.trim()
-            : '';
-        const backendType = persistedRuntimeMember.backendType?.trim().toLowerCase();
-        if (!paneId || backendType !== 'tmux') {
+      const paneIds = [...new Set(tmuxRuntimeMembers.map(({ paneId }) => paneId))];
+      const paneInfoById: ReadonlyMap<string, PrimaryOwnedMemberRestartTmuxPaneRuntimeInfo> =
+        paneIds.length > 0 ? await ports.listTmuxPaneRuntimeInfo(paneIds) : new Map();
+      const processRows =
+        paneInfoById.size > 0
+          ? await ports.listRuntimeProcesses({ bypassCache: true })
+          : ([] as const);
+      const childrenByParent = new Map<number, PrimaryOwnedMemberRestartRuntimeProcessRow[]>();
+      for (const row of processRows ?? []) {
+        const children = childrenByParent.get(row.ppid) ?? [];
+        children.push(row);
+        childrenByParent.set(row.ppid, children);
+      }
+      input.assertStillCurrent?.();
+
+      for (const {
+        member: persistedRuntimeMember,
+        paneId,
+        concreteMemberName,
+      } of tmuxRuntimeMembers) {
+        const paneInfo = paneInfoById.get(paneId);
+        if (!paneInfo) {
+          continue;
+        }
+        const persistedRuntimePid = persistedRuntimeMember.runtimePid;
+        let verifiedRuntimePid =
+          hasExactRuntimeIdentity(
+            ports.readProcessCommandByPid(paneInfo.panePid),
+            concreteMemberName
+          ) &&
+          (typeof persistedRuntimePid !== 'number' || persistedRuntimePid === paneInfo.panePid)
+            ? paneInfo.panePid
+            : undefined;
+        if (verifiedRuntimePid == null) {
+          const queue = [...(childrenByParent.get(paneInfo.panePid) ?? [])];
+          const seen = new Set<number>();
+          while (queue.length > 0) {
+            const row = queue.shift();
+            if (!row || seen.has(row.pid)) continue;
+            seen.add(row.pid);
+            if (
+              hasExactRuntimeIdentity(row.command, concreteMemberName) &&
+              (typeof persistedRuntimePid !== 'number' || persistedRuntimePid === row.pid)
+            ) {
+              verifiedRuntimePid = row.pid;
+              break;
+            }
+            queue.push(...(childrenByParent.get(row.pid) ?? []));
+          }
+        }
+        if (verifiedRuntimePid == null) {
+          ports.logWarning(
+            `[${input.teamName}] Refusing to kill teammate pane ${concreteMemberName} (${paneId}) for manual restart: pane runtime identity does not match the exact team and member.`
+          );
           continue;
         }
         tmuxPaneIdsToVerify.push(paneId);
         try {
           ports.killTmuxPane(paneId);
           ports.logInfo(
-            `[${input.teamName}] Killed teammate pane ${input.memberName} (${paneId}) for manual restart`
+            `[${input.teamName}] Killed teammate pane ${concreteMemberName} (${paneId}) for manual restart`
           );
         } catch (error) {
           ports.logDebug(
-            `[${input.teamName}] Failed to kill teammate pane ${input.memberName} (${paneId}) for manual restart: ${
+            `[${input.teamName}] Failed to kill teammate pane ${concreteMemberName} (${paneId}) for manual restart: ${
               error instanceof Error ? error.message : String(error)
             }`
           );
@@ -215,29 +303,6 @@ export function createPreparePrimaryOwnedMemberRestartRuntimeUseCase(
       shouldDirectProcessRestart: backendTypes.has('process') || livePids.size > 0,
     };
   };
-}
-
-function getDirectTmuxRestartPaneId(
-  persistedRuntimeMembers: readonly PrimaryOwnedMemberRestartPersistedRuntimeMember[],
-  memberName: string
-): string | null {
-  for (const persistedRuntimeMember of persistedRuntimeMembers) {
-    const backendType = persistedRuntimeMember.backendType?.trim().toLowerCase();
-    const paneId =
-      typeof persistedRuntimeMember.tmuxPaneId === 'string'
-        ? persistedRuntimeMember.tmuxPaneId.trim()
-        : '';
-    const runtimeMemberName =
-      typeof persistedRuntimeMember.name === 'string' ? persistedRuntimeMember.name : '';
-    if (
-      backendType === 'tmux' &&
-      paneId &&
-      matchesMemberNameOrBase(runtimeMemberName, memberName)
-    ) {
-      return paneId;
-    }
-  }
-  return null;
 }
 
 async function waitForPidsToExit(

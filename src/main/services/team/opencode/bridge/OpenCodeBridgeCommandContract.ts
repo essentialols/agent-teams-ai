@@ -155,6 +155,7 @@ export interface OpenCodeAnswerPermissionCommandBody {
   memberName?: string;
   requestId: string;
   decision: 'allow' | 'always' | 'reject';
+  message?: string;
   expectedCapabilitySnapshotId?: string | null;
   manifestHighWatermark?: number | null;
 }

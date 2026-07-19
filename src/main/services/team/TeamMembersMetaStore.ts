@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { atomicWriteAsync } from './atomicWrite';
+import { withFileLock } from './fileLock';
 
 import type { TeamMember } from '@shared/types';
 
@@ -17,6 +18,10 @@ export interface TeamMembersMetaFile {
   providerBackendId?: string;
   members: TeamMember[];
 }
+
+export type TeamMembersMetaUpdate = (
+  members: readonly TeamMember[]
+) => TeamMember[] | Promise<TeamMember[]>;
 
 const MAX_META_FILE_BYTES = 256 * 1024;
 
@@ -69,6 +74,28 @@ function buildActiveNameGuard(membersByName: Map<string, TeamMember>): (name: st
   return createCliAutoSuffixNameGuard(activeNames);
 }
 
+function normalizeMembers(members: readonly TeamMember[]): TeamMember[] {
+  const deduped = new Map<string, TeamMember>();
+  for (const member of members) {
+    const normalized = normalizeMember(member);
+    if (!normalized) {
+      continue;
+    }
+    deduped.set(normalized.name, normalized);
+  }
+  return Array.from(deduped.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function projectMembers(members: readonly TeamMember[]): TeamMember[] {
+  const membersByName = new Map(members.map((member) => [member.name, member]));
+
+  // Defense: hide CLI auto-suffixed duplicates (alice-2) only when the base
+  // name is still active. The raw rows remain persisted until the explicit
+  // provisioning cleanup boundary can remove and log them.
+  const keepName = buildActiveNameGuard(membersByName);
+  return members.filter((member) => keepName(member.name));
+}
+
 export class TeamMembersMetaStore {
   private getMetaPath(teamName: string): string {
     return path.join(getTeamsBasePath(), teamName, 'members.meta.json');
@@ -76,6 +103,11 @@ export class TeamMembersMetaStore {
 
   async getMeta(teamName: string): Promise<TeamMembersMetaFile | null> {
     const metaPath = this.getMetaPath(teamName);
+    const meta = await this.readMeta(metaPath);
+    return meta ? { ...meta, members: projectMembers(meta.members) } : null;
+  }
+
+  private async readMeta(metaPath: string): Promise<TeamMembersMetaFile | null> {
     try {
       const stat = await fs.promises.stat(metaPath);
       if (!stat.isFile()) {
@@ -115,33 +147,10 @@ export class TeamMembersMetaStore {
       return null;
     }
 
-    const deduped = new Map<string, TeamMember>();
-    for (const item of file.members) {
-      if (!item || typeof item !== 'object') {
-        continue;
-      }
-      const normalized = normalizeMember(item);
-      if (!normalized) {
-        continue;
-      }
-      deduped.set(normalized.name, normalized);
-    }
-
-    // Defense: drop CLI auto-suffixed duplicates (alice-2) only when the base
-    // name is still active. Removed base members must not hide active suffixed
-    // teammates after live mutation / rollback flows.
-    const allNames = Array.from(deduped.keys());
-    const keepName = buildActiveNameGuard(deduped);
-    for (const name of allNames) {
-      if (!keepName(name)) {
-        deduped.delete(name);
-      }
-    }
-
     return {
       version: 1,
       providerBackendId: normalizeOptionalBackendId(file.providerBackendId),
-      members: Array.from(deduped.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      members: normalizeMembers(file.members.filter((item) => item && typeof item === 'object')),
     };
   }
 
@@ -154,32 +163,38 @@ export class TeamMembersMetaStore {
     members: TeamMember[],
     options?: { providerBackendId?: string }
   ): Promise<void> {
-    const deduped = new Map<string, TeamMember>();
-    for (const member of members) {
-      const normalized = normalizeMember(member);
-      if (!normalized) {
-        continue;
-      }
-      deduped.set(normalized.name, normalized);
-    }
+    const metaPath = this.getMetaPath(teamName);
+    await withFileLock(metaPath, () => this.writeMembersUnlocked(metaPath, members, options));
+  }
 
-    // Defense: drop CLI auto-suffixed duplicates (alice-2) only when the base
-    // name is still active. Removed base members must not hide active suffixed
-    // teammates after live mutation / rollback flows.
-    const allNames = Array.from(deduped.keys());
-    const keepName = buildActiveNameGuard(deduped);
-    for (const name of allNames) {
-      if (!keepName(name)) {
-        deduped.delete(name);
-      }
-    }
+  async updateMembers(
+    teamName: string,
+    update: TeamMembersMetaUpdate,
+    options?: { providerBackendId?: string }
+  ): Promise<void> {
+    const metaPath = this.getMetaPath(teamName);
+    await withFileLock(metaPath, async () => {
+      const currentMeta = await this.readMeta(metaPath);
+      const providerBackendId =
+        options?.providerBackendId === undefined
+          ? currentMeta?.providerBackendId
+          : normalizeOptionalBackendId(options.providerBackendId);
+      const updatedMembers = await update(currentMeta?.members ?? []);
+      await this.writeMembersUnlocked(metaPath, updatedMembers, { providerBackendId });
+    });
+  }
 
+  private async writeMembersUnlocked(
+    metaPath: string,
+    members: readonly TeamMember[],
+    options?: { providerBackendId?: string }
+  ): Promise<void> {
     const payload: TeamMembersMetaFile = {
       version: 1,
       providerBackendId: normalizeOptionalBackendId(options?.providerBackendId),
-      members: Array.from(deduped.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      members: normalizeMembers(members),
     };
 
-    await atomicWriteAsync(this.getMetaPath(teamName), JSON.stringify(payload, null, 2));
+    await atomicWriteAsync(metaPath, JSON.stringify(payload, null, 2));
   }
 }

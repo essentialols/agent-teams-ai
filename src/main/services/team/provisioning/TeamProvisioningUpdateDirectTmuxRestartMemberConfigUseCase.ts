@@ -6,6 +6,7 @@ import * as path from 'path';
 import { atomicWriteAsync } from '../atomicWrite';
 import { withFileLock } from '../fileLock';
 import { TeamConfigReader } from '../TeamConfigReader';
+import { getTeamDataWorkerClient } from '../TeamDataWorkerClient';
 
 import { matchesExactTeamMemberName } from './TeamProvisioningMemberIdentity';
 
@@ -15,6 +16,7 @@ const TEAM_JSON_READ_TIMEOUT_MS = 5_000;
 const TEAM_CONFIG_MAX_BYTES = 10 * 1024 * 1024;
 const PROCESS_BACKEND_OPTIONAL_METADATA_FIELDS = [
   'runtimePid',
+  'runtimeSessionId',
   'bootstrapRuntimeEventsPath',
   'bootstrapProofToken',
   'bootstrapRunId',
@@ -68,7 +70,8 @@ async function withInProcessTeamConfigMutationLock<T>(
     release = resolve;
   });
   teamConfigMutationQueues.set(teamName, current);
-  await previous;
+  // Keep queue admission rejection-safe if a prior or legacy tail rejects.
+  await previous.catch(() => undefined);
   try {
     return await operation();
   } finally {
@@ -203,8 +206,8 @@ export function createUpdateDirectTmuxRestartMemberConfigUseCase(
   };
 }
 
-export function createNodeUpdateDirectTmuxRestartMemberConfigUseCase(): UpdateDirectTmuxRestartMemberConfigUseCase {
-  return createUpdateDirectTmuxRestartMemberConfigUseCase({
+export function createNodeUpdateDirectTmuxRestartMemberConfigUseCasePorts(): UpdateDirectTmuxRestartMemberConfigUseCasePorts {
+  return {
     async readTeamConfigJson(teamName) {
       const configPath = path.join(getTeamsBasePath(), teamName, 'config.json');
       return tryReadRegularFileUtf8(configPath, {
@@ -222,6 +225,13 @@ export function createNodeUpdateDirectTmuxRestartMemberConfigUseCase(): UpdateDi
     },
     invalidateTeamConfig(teamName) {
       TeamConfigReader.invalidateTeam(teamName);
+      getTeamDataWorkerClient().invalidateTeamConfig(teamName);
     },
-  });
+  };
+}
+
+export function createNodeUpdateDirectTmuxRestartMemberConfigUseCase(): UpdateDirectTmuxRestartMemberConfigUseCase {
+  return createUpdateDirectTmuxRestartMemberConfigUseCase(
+    createNodeUpdateDirectTmuxRestartMemberConfigUseCasePorts()
+  );
 }

@@ -1,5 +1,32 @@
 import { EventEmitter } from 'events';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const flowMocks = vi.hoisted(() => ({
+  materializeDeterministicLaunchBootstrapFiles: vi.fn(),
+  removeDeterministicBootstrapSpecFile: vi.fn<() => Promise<void>>(),
+  removeDeterministicBootstrapUserPromptFile: vi.fn<() => Promise<void>>(),
+}));
+
+type GenericModule = Record<string, unknown>;
+
+vi.mock('../TeamProvisioningBootstrapSpec', async (importOriginal) => {
+  const actual = await importOriginal<GenericModule>();
+  return {
+    ...actual,
+    removeDeterministicBootstrapSpecFile: flowMocks.removeDeterministicBootstrapSpecFile,
+    removeDeterministicBootstrapUserPromptFile:
+      flowMocks.removeDeterministicBootstrapUserPromptFile,
+  };
+});
+
+vi.mock('../TeamProvisioningLaunchTeamFlow', async (importOriginal) => {
+  const actual = await importOriginal<GenericModule>();
+  return {
+    ...actual,
+    materializeDeterministicLaunchBootstrapFiles:
+      flowMocks.materializeDeterministicLaunchBootstrapFiles,
+  };
+});
 
 import {
   buildLaunchTeamMetaPayload,
@@ -7,8 +34,13 @@ import {
   cleanupDeterministicLaunchSpawnFailure,
   type DeterministicLaunchSpawnFlowRun,
   isDeterministicLaunchSpawnCancelled,
+  persistDeterministicLaunchMetadata,
+  persistDeterministicLaunchMetadataOrCleanup,
   registerDeterministicLaunchChildHandlers,
+  runDeterministicLaunchSpawnFlow,
+  type RunDeterministicLaunchSpawnFlowPorts,
 } from '../TeamProvisioningLaunchDeterministicSpawnFlow';
+import { buildLaunchSyntheticRequest } from '../TeamProvisioningLaunchTeamFlow';
 
 import type {
   ProviderModelLaunchIdentity,
@@ -119,7 +151,110 @@ function createRun(
   } as DeterministicLaunchSpawnFlowRun;
 }
 
+function createSpawnFlowPorts(
+  order: string[]
+): RunDeterministicLaunchSpawnFlowPorts<DeterministicLaunchSpawnFlowRun> {
+  return {
+    logger: { info: vi.fn() },
+    mcpConfigBuilder: {
+      writeConfigFile: vi.fn(async () => mcpConfigPath),
+      removeConfigFile: vi.fn(async () => {
+        order.push('remove-mcp');
+      }),
+    },
+    readTasks: vi.fn(async () => []),
+    logTaskReadWarning: vi.fn(),
+    buildNativeAppManagedBootstrapSpecsWithDiagnostics: vi.fn(),
+    buildRuntimeBootstrapMemberMcpLaunchConfigs: vi.fn(async () => new Map()),
+    validateAgentTeamsMcpRuntime: vi.fn(async () => undefined),
+    cleanupAnthropicApiKeyHelperMaterial: vi.fn(async () => {
+      order.push('cleanup-auth');
+    }),
+    removeRunMemberMcpConfigFiles: vi.fn(async () => {
+      order.push('remove-member-mcp');
+    }),
+    restorePrelaunchConfig: vi.fn(async () => {
+      order.push('restore-config');
+    }),
+    deleteRun: vi.fn(() => {
+      order.push('delete-run');
+    }),
+    deleteProvisioningRunByTeam: vi.fn(() => {
+      order.push('delete-team-run');
+    }),
+    buildTeamRuntimeLaunchArgsPlan: vi.fn(async () => ({
+      settingsArgs: [],
+      fastModeArgs: [],
+      runtimeTurnSettledHookArgs: [],
+      providerArgs: [],
+      extraArgs: [],
+      inheritedProviderArgs: [],
+      appManagedSettingsPath: null,
+    })),
+    teamMetaStore: {
+      writeMeta: vi.fn(async () => undefined),
+    },
+    membersMetaStore: {
+      updateMembers: vi.fn(async (_teamName, update) => {
+        update([]);
+      }),
+    },
+    nowMs: vi.fn(() => 123),
+    getStopAllTeamsGeneration: vi.fn(() => 7),
+    seedLeadBootstrapPermissionRules: vi.fn(async () => undefined),
+    spawnCli: vi.fn(() => new EventEmitter() as ChildProcess),
+    updateProgress: vi.fn((run: DeterministicLaunchSpawnFlowRun) => run.progress),
+    attachStdoutHandler: vi.fn(),
+    attachStderrHandler: vi.fn(),
+    startStallWatchdog: vi.fn(),
+    setTimeout: vi.fn(() => ({ timeout: true }) as unknown as NodeJS.Timeout),
+    tryCompleteAfterTimeout: vi.fn(async () => false),
+    killTeamProcess: vi.fn(),
+    cleanupRun: vi.fn(),
+    handleProcessExit: vi.fn(),
+  } as unknown as RunDeterministicLaunchSpawnFlowPorts<DeterministicLaunchSpawnFlowRun>;
+}
+
+function runPreSpawnFailureFlow(
+  run: DeterministicLaunchSpawnFlowRun,
+  ports: RunDeterministicLaunchSpawnFlowPorts<DeterministicLaunchSpawnFlowRun>
+) {
+  return runDeterministicLaunchSpawnFlow(
+    {
+      request,
+      syntheticRequest,
+      run,
+      runId: run.runId,
+      claudePath: '/bin/claude',
+      shellEnv: {},
+      provisioningEnv: { env: {}, anthropicApiKeyHelper },
+      stopAllGenerationAtStart: 7,
+      resolvedProviderId: 'codex',
+      providerArgsForLaunch: [],
+      crossProviderMemberArgsForLaunch: { args: [] },
+      launchIdentity,
+      effectiveMemberSpecs: syntheticRequest.members,
+      allEffectiveMemberSpecs: syntheticRequest.members,
+      teammateRuntimeDisallowedTools: 'TeamDelete',
+    },
+    ports
+  );
+}
+
 describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    flowMocks.materializeDeterministicLaunchBootstrapFiles.mockReset().mockResolvedValue({
+      prompt: 'resume work',
+      promptSize: { chars: 11, lines: 1 },
+      mcpConfigPath,
+      bootstrapSpecPath,
+      bootstrapUserPromptPath,
+    });
+    flowMocks.removeDeterministicBootstrapSpecFile.mockReset().mockResolvedValue(undefined);
+    flowMocks.removeDeterministicBootstrapUserPromptFile.mockReset().mockResolvedValue(undefined);
+  });
+
   it('builds launch team metadata without persistence side effects', () => {
     expect(
       buildLaunchTeamMetaPayload({
@@ -146,6 +281,227 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
       launchIdentity,
       createdAt: 123,
     });
+  });
+
+  it('persists normalized synthetic metadata, backend identity, and tombstones for a sparse relaunch', async () => {
+    const sparseRequest: TeamLaunchRequest = {
+      teamName: 'demo',
+      cwd: '/repo',
+      prompt: 'resume work',
+    };
+    const normalizedSyntheticRequest = buildLaunchSyntheticRequest({
+      request: { ...request, fastMode: 'inherit' },
+      members: syntheticRequest.members,
+      configRaw: '{}',
+    });
+    const writeMeta = vi.fn(async () => undefined);
+    let updatedMembers: TeamCreateRequest['members'] = [];
+    const updateMembers = vi.fn(async (_teamName, update) => {
+      updatedMembers = update([
+        {
+          name: 'builder',
+          role: 'Removed builder',
+          removedAt: Date.parse('2026-07-14T17:00:00.000Z'),
+        },
+      ]);
+    });
+
+    await persistDeterministicLaunchMetadata(
+      {
+        request: sparseRequest,
+        syntheticRequest: normalizedSyntheticRequest,
+        launchIdentity,
+        allEffectiveMemberSpecs: normalizedSyntheticRequest.members,
+      },
+      {
+        teamMetaStore: { writeMeta },
+        membersMetaStore: { updateMembers },
+        nowMs: () => 123,
+      }
+    );
+
+    expect(writeMeta).toHaveBeenCalledWith(
+      'demo',
+      expect.objectContaining({
+        cwd: '/repo',
+        prompt: 'resume work',
+        providerId: 'codex',
+        providerBackendId: 'codex-native',
+        model: 'gpt-5',
+        effort: 'high',
+        fastMode: 'inherit',
+        skipPermissions: false,
+        worktree: 'feature-a',
+        extraCliArgs: '--flag',
+        limitContext: true,
+        launchIdentity,
+        createdAt: 123,
+      })
+    );
+    expect(updateMembers).toHaveBeenCalledWith('demo', expect.any(Function), {
+      providerBackendId: 'codex-native',
+    });
+    expect(updatedMembers).toEqual([
+      {
+        name: 'builder',
+        role: 'Removed builder',
+        removedAt: Date.parse('2026-07-14T17:00:00.000Z'),
+      },
+    ]);
+  });
+
+  it('atomically persists only teammates when the launch roster includes team-lead and user', async () => {
+    let updatedMembers: TeamCreateRequest['members'] = [];
+    const updateMembers = vi.fn(async (_teamName, update) => {
+      updatedMembers = update([]);
+    });
+
+    await persistDeterministicLaunchMetadata(
+      {
+        request,
+        syntheticRequest,
+        launchIdentity,
+        allEffectiveMemberSpecs: [
+          { name: ' team-lead ', role: 'Lead' },
+          { name: 'USER', role: 'User' },
+          { name: ' Builder ', role: ' Build ' },
+        ],
+      },
+      {
+        teamMetaStore: { writeMeta: vi.fn(async () => undefined) },
+        membersMetaStore: { updateMembers },
+        nowMs: () => 123,
+      }
+    );
+
+    expect(updateMembers).toHaveBeenCalledWith('demo', expect.any(Function), {
+      providerBackendId: 'codex-native',
+    });
+    expect(updatedMembers).toEqual([expect.objectContaining({ name: 'Builder', role: 'Build' })]);
+  });
+
+  it('rolls back materialized launch artifacts when runtime argument planning rejects', async () => {
+    const planningError = new Error('runtime argument planning failed');
+    const order: string[] = [];
+    const run = createRun();
+    const ports = createSpawnFlowPorts(order);
+    ports.buildTeamRuntimeLaunchArgsPlan = vi.fn(async () => {
+      order.push('plan-runtime-args');
+      throw planningError;
+    });
+
+    await expect(runPreSpawnFailureFlow(run, ports)).rejects.toBe(planningError);
+
+    expect(order).toEqual([
+      'plan-runtime-args',
+      'delete-run',
+      'delete-team-run',
+      'cleanup-auth',
+      'remove-mcp',
+      'remove-member-mcp',
+      'restore-config',
+    ]);
+    expect(flowMocks.materializeDeterministicLaunchBootstrapFiles).toHaveBeenCalledOnce();
+    expect(flowMocks.removeDeterministicBootstrapSpecFile).toHaveBeenCalledWith(bootstrapSpecPath);
+    expect(flowMocks.removeDeterministicBootstrapUserPromptFile).toHaveBeenCalledWith(
+      bootstrapUserPromptPath
+    );
+    expect(ports.teamMetaStore.writeMeta).not.toHaveBeenCalled();
+    expect(ports.spawnCli).not.toHaveBeenCalled();
+    expect(run.bootstrapSpecPath).toBeNull();
+    expect(run.bootstrapUserPromptPath).toBeNull();
+    expect(run.mcpConfigPath).toBeNull();
+  });
+
+  it('rolls back materialized launch artifacts when deterministic metadata persistence rejects', async () => {
+    const persistenceError = new Error('members metadata persistence failed');
+    const order: string[] = [];
+    const run = createRun();
+    const ports = createSpawnFlowPorts(order);
+    ports.teamMetaStore.writeMeta = vi.fn(async () => {
+      order.push('write-team-meta');
+    });
+    ports.membersMetaStore.updateMembers = vi.fn(async () => {
+      order.push('update-members-meta');
+      throw persistenceError;
+    });
+
+    await expect(runPreSpawnFailureFlow(run, ports)).rejects.toBe(persistenceError);
+
+    expect(order).toEqual([
+      'write-team-meta',
+      'update-members-meta',
+      'delete-run',
+      'delete-team-run',
+      'cleanup-auth',
+      'remove-mcp',
+      'remove-member-mcp',
+      'restore-config',
+    ]);
+    expect(ports.buildTeamRuntimeLaunchArgsPlan).toHaveBeenCalledOnce();
+    expect(flowMocks.materializeDeterministicLaunchBootstrapFiles).toHaveBeenCalledOnce();
+    expect(flowMocks.removeDeterministicBootstrapSpecFile).toHaveBeenCalledWith(bootstrapSpecPath);
+    expect(flowMocks.removeDeterministicBootstrapUserPromptFile).toHaveBeenCalledWith(
+      bootstrapUserPromptPath
+    );
+    expect(ports.spawnCli).not.toHaveBeenCalled();
+    expect(run.bootstrapSpecPath).toBeNull();
+    expect(run.bootstrapUserPromptPath).toBeNull();
+    expect(run.mcpConfigPath).toBeNull();
+  });
+
+  it('classifies an atomic members metadata update rejection as a launch failure and runs cleanup', async () => {
+    const run = createRun();
+    const order: string[] = [];
+
+    await expect(
+      persistDeterministicLaunchMetadataOrCleanup(
+        {
+          request,
+          syntheticRequest,
+          launchIdentity,
+          allEffectiveMemberSpecs: syntheticRequest.members,
+          run,
+          runId: 'run-1',
+          provisioningEnv: { env: {} },
+        },
+        {
+          teamMetaStore: { writeMeta: vi.fn(async () => undefined) },
+          membersMetaStore: {
+            updateMembers: vi.fn(async () => {
+              throw new Error('updateMembers failed');
+            }),
+          },
+          nowMs: () => 123,
+          cleanupAnthropicApiKeyHelperMaterial: vi.fn(async () => undefined),
+          deleteRun: vi.fn(() => order.push('delete-run')),
+          deleteProvisioningRunByTeam: vi.fn(() => order.push('delete-team-run')),
+          mcpConfigBuilder: {
+            writeConfigFile: vi.fn(async () => mcpConfigPath),
+            removeConfigFile: vi.fn(async () => {
+              order.push('remove-mcp');
+            }),
+          },
+          removeRunMemberMcpConfigFiles: vi.fn(async () => {
+            order.push('remove-member-mcp');
+          }),
+          restorePrelaunchConfig: vi.fn(async () => {
+            order.push('restore-config');
+          }),
+        }
+      )
+    ).rejects.toThrow('updateMembers failed');
+
+    expect(order).toEqual([
+      'delete-run',
+      'delete-team-run',
+      'remove-mcp',
+      'remove-member-mcp',
+      'restore-config',
+    ]);
+    expect(run.bootstrapSpecPath).toBeNull();
+    expect(run.bootstrapUserPromptPath).toBeNull();
+    expect(run.mcpConfigPath).toBeNull();
   });
 
   it('centralizes deterministic launch cancellation decisions', () => {
@@ -316,6 +672,100 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
     await Promise.resolve();
     expect(run.processKilled).toBe(true);
     expect(run.finalizingByTimeout).toBe(true);
+  });
+
+  it('does not kill or fail a timed-out launch when timeout recovery succeeds', async () => {
+    let timeoutCallback: (() => void) | null = null;
+    const child = new EventEmitter() as ChildProcess;
+    const run = createRun({ child });
+    const tryCompleteAfterTimeout = vi.fn(async () => true);
+    const killTeamProcess = vi.fn();
+    const updateProgress = vi.fn();
+    const cleanupRun = vi.fn();
+
+    registerDeterministicLaunchChildHandlers(
+      { run, child },
+      {
+        setTimeout: vi.fn((callback) => {
+          timeoutCallback = callback;
+          return { timeout: true } as unknown as NodeJS.Timeout;
+        }),
+        tryCompleteAfterTimeout,
+        killTeamProcess,
+        updateProgress,
+        cleanupRun,
+        handleProcessExit: vi.fn(),
+      }
+    );
+
+    const triggerTimeout = timeoutCallback as (() => void) | null;
+    if (!triggerTimeout) {
+      throw new Error('Expected launch timeout callback to be registered.');
+    }
+    triggerTimeout();
+    await vi.waitFor(() => {
+      expect(tryCompleteAfterTimeout).toHaveBeenCalledWith(run);
+    });
+
+    expect(killTeamProcess).not.toHaveBeenCalled();
+    expect(updateProgress).not.toHaveBeenCalled();
+    expect(cleanupRun).not.toHaveBeenCalled();
+    expect(run.processKilled).toBe(true);
+    expect(run.finalizingByTimeout).toBe(true);
+  });
+
+  it('tries timeout recovery before killing and cleaning up an unrecovered launch', async () => {
+    let timeoutCallback: (() => void) | null = null;
+    const child = new EventEmitter() as ChildProcess;
+    const run = createRun({ child });
+    const order: string[] = [];
+    const tryCompleteAfterTimeout = vi.fn(async () => {
+      order.push('recover');
+      return false;
+    });
+    const killTeamProcess = vi.fn(() => {
+      order.push('kill');
+    });
+    const cleanupRun = vi.fn();
+    const updateProgress = vi.fn((nextRun: DeterministicLaunchSpawnFlowRun, state, message) => {
+      nextRun.progress = { ...nextRun.progress, state, message };
+      return nextRun.progress;
+    });
+
+    registerDeterministicLaunchChildHandlers(
+      { run, child },
+      {
+        setTimeout: vi.fn((callback) => {
+          timeoutCallback = callback;
+          return { timeout: true } as unknown as NodeJS.Timeout;
+        }),
+        tryCompleteAfterTimeout,
+        killTeamProcess,
+        updateProgress,
+        cleanupRun,
+        handleProcessExit: vi.fn(),
+      }
+    );
+
+    const triggerTimeout = timeoutCallback as (() => void) | null;
+    if (!triggerTimeout) {
+      throw new Error('Expected launch timeout callback to be registered.');
+    }
+    triggerTimeout();
+    await vi.waitFor(() => {
+      expect(cleanupRun).toHaveBeenCalledWith(run);
+    });
+
+    expect(order).toEqual(['recover', 'kill']);
+    expect(tryCompleteAfterTimeout).toHaveBeenCalledWith(run);
+    expect(killTeamProcess).toHaveBeenCalledWith(child);
+    expect(updateProgress).toHaveBeenCalledWith(
+      run,
+      'failed',
+      'Timed out waiting for CLI (launch)',
+      expect.objectContaining({ error: 'Timed out waiting for CLI during team launch.' })
+    );
+    expect(run.onProgress).toHaveBeenCalledWith(run.progress);
   });
 
   it('kills and cleans up a timed-out launch when timeout completion persistence rejects', async () => {

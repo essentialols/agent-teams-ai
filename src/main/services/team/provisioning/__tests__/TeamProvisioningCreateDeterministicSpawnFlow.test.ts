@@ -1,22 +1,223 @@
 import { getTasksBasePath, getTeamsBasePath } from '@main/utils/pathDecoder';
 import * as path from 'path';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const flowMocks = vi.hoisted(() => ({
+  cleanupAnthropicTeamApiKeyHelperMaterial: vi.fn<() => Promise<void>>(),
+  materializeDeterministicCreateTeamBootstrapFiles: vi.fn(),
+  parseCliArgs: vi.fn<(raw: string | undefined) => string[]>(),
+  removePath: vi.fn<() => Promise<void>>(),
+}));
+
+type GenericModule = Record<string, unknown>;
+type FsModule = GenericModule & { promises: Record<string, unknown> };
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<FsModule>();
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      rm: flowMocks.removePath,
+    },
+  };
+});
+
+vi.mock('@shared/utils/cliArgsParser', async (importOriginal) => {
+  const actual = await importOriginal<GenericModule>();
+  return {
+    ...actual,
+    parseCliArgs: flowMocks.parseCliArgs,
+  };
+});
+
+vi.mock('@main/services/runtime/anthropicTeamApiKeyHelper', async (importOriginal) => {
+  const actual = await importOriginal<GenericModule>();
+  return {
+    ...actual,
+    cleanupAnthropicTeamApiKeyHelperMaterial: flowMocks.cleanupAnthropicTeamApiKeyHelperMaterial,
+  };
+});
+
+vi.mock('../TeamProvisioningCreateTeamFlow', async (importOriginal) => {
+  const actual = await importOriginal<GenericModule>();
+  return {
+    ...actual,
+    materializeDeterministicCreateTeamBootstrapFiles:
+      flowMocks.materializeDeterministicCreateTeamBootstrapFiles,
+  };
+});
 
 import {
   buildDeterministicCreateCleanupTargets,
+  type DeterministicCreateSpawnFlowPorts,
   type DeterministicCreateSpawnFlowRun,
   handleDeterministicCreateSpawnTimeout,
+  runDeterministicCreateSpawnFlow,
   shouldCancelDeterministicCreateSpawn,
 } from '../TeamProvisioningCreateDeterministicSpawnFlow';
 
-import type { TeamProvisioningProgress } from '@shared/types';
+import type { TeamCreateRequest, TeamProvisioningProgress } from '@shared/types';
 
 const TEST_BOOTSTRAP_SPEC_PATH = '/repo/.agent-teams/bootstrap.json';
 const TEST_BOOTSTRAP_PROMPT_PATH = '/repo/.agent-teams/prompt.txt';
 const TEST_MCP_CONFIG_PATH = '/repo/.agent-teams/mcp.json';
 const TEST_ANTHROPIC_HELPER_DIR = '/repo/.agent-teams/helpers/anthropic';
 
+const planningRequest: TeamCreateRequest = {
+  teamName: 'planning-cleanup-team',
+  cwd: '/repo',
+  providerId: 'anthropic',
+  model: 'claude-sonnet-4-5',
+  skipPermissions: true,
+  extraCliArgs: '--teammate-mode in-process',
+  members: [{ name: 'Lead', role: 'Lead' }],
+};
+
+const anthropicApiKeyHelper = {
+  teamName: planningRequest.teamName,
+  directory: TEST_ANTHROPIC_HELPER_DIR,
+  helperPath: path.join(TEST_ANTHROPIC_HELPER_DIR, 'helper.sh'),
+  keyPath: path.join(TEST_ANTHROPIC_HELPER_DIR, 'key'),
+  settingsPath: path.join(TEST_ANTHROPIC_HELPER_DIR, 'settings.json'),
+  settingsObject: { apiKeyHelper: path.join(TEST_ANTHROPIC_HELPER_DIR, 'helper.sh') },
+  settingsArgs: ['--settings', path.join(TEST_ANTHROPIC_HELPER_DIR, 'settings.json')],
+  envPatch: {},
+};
+
+function createPlanningRun(): DeterministicCreateSpawnFlowRun {
+  return {
+    runId: 'planning-run',
+    teamName: planningRequest.teamName,
+    progress: {
+      runId: 'planning-run',
+      teamName: planningRequest.teamName,
+      state: 'spawning',
+      message: 'Planning launch',
+      startedAt: '2026-07-19T00:00:00.000Z',
+      updatedAt: '2026-07-19T00:00:00.000Z',
+    },
+    child: null,
+    processClosed: false,
+    spawnContext: null,
+    lastDataReceivedAt: 0,
+    lastStdoutReceivedAt: 0,
+    timeoutHandle: null,
+    processKilled: false,
+    provisioningComplete: false,
+    finalizingByTimeout: false,
+    cancelRequested: false,
+    bootstrapSpecPath: TEST_BOOTSTRAP_SPEC_PATH,
+    bootstrapUserPromptPath: TEST_BOOTSTRAP_PROMPT_PATH,
+    mcpConfigPath: TEST_MCP_CONFIG_PATH,
+    requiresFirstRealTurnSuccess: true,
+    deterministicBootstrap: true,
+    effectiveMembers: planningRequest.members,
+    onProgress: vi.fn(),
+  } as unknown as DeterministicCreateSpawnFlowRun;
+}
+
+function createPlanningPorts(
+  order: string[]
+): DeterministicCreateSpawnFlowPorts<DeterministicCreateSpawnFlowRun> {
+  return {
+    teamMetaStore: {
+      writeMeta: vi.fn(async () => undefined),
+      deleteMeta: vi.fn(async () => {
+        order.push('delete-meta');
+      }),
+    },
+    membersMetaStore: {
+      writeMembers: vi.fn(async () => undefined),
+    },
+    mcpConfigBuilder: {
+      writeConfigFile: vi.fn(async () => TEST_MCP_CONFIG_PATH),
+      removeConfigFile: vi.fn(async () => {
+        order.push('remove-mcp-config');
+      }),
+    },
+    buildMemberMcpLaunchConfigs: vi.fn(async () => new Map()),
+    validateAgentTeamsMcpRuntime: vi.fn(async () => undefined),
+    buildTeamRuntimeLaunchArgsPlan: vi.fn(async () => {
+      order.push('plan-launch');
+      return {
+        settingsArgs: [],
+        fastModeArgs: [],
+        runtimeTurnSettledHookArgs: [],
+        providerArgs: [],
+        extraArgs: [],
+        inheritedProviderArgs: [],
+        appManagedSettingsPath: null,
+      };
+    }),
+    seedLeadBootstrapPermissionRules: vi.fn(async () => undefined),
+    spawnCli:
+      vi.fn() as unknown as DeterministicCreateSpawnFlowPorts<DeterministicCreateSpawnFlowRun>['spawnCli'],
+    updateProgress: vi.fn((run: DeterministicCreateSpawnFlowRun) => run.progress),
+    attachStdoutHandler: vi.fn(),
+    attachStderrHandler: vi.fn(),
+    startStallWatchdog: vi.fn(),
+    startFilesystemMonitor: vi.fn(),
+    tryCompleteAfterTimeout: vi.fn(async () => false),
+    handleProcessExit: vi.fn(async () => undefined),
+    killTeamProcess: vi.fn(),
+    cleanupRun: vi.fn(),
+    removeRunMemberMcpConfigFiles: vi.fn(async () => {
+      order.push('remove-member-mcp-configs');
+    }),
+    unregisterRun: vi.fn(() => {
+      order.push('unregister-run');
+    }),
+    getStopAllTeamsGeneration: vi.fn(() => 4),
+  };
+}
+
+function runPlanningFailureFlow(
+  run: DeterministicCreateSpawnFlowRun,
+  ports: DeterministicCreateSpawnFlowPorts<DeterministicCreateSpawnFlowRun>
+): Promise<{ runId: string }> {
+  return runDeterministicCreateSpawnFlow({
+    request: planningRequest,
+    run,
+    runId: run.runId,
+    effectiveMemberSpecs: planningRequest.members,
+    allEffectiveMemberSpecs: planningRequest.members,
+    launchIdentity: null,
+    provisioningEnv: {
+      env: {},
+      authSource: 'anthropic_api_key_helper',
+      geminiRuntimeAuth: null,
+      providerArgs: [],
+      anthropicApiKeyHelper,
+    },
+    claudePath: '/bin/claude',
+    shellEnv: {},
+    resolvedProviderId: 'anthropic',
+    providerArgsForLaunch: [],
+    inheritedProviderArgsForLaunch: [],
+    geminiRuntimeAuth: null,
+    stopAllGenerationAtStart: 4,
+    disallowedTools: 'TeamDelete',
+    logger: { info: vi.fn() },
+    ports,
+  });
+}
+
 describe('TeamProvisioningCreateDeterministicSpawnFlow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    flowMocks.parseCliArgs.mockReset().mockReturnValue(['--teammate-mode', 'in-process']);
+    flowMocks.materializeDeterministicCreateTeamBootstrapFiles.mockReset().mockResolvedValue({
+      teamDir: path.join(getTeamsBasePath(), planningRequest.teamName),
+      tasksDir: path.join(getTasksBasePath(), planningRequest.teamName),
+      bootstrapSpecPath: TEST_BOOTSTRAP_SPEC_PATH,
+      bootstrapUserPromptPath: TEST_BOOTSTRAP_PROMPT_PATH,
+      mcpConfigPath: TEST_MCP_CONFIG_PATH,
+    });
+    flowMocks.cleanupAnthropicTeamApiKeyHelperMaterial.mockReset().mockResolvedValue(undefined);
+    flowMocks.removePath.mockReset().mockResolvedValue(undefined);
+  });
+
   it('plans deterministic create cleanup targets from run materialization state', () => {
     expect(
       buildDeterministicCreateCleanupTargets({
@@ -82,6 +283,116 @@ describe('TeamProvisioningCreateDeterministicSpawnFlow', () => {
         currentStopAllTeamsGeneration: 8,
       })
     ).toBe(true);
+  });
+
+  it('does not clean up when CLI argument parsing fails before materialization', async () => {
+    const parseError = new Error('pre-materialization parse failed');
+    const order: string[] = [];
+    const run = createPlanningRun();
+    const ports = createPlanningPorts(order);
+    flowMocks.parseCliArgs.mockImplementationOnce(() => {
+      throw parseError;
+    });
+
+    await expect(runPlanningFailureFlow(run, ports)).rejects.toBe(parseError);
+
+    expect(flowMocks.materializeDeterministicCreateTeamBootstrapFiles).not.toHaveBeenCalled();
+    expect(flowMocks.cleanupAnthropicTeamApiKeyHelperMaterial).not.toHaveBeenCalled();
+    expect(flowMocks.removePath).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+  });
+
+  it('rolls back materialized create artifacts when the launch CLI argument parse fails', async () => {
+    const parseError = new Error('launch parse failed');
+    const order: string[] = [];
+    const run = createPlanningRun();
+    const ports = createPlanningPorts(order);
+    flowMocks.materializeDeterministicCreateTeamBootstrapFiles.mockImplementationOnce(async () => {
+      order.push('materialize');
+      return {
+        teamDir: path.join(getTeamsBasePath(), planningRequest.teamName),
+        tasksDir: path.join(getTasksBasePath(), planningRequest.teamName),
+        bootstrapSpecPath: TEST_BOOTSTRAP_SPEC_PATH,
+        bootstrapUserPromptPath: TEST_BOOTSTRAP_PROMPT_PATH,
+        mcpConfigPath: TEST_MCP_CONFIG_PATH,
+      };
+    });
+    flowMocks.parseCliArgs
+      .mockReturnValueOnce(['--teammate-mode', 'in-process'])
+      .mockImplementationOnce(() => {
+        throw parseError;
+      });
+    flowMocks.cleanupAnthropicTeamApiKeyHelperMaterial.mockImplementationOnce(async () => {
+      order.push('remove-anthropic-helper');
+    });
+
+    await expect(runPlanningFailureFlow(run, ports)).rejects.toBe(parseError);
+
+    expect(order).toEqual([
+      'materialize',
+      'unregister-run',
+      'remove-anthropic-helper',
+      'delete-meta',
+      'remove-mcp-config',
+      'remove-member-mcp-configs',
+    ]);
+    expect(run.bootstrapSpecPath).toBeNull();
+    expect(run.bootstrapUserPromptPath).toBeNull();
+    expect(run.mcpConfigPath).toBeNull();
+  });
+
+  it('preserves the launch planning error while completing best-effort materialization cleanup', async () => {
+    const planningError = new Error('runtime launch planning failed');
+    const cleanupError = new Error('cleanup failed');
+    const order: string[] = [];
+    const run = createPlanningRun();
+    const ports = createPlanningPorts(order);
+    flowMocks.materializeDeterministicCreateTeamBootstrapFiles.mockImplementationOnce(async () => {
+      order.push('materialize');
+      return {
+        teamDir: path.join(getTeamsBasePath(), planningRequest.teamName),
+        tasksDir: path.join(getTasksBasePath(), planningRequest.teamName),
+        bootstrapSpecPath: TEST_BOOTSTRAP_SPEC_PATH,
+        bootstrapUserPromptPath: TEST_BOOTSTRAP_PROMPT_PATH,
+        mcpConfigPath: TEST_MCP_CONFIG_PATH,
+      };
+    });
+    ports.buildTeamRuntimeLaunchArgsPlan = vi.fn(async () => {
+      order.push('plan-launch');
+      throw planningError;
+    });
+    flowMocks.cleanupAnthropicTeamApiKeyHelperMaterial.mockImplementationOnce(async () => {
+      order.push('remove-anthropic-helper');
+      throw cleanupError;
+    });
+    ports.teamMetaStore.deleteMeta = vi.fn(async () => {
+      order.push('delete-meta');
+      throw cleanupError;
+    });
+    ports.mcpConfigBuilder.removeConfigFile = vi.fn(async () => {
+      order.push('remove-mcp-config');
+      throw cleanupError;
+    });
+    ports.removeRunMemberMcpConfigFiles = vi.fn(async () => {
+      order.push('remove-member-mcp-configs');
+      throw cleanupError;
+    });
+
+    await expect(runPlanningFailureFlow(run, ports)).rejects.toBe(planningError);
+
+    expect(order).toEqual([
+      'materialize',
+      'plan-launch',
+      'unregister-run',
+      'remove-anthropic-helper',
+      'delete-meta',
+      'remove-mcp-config',
+      'remove-member-mcp-configs',
+    ]);
+    expect(flowMocks.removePath).toHaveBeenCalledTimes(4);
+    expect(run.bootstrapSpecPath).toBeNull();
+    expect(run.bootstrapUserPromptPath).toBeNull();
+    expect(run.mcpConfigPath).toBeNull();
   });
 
   it('kills and cleans up a timed-out create when timeout completion persistence rejects', async () => {

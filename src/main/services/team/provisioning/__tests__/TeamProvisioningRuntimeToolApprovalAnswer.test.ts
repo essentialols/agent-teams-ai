@@ -289,6 +289,44 @@ describe('answerOpenCodeRuntimeToolApproval', () => {
     expect(ports.readLaunchState).not.toHaveBeenCalled();
   });
 
+  it('forwards a supplied approval message to the runtime adapter', async () => {
+    const answerRuntimePermission = vi.fn<
+      NonNullable<TeamLaunchRuntimeAdapter['answerRuntimePermission']>
+    >(async (_input) => makeResult());
+    const ports = makePorts({ adapter: makeAdapter(answerRuntimePermission) });
+
+    await answerOpenCodeRuntimeToolApproval(
+      makeEntry(),
+      true,
+      ports,
+      'Approved for the requested test command.'
+    );
+
+    expect(answerRuntimePermission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-a',
+        teamName: 'team-a',
+        laneId: 'primary',
+        memberName: 'Worker',
+        requestId: 'provider-request-a',
+        message: 'Approved for the requested test command.',
+      })
+    );
+  });
+
+  it('keeps approval inputs without a message backward compatible', async () => {
+    const answerRuntimePermission = vi.fn<
+      NonNullable<TeamLaunchRuntimeAdapter['answerRuntimePermission']>
+    >(async (_input) => makeResult());
+    const ports = makePorts({ adapter: makeAdapter(answerRuntimePermission) });
+
+    await answerOpenCodeRuntimeToolApproval(makeEntry(), true, ports);
+
+    const permissionInput = answerRuntimePermission.mock.calls[0]?.[0];
+    expect(permissionInput).toBeDefined();
+    expect(Object.hasOwn(permissionInput ?? {}, 'message')).toBe(false);
+  });
+
   it('deletes the primary runtime adapter run and syncs approvals on partial failure', async () => {
     const entry = makeEntry();
     const committedResult = makeResult({ teamLaunchState: 'partial_failure' });

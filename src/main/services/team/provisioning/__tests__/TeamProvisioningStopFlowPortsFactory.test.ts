@@ -227,6 +227,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
 
     expect(ports.teamsBasePath).toBe('/teams');
     expect(ports.runtimeAdapterRunByTeam).toBe(deps.runtimeAdapterRunByTeam);
+    expect(ports.getAliveRunId('team-a')).toBeNull();
     await ports.clearOpenCodeRuntimeLaneStorage({
       teamsBasePath: ports.teamsBasePath,
       teamName: 'team-a',
@@ -243,6 +244,7 @@ describe('TeamProvisioningStopFlowPortsFactory', () => {
     expect(deps.clearOpenCodeRuntimeToolApprovals).toHaveBeenCalledWith('team-a', {
       emitDismiss: true,
     });
+    expect(deps.getAliveRunId).toHaveBeenCalledWith('team-a');
     expect(deps.deleteAliveRunId).toHaveBeenCalledWith('team-a');
   });
 

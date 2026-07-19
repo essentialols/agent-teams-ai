@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { TeamConfigReader } from '../../TeamConfigReader';
+import { getTeamDataWorkerClient } from '../../TeamDataWorkerClient';
 import {
+  createNodeUpdateDirectTmuxRestartMemberConfigUseCasePorts,
   createUpdateDirectTmuxRestartMemberConfigUseCase,
   type DirectTmuxRestartMemberConfigInput,
 } from '../TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase';
@@ -35,6 +38,30 @@ function memberPrompts(raw: string): Record<string, string> {
 }
 
 describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
+  it('invalidates main and worker-backed team config caches through the node adapter', () => {
+    const mainInvalidation = vi.spyOn(TeamConfigReader, 'invalidateTeam').mockImplementation(() => {
+      return undefined;
+    });
+    const workerInvalidation = vi
+      .spyOn(getTeamDataWorkerClient(), 'invalidateTeamConfig')
+      .mockImplementation(() => {
+        return undefined;
+      });
+
+    createNodeUpdateDirectTmuxRestartMemberConfigUseCasePorts().invalidateTeamConfig('team-a');
+
+    expect(mainInvalidation).toHaveBeenCalledOnce();
+    expect(mainInvalidation).toHaveBeenCalledWith('team-a');
+    expect(workerInvalidation).toHaveBeenCalledOnce();
+    expect(workerInvalidation).toHaveBeenCalledWith('team-a');
+    expect(mainInvalidation.mock.invocationCallOrder[0]).toBeLessThan(
+      workerInvalidation.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER
+    );
+
+    mainInvalidation.mockRestore();
+    workerInvalidation.mockRestore();
+  });
+
   it('updates an existing direct restart member config without host/service state', async () => {
     const writes: Array<{ teamName: string; contents: string }> = [];
     const invalidated: string[] = [];
@@ -175,6 +202,7 @@ describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
               backendType: 'process',
               tmuxPaneId: 'process:123',
               runtimePid: 123,
+              runtimeSessionId: 'old-process-session',
               bootstrapRuntimeEventsPath: '/safe-test-project/runtime/old.runtime.jsonl',
               bootstrapProofToken: 'old-proof-token',
               bootstrapRunId: 'old-run',
@@ -206,6 +234,7 @@ describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
       staleField: 'preserved',
     });
     expect(member).not.toHaveProperty('runtimePid');
+    expect(member).not.toHaveProperty('runtimeSessionId');
     expect(member).not.toHaveProperty('bootstrapRuntimeEventsPath');
     expect(member).not.toHaveProperty('bootstrapProofToken');
     expect(member).not.toHaveProperty('bootstrapRunId');
@@ -338,6 +367,46 @@ describe('TeamProvisioningUpdateDirectTmuxRestartMemberConfigUseCase', () => {
     expect(memberPrompts(persisted)).toMatchObject({
       'Worker A': 'prompt-a',
       'Worker B': 'prompt-b',
+    });
+  });
+
+  it('continues serialized mutations after a rejected update without committing the rejected state', async () => {
+    let persisted = JSON.stringify({
+      name: 'Team A',
+      members: [{ name: 'Worker A' }, { name: 'Worker B' }],
+    });
+    const events: string[] = [];
+    let writeCount = 0;
+    const useCase = createUpdateDirectTmuxRestartMemberConfigUseCase({
+      async readTeamConfigJson() {
+        events.push('read');
+        return persisted;
+      },
+      async writeTeamConfigJson(_teamName, contents) {
+        writeCount += 1;
+        events.push(`write-${writeCount}`);
+        if (writeCount === 1) {
+          throw new Error('rejected mutation');
+        }
+        persisted = contents;
+      },
+      invalidateTeamConfig() {
+        events.push('invalidate');
+      },
+    });
+
+    const rejected = expect(
+      useCase(restartInput('Worker A', 'rejected-prompt', 1))
+    ).rejects.toThrow('rejected mutation');
+    const successful = useCase(restartInput('Worker B', 'accepted-prompt', 2));
+
+    await rejected;
+    await expect(successful).resolves.toBeUndefined();
+
+    expect(events).toEqual(['read', 'write-1', 'read', 'write-2', 'invalidate']);
+    expect(memberPrompts(persisted)).toMatchObject({
+      'Worker A': '',
+      'Worker B': 'accepted-prompt',
     });
   });
 

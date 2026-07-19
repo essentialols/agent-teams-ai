@@ -8,6 +8,10 @@ import {
 } from '../TeamProvisioningToolApprovalResponse';
 
 import type { RuntimeToolApprovalEntry } from '../../approvals/RuntimeToolApprovalCoordinator';
+import type {
+  TeamLaunchRuntimeAdapter,
+  TeamRuntimeLaunchResult,
+} from '../../runtime/TeamRuntimeAdapter';
 import type { TeamProvisioningLeadToolApprovalResponsePorts } from '../TeamProvisioningLeadToolApproval';
 import type { OpenCodeRuntimeToolApprovalAnswerPorts } from '../TeamProvisioningRuntimeToolApprovalAnswer';
 import type { InboxMessage, ToolApprovalRequest } from '@shared/types';
@@ -208,6 +212,29 @@ describe('tool approval response boundary', () => {
       )
     ).rejects.toThrow('Runtime approval provider is not supported: anthropic');
   });
+
+  it('passes the UI-supplied message through the runtime approval boundary', async () => {
+    const answerRuntimePermission = vi.fn(async () => runtimeAnswerResult());
+    const entry = buildRuntimeEntry({ cwd: '/repo', expectedMembers: [] });
+
+    await answerRuntimeToolApprovalResponse(
+      {
+        entry,
+        allow: true,
+        message: 'Approved for the requested test command.',
+      },
+      createRuntimeAnswerPorts(answerRuntimePermission)
+    );
+
+    expect(answerRuntimePermission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-1',
+        teamName: 'alpha',
+        requestId: 'provider-req',
+        message: 'Approved for the requested test command.',
+      })
+    );
+  });
 });
 
 interface TestRun extends TeamProvisioningToolApprovalResponseRun {
@@ -331,5 +358,67 @@ function buildRuntimeEntry(
     memberName: 'Worker',
     approval,
     ...input,
+  };
+}
+
+function createRuntimeAnswerPorts(
+  answerRuntimePermission: NonNullable<TeamLaunchRuntimeAdapter['answerRuntimePermission']>
+): OpenCodeRuntimeToolApprovalAnswerPorts<TestRuntimeRun> {
+  const run: TestRuntimeRun = {};
+  const adapter = {
+    providerId: 'opencode',
+    prepare: vi.fn(),
+    launch: vi.fn(),
+    reconcile: vi.fn(),
+    stop: vi.fn(),
+    answerRuntimePermission,
+  } as unknown as TeamLaunchRuntimeAdapter;
+  return {
+    getOpenCodeRuntimeAdapter: vi.fn(() => adapter),
+    readLaunchState: vi.fn(async () => null),
+    buildOpenCodeRuntimePermissionAnswerInput: (entry, allow, previousLaunchState) => ({
+      runId: entry.approval.runId,
+      teamName: entry.approval.teamName,
+      laneId: entry.laneId,
+      cwd: entry.cwd ?? '',
+      providerId: 'opencode',
+      memberName: entry.memberName,
+      requestId: entry.providerRequestId,
+      decision: allow ? 'allow' : 'reject',
+      expectedMembers: entry.expectedMembers ?? [],
+      previousLaunchState,
+    }),
+    buildOpenCodeRuntimePermissionLaunchInput: (entry, previousLaunchState) => ({
+      runId: entry.approval.runId,
+      teamName: entry.approval.teamName,
+      laneId: entry.laneId,
+      cwd: entry.cwd ?? '',
+      providerId: 'opencode',
+      skipPermissions: false,
+      expectedMembers: entry.expectedMembers ?? [],
+      previousLaunchState,
+    }),
+    persistOpenCodeRuntimeAdapterLaunchResult: async (result) => ({ result }),
+    deleteRuntimeAdapterRunByTeam: vi.fn(),
+    setRuntimeAdapterRunByTeam: vi.fn(),
+    setAliveRunId: vi.fn(),
+    getTrackedRunId: vi.fn(() => 'run-1'),
+    getRun: vi.fn(() => run),
+    guardCommittedOpenCodeSecondaryLaneEvidence: async ({ result }) => result,
+    publishMixedSecondaryLaneStatusChange: async () => {},
+    syncOpenCodeRuntimeToolApprovals: vi.fn(),
+    emitTeamChange: vi.fn(),
+  };
+}
+
+function runtimeAnswerResult(): TeamRuntimeLaunchResult {
+  return {
+    runId: 'run-1',
+    teamName: 'alpha',
+    launchPhase: 'active',
+    teamLaunchState: 'clean_success',
+    members: {},
+    warnings: [],
+    diagnostics: [],
   };
 }

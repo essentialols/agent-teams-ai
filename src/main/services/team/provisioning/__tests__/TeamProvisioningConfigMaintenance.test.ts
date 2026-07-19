@@ -39,8 +39,11 @@ function createHarness(
   options: {
     files?: Record<string, string>;
     metaMembers?: TeamMember[];
+    rawMetaMembers?: TeamMember[];
     writeMembers?: TeamProvisioningConfigMaintenancePorts['membersMetaStore']['writeMembers'];
     getMembers?: TeamProvisioningConfigMaintenancePorts['membersMetaStore']['getMembers'];
+    updateMembers?: TeamProvisioningConfigMaintenancePorts['membersMetaStore']['updateMembers'];
+    writeFileUtf8?: TeamProvisioningConfigMaintenancePorts['writeFileUtf8'];
   } = {}
 ): Harness {
   const files = new Map(Object.entries(options.files ?? {}));
@@ -52,14 +55,27 @@ function createHarness(
       files.set('/members.meta.json', JSON.stringify(members, null, 2));
     });
   const getMembers = options.getMembers ?? vi.fn(async () => options.metaMembers ?? []);
+  let rawMetaMembers = options.rawMetaMembers ?? options.metaMembers ?? [];
+  const updateMembers =
+    options.updateMembers ??
+    vi.fn(async (teamName, update, memberOptions) => {
+      rawMetaMembers = update(rawMetaMembers);
+      if (memberOptions === undefined) {
+        await writeMembers(teamName, rawMetaMembers);
+      } else {
+        await writeMembers(teamName, rawMetaMembers, memberOptions);
+      }
+    });
 
   const ports: TeamProvisioningConfigMaintenancePorts = {
     getTeamsBasePath: () => TEAM_BASE,
     getProjectsBasePath: () => PROJECTS_BASE,
     readRegularFileUtf8: vi.fn(async (filePath) => files.get(filePath) ?? null),
-    writeFileUtf8: vi.fn(async (filePath, contents) => {
-      files.set(filePath, contents);
-    }),
+    writeFileUtf8:
+      options.writeFileUtf8 ??
+      vi.fn(async (filePath, contents) => {
+        files.set(filePath, contents);
+      }),
     unlink: vi.fn(async (filePath) => {
       if (!files.delete(filePath)) {
         throw new Error('missing');
@@ -72,6 +88,7 @@ function createHarness(
     membersMetaStore: {
       getMembers,
       writeMembers,
+      updateMembers,
     },
     invalidateTeam: vi.fn((teamName) => {
       invalidatedTeams.push(teamName);
@@ -145,6 +162,49 @@ describe('TeamProvisioningConfigMaintenance', () => {
     );
   });
 
+  it('does not normalize config or inboxes when the prelaunch backup write fails', async () => {
+    const teamName = 'launch-team';
+    const configPath = path.join(TEAM_BASE, teamName, 'config.json');
+    const backupPath = `${configPath}.prelaunch.bak`;
+    const inboxDir = path.join(TEAM_BASE, teamName, 'inboxes');
+    const duplicateInboxPath = path.join(inboxDir, 'Alice-2.json');
+    const configRaw = JSON.stringify({
+      members: [
+        { name: 'team-lead', agentType: 'team-lead' },
+        { name: 'Alice', agentType: 'general-purpose' },
+      ],
+    });
+    const initialFiles = {
+      [configPath]: configRaw,
+      [duplicateInboxPath]: JSON.stringify([{ messageId: 'dupe' }]),
+    };
+    const files = new Map(Object.entries(initialFiles));
+    const writeFileUtf8 = vi.fn(async (filePath: string, contents: string) => {
+      if (filePath === backupPath) {
+        throw new Error('backup disk full');
+      }
+      files.set(filePath, contents);
+    });
+    const harness = createHarness({
+      files: initialFiles,
+      metaMembers: [{ name: 'Alice' }],
+      writeFileUtf8,
+    });
+    for (const [filePath, contents] of files) {
+      harness.files.set(filePath, contents);
+    }
+
+    await harness.maintenance.normalizeTeamConfigForLaunch(teamName, configRaw);
+
+    expect(harness.files.get(configPath)).toBe(configRaw);
+    expect(harness.files.has(duplicateInboxPath)).toBe(true);
+    expect(harness.invalidatedTeams).toEqual([]);
+    expect(writeFileUtf8).toHaveBeenCalledTimes(1);
+    expect(harness.logs.warn).toEqual([
+      '[launch-team] Failed to write config prelaunch backup: backup disk full',
+    ]);
+  });
+
   it('restores config.json from the prelaunch backup and invalidates the reader', async () => {
     const teamName = 'launch-team';
     const configPath = path.join(TEAM_BASE, teamName, 'config.json');
@@ -170,7 +230,7 @@ describe('TeamProvisioningConfigMaintenance', () => {
     const configPath = path.join(TEAM_BASE, teamName, 'config.json');
     const inboxDir = path.join(TEAM_BASE, teamName, 'inboxes');
     const writeMembers = vi.fn(async () => undefined);
-    const { files, maintenance, invalidatedTeams, logs } = createHarness({
+    const { files, maintenance, invalidatedTeams, logs, ports } = createHarness({
       files: {
         [configPath]: JSON.stringify({
           members: [
@@ -186,7 +246,8 @@ describe('TeamProvisioningConfigMaintenance', () => {
           { messageId: 'bob-2', timestamp: '2026-01-02T00:00:00.000Z' },
         ]),
       },
-      metaMembers: [{ name: 'Bob' }, { name: 'Bob-2' }],
+      metaMembers: [{ name: 'Bob' }],
+      rawMetaMembers: [{ name: 'Bob' }, { name: 'Bob-2' }],
       writeMembers,
     });
 
@@ -196,6 +257,7 @@ describe('TeamProvisioningConfigMaintenance', () => {
       JSON.parse(files.get(configPath) ?? '{}').members.map((member: TeamMember) => member.name)
     ).toEqual(['team-lead', 'Alice']);
     expect(writeMembers).toHaveBeenCalledWith(teamName, [{ name: 'Bob' }]);
+    expect(ports.membersMetaStore.updateMembers).toHaveBeenCalledTimes(1);
     expect(JSON.parse(files.get(path.join(inboxDir, 'Bob.json')) ?? '[]')).toEqual([
       { messageId: 'bob-2', timestamp: '2026-01-02T00:00:00.000Z' },
       { messageId: 'bob', timestamp: '2026-01-01T00:00:00.000Z' },
@@ -221,6 +283,40 @@ describe('TeamProvisioningConfigMaintenance', () => {
 
     expect(writeMembers).not.toHaveBeenCalled();
     expect(logs.warn).toEqual([]);
+  });
+
+  it('retains removed-member tombstones when launch persistence rewrites members metadata', async () => {
+    const writeMembers = vi.fn(async () => undefined);
+    const removedAt = Date.parse('2026-07-14T17:00:00.000Z');
+    const { maintenance, ports } = createHarness({
+      metaMembers: [
+        { name: 'Builder', role: 'Removed builder', removedAt },
+        { name: 'Reviewer', role: 'Existing reviewer' },
+      ],
+      writeMembers,
+    });
+
+    await maintenance.persistMembersMeta(
+      'launch-team',
+      makeRequest([
+        { name: 'builder', role: 'Stale builder' },
+        { name: 'Reviewer', role: 'Current reviewer' },
+      ])
+    );
+
+    expect(ports.membersMetaStore.updateMembers).toHaveBeenCalledTimes(1);
+    expect(writeMembers).toHaveBeenCalledWith(
+      'launch-team',
+      [
+        expect.objectContaining({
+          name: 'Reviewer',
+          role: 'Current reviewer',
+          joinedAt: 123_456,
+        }),
+        { name: 'Builder', role: 'Removed builder', removedAt },
+      ],
+      { providerBackendId: undefined }
+    );
   });
 
   it('logs and suppresses members.meta.json write errors', async () => {

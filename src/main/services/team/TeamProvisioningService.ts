@@ -258,24 +258,50 @@ function mergeProvisioningMembersWithRemovalTombstones(
 
 function preserveProvisioningRemovalTombstones(store: TeamMembersMetaStore): TeamMembersMetaStore {
   const getMeta = (store as Partial<TeamMembersMetaStore>).getMeta;
+  const getMembers = (store as Partial<TeamMembersMetaStore>).getMembers;
+  const rawUpdateMembers = (store as Partial<TeamMembersMetaStore>).updateMembers;
   const rawWriteMembers = (store as Partial<TeamMembersMetaStore>).writeMembers;
-  if (typeof getMeta !== 'function' || typeof rawWriteMembers !== 'function') {
+  if (typeof rawWriteMembers !== 'function') {
     return store;
   }
   const writeMembers = rawWriteMembers.bind(store);
+  const updateMembers =
+    typeof rawUpdateMembers === 'function'
+      ? rawUpdateMembers.bind(store)
+      : !(store instanceof TeamMembersMetaStore)
+        ? async (
+            teamName: string,
+            update: Parameters<TeamMembersMetaStore['updateMembers']>[1],
+            options?: { providerBackendId?: string }
+          ): Promise<void> => {
+            // Legacy unit harnesses use structural test doubles that predate updateMembers.
+            // Production TeamMembersMetaStore instances always use the atomic branch above.
+            const existingMembers =
+              typeof getMembers === 'function'
+                ? await getMembers.call(store, teamName)
+                : ((await getMeta?.call(store, teamName))?.members ?? []);
+            await writeMembers(teamName, await update(existingMembers), options);
+          }
+        : null;
+  if (!updateMembers) {
+    return store;
+  }
 
   return new Proxy(store, {
     get(target, property) {
+      if (property === 'updateMembers') {
+        return updateMembers;
+      }
       if (property === 'writeMembers') {
         return async (
           teamName: string,
           members: TeamMember[],
           options?: { providerBackendId?: string }
         ): Promise<void> => {
-          const existingMeta = await getMeta.call(target, teamName);
-          await writeMembers(
+          await updateMembers(
             teamName,
-            mergeProvisioningMembersWithRemovalTombstones(members, existingMeta?.members ?? []),
+            (existingMembers) =>
+              mergeProvisioningMembersWithRemovalTombstones(members, existingMembers),
             options
           );
         };

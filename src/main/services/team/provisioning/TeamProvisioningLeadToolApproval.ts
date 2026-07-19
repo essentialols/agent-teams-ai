@@ -58,7 +58,9 @@ export interface TeamProvisioningLeadToolApprovalPorts<
   emitToolApprovalEvent(event: ToolApprovalEvent | ToolApprovalAutoResolved): void;
   startApprovalTimeout(run: TRun, requestId: string): void;
   maybeShowToolApprovalOsNotification(run: TRun, approval: ToolApprovalRequest): void;
-  buildLeadToolApprovalRequest(input: Parameters<typeof buildLeadToolApprovalRequest>[0]): ToolApprovalRequest;
+  buildLeadToolApprovalRequest(
+    input: Parameters<typeof buildLeadToolApprovalRequest>[0]
+  ): ToolApprovalRequest;
   buildToolApprovalAutoResolvedEvent(
     input: Parameters<typeof buildToolApprovalAutoResolvedEvent>[0]
   ): ToolApprovalAutoResolved;
@@ -91,6 +93,7 @@ export type TeamProvisioningLeadToolApprovalResponseResult<
   | { handled: true }
   | {
       handled: false;
+      claimOwnership: 'caller';
       run: TRun;
       approval: ToolApprovalRequest;
     };
@@ -207,7 +210,10 @@ export function autoAllowLeadControlRequest<TRun extends TeamProvisioningLeadToo
 export function autoDenyLeadControlRequest<TRun extends TeamProvisioningLeadToolApprovalRun>(
   run: TRun,
   requestId: string,
-  ports: Pick<TeamProvisioningLeadToolApprovalPorts<TRun>, 'logger' | 'buildDenyControlResponsePayload'>
+  ports: Pick<
+    TeamProvisioningLeadToolApprovalPorts<TRun>,
+    'logger' | 'buildDenyControlResponsePayload'
+  >
 ): void {
   if (!run.child?.stdin?.writable) {
     ports.logger.warn(`[${run.teamName}] Cannot auto-deny control_request: stdin not writable`);
@@ -228,9 +234,7 @@ export function autoDenyLeadControlRequest<TRun extends TeamProvisioningLeadTool
   });
 }
 
-export async function respondToLeadToolApproval<
-  TRun extends TeamProvisioningLeadToolApprovalRun,
->(
+export async function respondToLeadToolApproval<TRun extends TeamProvisioningLeadToolApprovalRun>(
   input: {
     teamName: string;
     runId: string;
@@ -270,7 +274,7 @@ export async function respondToLeadToolApproval<
   const approval = run.pendingApprovals.get(requestId)!;
 
   if (approval.source !== 'lead') {
-    return { handled: false, run, approval };
+    return { handled: false, claimOwnership: 'caller', run, approval };
   }
 
   if (!run.child?.stdin?.writable) {

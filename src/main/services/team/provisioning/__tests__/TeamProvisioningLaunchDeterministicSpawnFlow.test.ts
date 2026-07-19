@@ -46,6 +46,7 @@ import type {
   TeamCreateRequest,
   TeamLaunchRequest,
   TeamProvisioningProgress,
+  TeamProvisioningState,
 } from '@shared/types';
 import type { ChildProcess } from 'child_process';
 
@@ -338,6 +339,37 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
     );
   });
 
+  it('persists only teammates when the launch roster includes team-lead and user', async () => {
+    const writeMembers = vi.fn(async () => undefined);
+
+    await persistDeterministicLaunchMetadata(
+      {
+        request,
+        syntheticRequest,
+        launchIdentity,
+        allEffectiveMemberSpecs: [
+          { name: ' team-lead ', role: 'Lead' },
+          { name: 'USER', role: 'User' },
+          { name: ' Builder ', role: ' Build ' },
+        ],
+      },
+      {
+        teamMetaStore: { writeMeta: vi.fn(async () => undefined) },
+        membersMetaStore: {
+          getMembers: vi.fn(async () => []),
+          writeMembers,
+        },
+        nowMs: () => 123,
+      }
+    );
+
+    expect(writeMembers).toHaveBeenCalledWith(
+      'demo',
+      [expect.objectContaining({ name: 'Builder', role: 'Build' })],
+      { providerBackendId: 'codex-native' }
+    );
+  });
+
   it('rolls back materialized launch artifacts when runtime argument planning rejects', async () => {
     const planningError = new Error('runtime argument planning failed');
     const order: string[] = [];
@@ -534,21 +566,27 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
     expect(run.mcpConfigPath).toBeNull();
   });
 
-  it('registers launch child timeout, error, and close handlers without spawning', async () => {
+  it('registers launch child timeout, error, and close handlers without spawning', () => {
     let timeoutCallback: (() => void) | null = null;
     const child = new EventEmitter() as ChildProcess;
     const run = createRun({ child });
     const cleanupRun = vi.fn();
     const handleProcessExit = vi.fn();
-    const updateProgress = vi.fn((nextRun: DeterministicLaunchSpawnFlowRun, state, message) => {
-      nextRun.progress = { ...nextRun.progress, state, message };
-      return nextRun.progress;
-    });
+    const updateProgress = vi.fn(
+      (
+        nextRun: DeterministicLaunchSpawnFlowRun,
+        state: Exclude<TeamProvisioningState, 'idle'>,
+        message: string
+      ) => {
+        nextRun.progress = { ...nextRun.progress, state, message };
+        return nextRun.progress;
+      }
+    );
 
     registerDeterministicLaunchChildHandlers(
       { run, child },
       {
-        setTimeout: vi.fn((callback) => {
+        setTimeout: vi.fn((callback: () => void) => {
           timeoutCallback = callback;
           return { timeout: true } as unknown as NodeJS.Timeout;
         }),
@@ -572,38 +610,75 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
     child.emit('close', 7);
     expect(handleProcessExit).toHaveBeenCalledWith(run, 7);
 
+    expect(timeoutCallback).not.toBeNull();
+  });
+
+  it('does not kill or fail a timed-out launch when timeout recovery succeeds', async () => {
+    let timeoutCallback: (() => void) | null = null;
+    const child = new EventEmitter() as ChildProcess;
+    const run = createRun({ child });
+    const tryCompleteAfterTimeout = vi.fn(async () => true);
+    const killTeamProcess = vi.fn();
+    const updateProgress = vi.fn();
+    const cleanupRun = vi.fn();
+
+    registerDeterministicLaunchChildHandlers(
+      { run, child },
+      {
+        setTimeout: vi.fn((callback: () => void) => {
+          timeoutCallback = callback;
+          return { timeout: true } as unknown as NodeJS.Timeout;
+        }),
+        tryCompleteAfterTimeout,
+        killTeamProcess,
+        updateProgress,
+        cleanupRun,
+        handleProcessExit: vi.fn(),
+      }
+    );
+
     const triggerTimeout = timeoutCallback as (() => void) | null;
     if (!triggerTimeout) {
       throw new Error('Expected launch timeout callback to be registered.');
     }
     triggerTimeout();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(tryCompleteAfterTimeout).toHaveBeenCalledWith(run);
+    });
+
+    expect(killTeamProcess).not.toHaveBeenCalled();
+    expect(updateProgress).not.toHaveBeenCalled();
+    expect(cleanupRun).not.toHaveBeenCalled();
     expect(run.processKilled).toBe(true);
     expect(run.finalizingByTimeout).toBe(true);
   });
 
-  it('kills and cleans up a timed-out launch when timeout completion persistence rejects', async () => {
+  it('kills and cleans up a timed-out launch when timeout recovery fails', async () => {
     let timeoutCallback: (() => void) | null = null;
     const child = new EventEmitter() as ChildProcess;
     const run = createRun({ child });
+    const tryCompleteAfterTimeout = vi.fn(async () => false);
     const killTeamProcess = vi.fn();
     const cleanupRun = vi.fn();
-    const updateProgress = vi.fn((nextRun: DeterministicLaunchSpawnFlowRun, state, message) => {
-      nextRun.progress = { ...nextRun.progress, state, message };
-      return nextRun.progress;
-    });
+    const updateProgress = vi.fn(
+      (
+        nextRun: DeterministicLaunchSpawnFlowRun,
+        state: Exclude<TeamProvisioningState, 'idle'>,
+        message: string
+      ) => {
+        nextRun.progress = { ...nextRun.progress, state, message };
+        return nextRun.progress;
+      }
+    );
 
     registerDeterministicLaunchChildHandlers(
       { run, child },
       {
-        setTimeout: vi.fn((callback) => {
+        setTimeout: vi.fn((callback: () => void) => {
           timeoutCallback = callback;
           return { timeout: true } as unknown as NodeJS.Timeout;
         }),
-        tryCompleteAfterTimeout: vi.fn(async () => {
-          throw new Error('launch state persistence failed');
-        }),
+        tryCompleteAfterTimeout,
         killTeamProcess,
         updateProgress,
         cleanupRun,
@@ -620,6 +695,7 @@ describe('TeamProvisioningLaunchDeterministicSpawnFlow', () => {
       expect(cleanupRun).toHaveBeenCalledWith(run);
     });
 
+    expect(tryCompleteAfterTimeout).toHaveBeenCalledWith(run);
     expect(killTeamProcess).toHaveBeenCalledWith(child);
     expect(updateProgress).toHaveBeenCalledWith(
       run,

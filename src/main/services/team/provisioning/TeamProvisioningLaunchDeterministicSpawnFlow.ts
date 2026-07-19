@@ -19,6 +19,7 @@ import {
 import {
   buildMembersMetaWritePayload,
   mergeMembersMetaForLaunch,
+  selectMembersMetaTeammates,
 } from './TeamProvisioningConfigLaunchNormalization';
 import { applyAppManagedRuntimeSettingsPathEnv } from './TeamProvisioningEnvGuards';
 import { mergeProvisioningWarnings } from './TeamProvisioningLaunchCompatibility';
@@ -231,7 +232,7 @@ export async function persistDeterministicLaunchMetadata<
   await ports.membersMetaStore.writeMembers(
     request.teamName,
     mergeMembersMetaForLaunch(
-      buildMembersMetaWritePayload(allEffectiveMemberSpecs),
+      buildMembersMetaWritePayload(selectMembersMetaTeammates(allEffectiveMemberSpecs)),
       existingMembers
     ),
     {
@@ -373,11 +374,11 @@ export function registerDeterministicLaunchChildHandlers<
       run.finalizingByTimeout = true;
       void (async () => {
         const readyOnTimeout = await ports.tryCompleteAfterTimeout(run).catch(() => false);
-        ports.killTeamProcess(run.child);
         if (readyOnTimeout) {
           return;
         }
 
+        ports.killTeamProcess(run.child);
         const progress = ports.updateProgress(run, 'failed', 'Timed out waiting for CLI (launch)', {
           error: 'Timed out waiting for CLI during team launch.',
           cliLogsTail: extractCliLogsFromRun(run),

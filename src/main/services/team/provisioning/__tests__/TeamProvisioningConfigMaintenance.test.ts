@@ -145,6 +145,44 @@ describe('TeamProvisioningConfigMaintenance', () => {
     );
   });
 
+  it('leaves config members and inboxes intact when the prelaunch backup write fails', async () => {
+    const teamName = 'launch-team';
+    const configPath = path.join(TEAM_BASE, teamName, 'config.json');
+    const backupPath = `${configPath}.prelaunch.bak`;
+    const inboxDir = path.join(TEAM_BASE, teamName, 'inboxes');
+    const duplicateInboxPath = path.join(inboxDir, 'Alice-2.json');
+    const configRaw = JSON.stringify({
+      leadAgentId: 'lead-1',
+      members: [
+        { name: 'team-lead', agentType: 'team-lead', agentId: 'lead-1' },
+        { name: 'Alice', agentType: 'general-purpose' },
+      ],
+    });
+    const duplicateInboxRaw = JSON.stringify([
+      { messageId: 'dupe', timestamp: '2026-01-02T00:00:00.000Z' },
+    ]);
+    const { files, maintenance, ports, invalidatedTeams, logs } = createHarness({
+      files: {
+        [configPath]: configRaw,
+        [duplicateInboxPath]: duplicateInboxRaw,
+      },
+      metaMembers: [{ name: 'Alice' }],
+    });
+    const writeFileUtf8 = vi
+      .spyOn(ports, 'writeFileUtf8')
+      .mockRejectedValueOnce(new Error('readonly'));
+
+    await maintenance.normalizeTeamConfigForLaunch(teamName, configRaw);
+
+    expect(files.get(configPath)).toBe(configRaw);
+    expect(files.has(backupPath)).toBe(false);
+    expect(files.get(duplicateInboxPath)).toBe(duplicateInboxRaw);
+    expect(writeFileUtf8).toHaveBeenCalledTimes(1);
+    expect(writeFileUtf8).toHaveBeenCalledWith(backupPath, configRaw);
+    expect(invalidatedTeams).toEqual([]);
+    expect(logs.warn).toEqual(['[launch-team] Failed to write config prelaunch backup: readonly']);
+  });
+
   it('restores config.json from the prelaunch backup and invalidates the reader', async () => {
     const teamName = 'launch-team';
     const configPath = path.join(TEAM_BASE, teamName, 'config.json');

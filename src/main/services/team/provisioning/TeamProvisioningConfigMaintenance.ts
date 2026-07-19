@@ -237,6 +237,7 @@ export class TeamProvisioningConfigMaintenance {
           error instanceof Error ? error.message : String(error)
         }`
       );
+      return;
     }
 
     // Write normalized config atomically.

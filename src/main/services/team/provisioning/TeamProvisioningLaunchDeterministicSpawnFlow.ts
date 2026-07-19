@@ -235,7 +235,7 @@ export async function persistDeterministicLaunchMetadata<
       existingMembers
     ),
     {
-      providerBackendId: request.providerBackendId,
+      providerBackendId: syntheticRequest.providerBackendId,
     }
   );
 }
@@ -478,17 +478,26 @@ export async function runDeterministicLaunchSpawnFlow<TRun extends Deterministic
     throw error;
   }
 
-  const extraCliArgs = parseCliArgs(request.extraCliArgs);
-  const runtimeArgsPlan = await ports.buildTeamRuntimeLaunchArgsPlan({
-    teamName: request.teamName,
-    providerId: resolvedProviderId,
-    launchIdentity,
-    envResolution: { ...provisioningEnv, providerArgs: providerArgsForLaunch },
-    extraArgs: extraCliArgs,
-    inheritedProviderArgs: crossProviderMemberArgsForLaunch.args,
-    includeAnthropicHelper: resolvedProviderId === 'anthropic',
-    contextLabel: 'Team launch',
-  });
+  let runtimeArgsPlan: TeamRuntimeLaunchArgsPlan;
+  try {
+    const extraCliArgs = parseCliArgs(request.extraCliArgs);
+    runtimeArgsPlan = await ports.buildTeamRuntimeLaunchArgsPlan({
+      teamName: request.teamName,
+      providerId: resolvedProviderId,
+      launchIdentity,
+      envResolution: { ...provisioningEnv, providerArgs: providerArgsForLaunch },
+      extraArgs: extraCliArgs,
+      inheritedProviderArgs: crossProviderMemberArgsForLaunch.args,
+      includeAnthropicHelper: resolvedProviderId === 'anthropic',
+      contextLabel: 'Team launch',
+    });
+  } catch (error) {
+    await cleanupDeterministicLaunchMaterializationFailure(
+      { request, run, runId, provisioningEnv },
+      ports
+    );
+    throw error;
+  }
   emitProvisioningCheckpoint(run, 'Resolving cross-provider member launch args');
   const finalLaunchArgs = buildDeterministicLaunchProcessArgs({
     mcpConfigPath,
@@ -525,10 +534,18 @@ export async function runDeterministicLaunchSpawnFlow<TRun extends Deterministic
   );
 
   emitProvisioningCheckpoint(run, 'Persisting team metadata before spawn');
-  await persistDeterministicLaunchMetadata(
-    { request, syntheticRequest, launchIdentity, allEffectiveMemberSpecs },
-    ports
-  );
+  try {
+    await persistDeterministicLaunchMetadata(
+      { request, syntheticRequest, launchIdentity, allEffectiveMemberSpecs },
+      ports
+    );
+  } catch (error) {
+    await cleanupDeterministicLaunchMaterializationFailure(
+      { request, run, runId, provisioningEnv },
+      ports
+    );
+    throw error;
+  }
 
   let child: ChildProcess;
   try {

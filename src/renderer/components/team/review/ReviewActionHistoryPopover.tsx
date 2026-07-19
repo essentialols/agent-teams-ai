@@ -244,7 +244,19 @@ export const ReviewActionHistoryPopover = ({
   getRestorePreview,
   restoreDisabled = false,
 }: ReviewActionHistoryPopoverProps): React.ReactElement | null => {
-  const [open, setOpen] = useState(false);
+  const historyPositionKey = JSON.stringify([
+    undoHistory.map((action) => action.id),
+    redoHistory.map((entry) => entry.action.id),
+  ]);
+  const historyPositionToken = useMemo(
+    () => Symbol(`review-history-position:${historyPositionKey}`),
+    [historyPositionKey]
+  );
+  const [openForHistoryPosition, setOpenForHistoryPosition] = useState<symbol | null>(null);
+  const open = openForHistoryPosition === historyPositionToken;
+  const setOpen = (nextOpen: boolean): void => {
+    setOpenForHistoryPosition(nextOpen ? historyPositionToken : null);
+  };
   const [undoVisibleLimit, setUndoVisibleLimit] = useState(HISTORY_INITIAL_LIMIT);
   const [redoVisibleLimit, setRedoVisibleLimit] = useState(HISTORY_INITIAL_LIMIT);
   const [restoreRequest, setRestoreRequest] = useState<{
@@ -371,15 +383,16 @@ export const ReviewActionHistoryPopover = ({
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent
-          align="end"
-          className="max-h-[min(70vh,32rem)] w-[22rem] p-0"
-          onEscapeKeyDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-          }}
-        >
+        {open && (
+          <PopoverContent
+            align="end"
+            className="max-h-[min(70vh,32rem)] w-[22rem] p-0"
+            onEscapeKeyDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+            }}
+          >
           <div className="sticky top-0 z-10 border-b border-border bg-surface px-3 py-2.5">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-medium text-text">Review action history</div>
@@ -520,7 +533,8 @@ export const ReviewActionHistoryPopover = ({
               );
             }}
           />
-        </PopoverContent>
+          </PopoverContent>
+        )}
       </Popover>
       <AlertDialog
         open={restoreRequest !== null}

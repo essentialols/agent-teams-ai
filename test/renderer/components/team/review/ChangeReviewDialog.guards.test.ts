@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendOrderedReviewAction,
+  createReviewOperationScopeToken,
   getReviewCloseBlockReason,
   getReviewDecisionHydrationGuard,
   getReviewRenameRecoveryExpectation,
@@ -12,6 +13,7 @@ import {
   isReviewActionPersistenceBlocking,
   isReviewDiskPreimageRestored,
   isReviewFileFullyRejected,
+  isReviewOperationScopeCurrent,
   partitionReviewFilesByApplyErrors,
   popOrderedReviewAction,
   reconcileReviewDecisionRecordsAfterApply,
@@ -24,6 +26,7 @@ import {
   selectLatestReviewConflictCandidate,
   shouldCreateFileWhenUndoingReject,
   shouldDeleteFileWhenUndoingReject,
+  shouldRequestReviewCloseForEscape,
 } from '../../../../../src/renderer/components/team/review/reviewActionState';
 
 function makeFile(filePath: string, changeKey?: string) {
@@ -39,6 +42,39 @@ function makeFile(filePath: string, changeKey?: string) {
 }
 
 describe('ChangeReviewDialog interaction guards', () => {
+  it('invalidates stale async operations even when the same scope is reopened', () => {
+    const first = createReviewOperationScopeToken('scope-a');
+    const reopened = createReviewOperationScopeToken('scope-a');
+
+    expect(isReviewOperationScopeCurrent(first, first)).toBe(true);
+    expect(isReviewOperationScopeCurrent(reopened, first)).toBe(false);
+    expect(isReviewOperationScopeCurrent(null, first)).toBe(false);
+  });
+
+  it('lets an inner modal consume Escape before Changes closes', () => {
+    expect(
+      shouldRequestReviewCloseForEscape({
+        key: 'Escape',
+        defaultPrevented: false,
+        hasOpenModalLayer: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldRequestReviewCloseForEscape({
+        key: 'Escape',
+        defaultPrevented: true,
+        hasOpenModalLayer: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldRequestReviewCloseForEscape({
+        key: 'Escape',
+        defaultPrevented: false,
+        hasOpenModalLayer: true,
+      })
+    ).toBe(false);
+  });
+
   it.each([
     { applying: true, fileApplyCount: 0, undoing: false, closing: false },
     { applying: false, fileApplyCount: 1, undoing: false, closing: false },

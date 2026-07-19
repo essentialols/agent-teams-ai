@@ -28,6 +28,34 @@ export interface ReviewDecisionRecords {
   fileDecisions: Record<string, HunkDecision>;
 }
 
+export interface ReviewOperationScopeToken {
+  readonly hydrationKey: string;
+  readonly generation: symbol;
+}
+
+/**
+ * Object identity intentionally distinguishes closing and reopening the same
+ * durable scope. A string key alone is vulnerable to an A -> B -> A race.
+ */
+export function createReviewOperationScopeToken(hydrationKey: string): ReviewOperationScopeToken {
+  return Object.freeze({ hydrationKey, generation: Symbol(hydrationKey) });
+}
+
+export function isReviewOperationScopeCurrent(
+  current: ReviewOperationScopeToken | null,
+  operation: ReviewOperationScopeToken | null
+): operation is ReviewOperationScopeToken {
+  return current !== null && current === operation;
+}
+
+export function shouldRequestReviewCloseForEscape(input: {
+  key: string;
+  defaultPrevented: boolean;
+  hasOpenModalLayer: boolean;
+}): boolean {
+  return input.key === 'Escape' && !input.defaultPrevented && !input.hasOpenModalLayer;
+}
+
 export type ReviewConflictCandidateSelection =
   | { kind: 'decision'; value: ReviewDecisionConflictCandidateSummary }
   | { kind: 'draft'; value: ReviewDraftHistoryConflictCandidateSummary };

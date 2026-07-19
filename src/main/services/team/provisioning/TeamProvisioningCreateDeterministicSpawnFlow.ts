@@ -311,7 +311,10 @@ export async function runDeterministicCreateSpawnFlow<
   const promptSize = getPromptSizeSummary(initialUserPrompt);
   let child: SpawnedChild;
   shellEnv.CLAUDE_ENABLE_DETERMINISTIC_TEAM_BOOTSTRAP = '1';
-  const teammateModeDecision = await resolveDesktopTeammateModeDecision(request.extraCliArgs);
+  const teammateModeDecision = await resolveDesktopTeammateModeDecision(
+    request.extraCliArgs,
+    shellEnv
+  );
   applyDesktopTeammateModeDecisionToEnv(shellEnv, teammateModeDecision);
   let mcpConfigPath: string;
   let bootstrapSpecPath: string;

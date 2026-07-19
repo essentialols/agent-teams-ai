@@ -384,7 +384,10 @@ export async function runDeterministicLaunchSpawnFlow<TRun extends Deterministic
   } = input;
 
   shellEnv.CLAUDE_ENABLE_DETERMINISTIC_TEAM_BOOTSTRAP = '1';
-  const teammateModeDecision = await resolveDesktopTeammateModeDecision(request.extraCliArgs);
+  const teammateModeDecision = await resolveDesktopTeammateModeDecision(
+    request.extraCliArgs,
+    shellEnv
+  );
   applyDesktopTeammateModeDecisionToEnv(shellEnv, teammateModeDecision);
 
   let prompt!: string;

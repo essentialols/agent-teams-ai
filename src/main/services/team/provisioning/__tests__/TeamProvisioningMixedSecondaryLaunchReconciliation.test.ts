@@ -180,7 +180,7 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
     expect(getBuildRuntimeSpawnStatusRecordCalls()).toBe(0);
   });
 
-  it('maps secondary lane runtime evidence through explicit snapshot ports', () => {
+  it('maps case-varied secondary lane runtime evidence through explicit snapshot ports', () => {
     const { ports, getCapturedParams } = createPorts();
     const diagnostics = ['runtime diagnostic'];
     const result: TeamRuntimeLaunchResult = {
@@ -189,8 +189,8 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
       launchPhase: 'finished',
       teamLaunchState: 'partial_pending',
       members: {
-        Bob: {
-          memberName: 'Bob',
+        bOb: {
+          memberName: 'BOB',
           providerId: 'opencode',
           launchState: 'runtime_pending_bootstrap',
           agentToolAccepted: true,
@@ -270,6 +270,60 @@ describe('TeamProvisioningMixedSecondaryLaunchReconciliation', () => {
       pendingReason: undefined,
     });
     expect(params?.secondaryMembers?.[0]?.leadDefaults).toBe(params?.leadDefaults);
+  });
+
+  it('rejects case-normalized secondary evidence for a different member or runtime generation', () => {
+    const harness = createPorts();
+    const result: TeamRuntimeLaunchResult = {
+      runId: 'lane-run-1',
+      teamName: 'team-a',
+      launchPhase: 'finished',
+      teamLaunchState: 'clean_success',
+      members: {
+        bob: {
+          memberName: 'Bob-2',
+          providerId: 'opencode',
+          launchState: 'confirmed_alive',
+          agentToolAccepted: true,
+          runtimeAlive: true,
+          bootstrapConfirmed: true,
+          hardFailure: false,
+          diagnostics: [],
+        },
+      },
+      warnings: [],
+      diagnostics: [],
+    };
+
+    buildMixedSecondaryLaunchSnapshotForRun(
+      createRun({ lanes: [createLane({ state: 'finished', result })] }),
+      'finished',
+      harness.ports
+    );
+
+    expect(harness.getCapturedParams()?.secondaryMembers?.[0]?.evidence).toBeNull();
+
+    const staleRunHarness = createPorts();
+    buildMixedSecondaryLaunchSnapshotForRun(
+      createRun({
+        lanes: [
+          createLane({
+            runId: 'lane-run-2',
+            state: 'finished',
+            result: {
+              ...result,
+              members: {
+                bob: { ...result.members.bob, memberName: 'BOB' },
+              },
+            },
+          }),
+        ],
+      }),
+      'finished',
+      staleRunHarness.ports
+    );
+
+    expect(staleRunHarness.getCapturedParams()?.secondaryMembers?.[0]?.evidence).toBeNull();
   });
 
   it('preserves queued pending lanes but fails finished lanes without runtime evidence', () => {

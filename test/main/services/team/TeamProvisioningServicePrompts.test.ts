@@ -410,6 +410,49 @@ describe('TeamProvisioningService prompt content (solo mode discipline)', () => 
     await svc.cancelProvisioning(runId);
   });
 
+  it('createTeam resolves deterministic teammate mode from the spawn shell environment', async () => {
+    const originalAmbientMode = process.env.CLAUDE_TEAM_TEAMMATE_MODE;
+    process.env.CLAUDE_TEAM_TEAMMATE_MODE = 'in-process';
+    vi.mocked(ClaudeBinaryResolver.resolve).mockResolvedValue('/fake/claude');
+    const { child } = createFakeChild();
+    vi.mocked(spawnCli).mockReturnValue(child as any);
+
+    const svc = new TeamProvisioningService();
+    mockProviderRuntime(svc, async () => ({
+      env: { CLAUDE_TEAM_TEAMMATE_MODE: 'tmux' },
+      authSource: 'none',
+    }));
+    (svc as any).startFilesystemMonitor = vi.fn();
+    (svc as any).pathExists = vi.fn(async () => false);
+    let runId: string | undefined;
+
+    try {
+      ({ runId } = await svc.createTeam(
+        {
+          teamName: 'shell-env-create-team',
+          cwd: process.cwd(),
+          members: [],
+        },
+        () => {}
+      ));
+
+      const launchArgs = vi.mocked(spawnCli).mock.calls[0]?.[1] as string[];
+      const launchEnv = vi.mocked(spawnCli).mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      expect(launchArgs).toEqual(expect.arrayContaining(['--teammate-mode', 'tmux']));
+      expect(launchEnv.CLAUDE_TEAM_TEAMMATE_MODE).toBe('tmux');
+      expect(launchEnv.CLAUDE_TEAM_FORCE_PROCESS_TEAMMATES).toBeUndefined();
+    } finally {
+      if (runId) {
+        await svc.cancelProvisioning(runId);
+      }
+      if (originalAmbientMode === undefined) {
+        delete process.env.CLAUDE_TEAM_TEAMMATE_MODE;
+      } else {
+        process.env.CLAUDE_TEAM_TEAMMATE_MODE = originalAmbientMode;
+      }
+    }
+  });
+
   it('launchTeam prompt (solo) uses deterministic refresh-only launch instructions', async () => {
     // Seed config.json so launchTeam can validate team existence.
     const teamName = 'solo-team-launch';
@@ -478,6 +521,63 @@ describe('TeamProvisioningService prompt content (solo mode discipline)', () => 
     expect(launchArgs).not.toContain('--strict-mcp-config');
 
     await svc.cancelProvisioning(runId);
+  });
+
+  it('launchTeam resolves deterministic teammate mode from the spawn shell environment', async () => {
+    const originalAmbientMode = process.env.CLAUDE_TEAM_TEAMMATE_MODE;
+    process.env.CLAUDE_TEAM_TEAMMATE_MODE = 'in-process';
+    const teamName = 'shell-env-launch-team';
+    const teamDir = path.join(tempTeamsBase, teamName);
+    fs.mkdirSync(teamDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(teamDir, 'config.json'),
+      JSON.stringify({
+        name: teamName,
+        members: [{ name: 'team-lead', agentType: 'team-lead' }],
+      }),
+      'utf8'
+    );
+
+    vi.mocked(ClaudeBinaryResolver.resolve).mockResolvedValue('/fake/claude');
+    const { child } = createFakeChild();
+    vi.mocked(spawnCli).mockReturnValue(child as any);
+
+    const svc = new TeamProvisioningService();
+    mockProviderRuntime(svc, async () => ({
+      env: { CLAUDE_TEAM_TEAMMATE_MODE: 'tmux' },
+      authSource: 'none',
+    }));
+    mockLaunchConfigFacade(svc, []);
+    (svc as any).persistLaunchStateSnapshot = vi.fn(async () => {});
+    (svc as any).pathExists = vi.fn(async () => false);
+    (svc as any).startFilesystemMonitor = vi.fn();
+    let runId: string | undefined;
+
+    try {
+      ({ runId } = await svc.launchTeam(
+        {
+          teamName,
+          cwd: process.cwd(),
+          clearContext: true,
+        } as any,
+        () => {}
+      ));
+
+      const launchArgs = vi.mocked(spawnCli).mock.calls[0]?.[1] as string[];
+      const launchEnv = vi.mocked(spawnCli).mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      expect(launchArgs).toEqual(expect.arrayContaining(['--teammate-mode', 'tmux']));
+      expect(launchEnv.CLAUDE_TEAM_TEAMMATE_MODE).toBe('tmux');
+      expect(launchEnv.CLAUDE_TEAM_FORCE_PROCESS_TEAMMATES).toBeUndefined();
+    } finally {
+      if (runId) {
+        await svc.cancelProvisioning(runId);
+      }
+      if (originalAmbientMode === undefined) {
+        delete process.env.CLAUDE_TEAM_TEAMMATE_MODE;
+      } else {
+        process.env.CLAUDE_TEAM_TEAMMATE_MODE = originalAmbientMode;
+      }
+    }
   });
 
   it('createTeam bootstrap spec carries teammate descriptors for deterministic startup', async () => {

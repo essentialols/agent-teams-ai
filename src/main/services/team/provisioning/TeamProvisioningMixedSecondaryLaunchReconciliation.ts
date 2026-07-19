@@ -2,6 +2,9 @@ import { migrateProviderBackendId } from '@shared/utils/providerBackend';
 
 import { resolveTeamProviderId } from '../../runtime/providerRuntimeEnv';
 
+import { matchesExactTeamMemberName } from './TeamProvisioningMemberIdentity';
+
+import type { TeamRuntimeMemberLaunchEvidence } from '../runtime/TeamRuntimeAdapter';
 import type { MixedSecondaryRuntimeLaneState } from './TeamProvisioningSecondaryRuntimeRuns';
 import type {
   MemberLaunchState,
@@ -142,6 +145,21 @@ function buildMixedLeadDefaults(
   };
 }
 
+function resolveExactMixedSecondaryRuntimeMemberEvidence(
+  lane: MixedSecondaryRuntimeLaneState
+): TeamRuntimeMemberLaunchEvidence | undefined {
+  if (!lane.result || !lane.runId || lane.result.runId !== lane.runId) {
+    return undefined;
+  }
+
+  const expectedMemberName = lane.member.name;
+  return Object.entries(lane.result.members).find(
+    ([memberKey, evidence]) =>
+      matchesExactTeamMemberName(memberKey, expectedMemberName) &&
+      matchesExactTeamMemberName(evidence.memberName, expectedMemberName)
+  )?.[1];
+}
+
 export function buildMixedSecondaryLaunchSnapshotForRun<
   TRun extends MixedSecondaryLaunchSnapshotRunLike,
 >(
@@ -164,7 +182,7 @@ export function buildMixedSecondaryLaunchSnapshotForRun<
     primaryMembers: run.effectiveMembers,
     primaryStatuses: ports.buildRuntimeSpawnStatusRecord(run),
     secondaryMembers: mixedSecondaryLanes.map((secondaryLane) => {
-      const evidenceEntry = secondaryLane.result?.members[secondaryLane.member.name];
+      const evidenceEntry = resolveExactMixedSecondaryRuntimeMemberEvidence(secondaryLane);
       const currentSpawnStatus = run.memberSpawnStatuses.get(secondaryLane.member.name);
       const laneFirstSpawnAcceptedAt =
         currentSpawnStatus?.firstSpawnAcceptedAt ??

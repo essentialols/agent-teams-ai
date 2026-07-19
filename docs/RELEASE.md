@@ -1,5 +1,79 @@
 # Release Guide
 
+## Draft: v2.9.1 (2026-07-19)
+
+Target branch: `dev`.
+
+Runtime gate:
+
+- Agent Teams runtime: `v0.0.69`.
+- Terminal Platform runtime: `v0.3.2`.
+
+Draft body source for GitHub release:
+
+<!-- RELEASE_BODY_START v2.9.1 -->
+Recover code review work safely after app crashes or reloads, including interrupted accept/reject actions and renamed or deleted files. This patch also adds quick setup for OpenRouter and Vercel AI Gateway, improves Kiro setup and usage reporting, and fixes local model, OpenCode, terminal, and Windows launch issues.
+
+### What's New
+
+- Connect OpenRouter and Vercel AI Gateway directly from provider quick setup.
+- Set up or update Kiro from the app and view Kiro usage in the Usage dashboard.
+- Select project-specific local models when configuring teammates.
+
+### Improvements
+
+- Keep Changes decisions, undo/redo history, and recovery state available after crashes, reloads, and file watcher restarts.
+- Make provider connection status and Google, Vertex AI, and Claude via Vertex names clearer during setup.
+- Keep team model setup and OpenCode teammate lifecycle changes consistent when configuration changes.
+
+### Bug Fixes
+
+- Prevent interrupted or concurrent Changes actions from losing recovery state, mixing project data, or leaving stale locks.
+- Fix OpenCode teammate start/stop races and keep other teammates available when one launch fails.
+- Preserve completed terminal command status and report terminal provider failures more clearly.
+- Fix Windows command fallback when project paths contain non-ASCII characters.
+
+### Downloads
+
+<table>
+<tr>
+<td align="center">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI-2.9.1-arm64.dmg">
+    <img src="https://img.shields.io/badge/macOS_Apple_Silicon-.dmg-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple Silicon" />
+  </a>
+  <br />
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI-2.9.1-x64.dmg">
+    <img src="https://img.shields.io/badge/macOS_Intel-.dmg-434343?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Intel" />
+  </a>
+</td>
+<td align="center">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI.Setup.2.9.1.exe">
+    <img src="https://img.shields.io/badge/Windows-Download_.exe-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
+  </a>
+  <br />
+  <sub>May trigger SmartScreen - click "More info" then "Run anyway"</sub>
+  <br />
+  <sub>Run normally. Administrator mode may be needed only if the app reports a specific OpenCode symlink or permission error.</sub>
+</td>
+<td align="center">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI-2.9.1.AppImage">
+    <img src="https://img.shields.io/badge/Linux-Download_.AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux AppImage" />
+  </a>
+  <br />
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/agent-teams-ai_2.9.1_amd64.deb">
+    <img src="https://img.shields.io/badge/.deb-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt=".deb" />
+  </a>&nbsp;
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/agent-teams-ai-2.9.1.x86_64.rpm">
+    <img src="https://img.shields.io/badge/.rpm-294172?style=flat-square&logo=redhat&logoColor=white" alt=".rpm" />
+  </a>&nbsp;
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/agent-teams-ai-2.9.1.pacman">
+    <img src="https://img.shields.io/badge/.pacman-1793D1?style=flat-square&logo=archlinux&logoColor=white" alt=".pacman" />
+  </a>
+</td>
+</tr>
+</table>
+<!-- RELEASE_BODY_END v2.9.1 -->
+
 ## Published: v2.9.0 (2026-07-19)
 
 GitHub release: [v2.9.0](https://github.com/777genius/agent-teams-ai/releases/tag/v2.9.0).

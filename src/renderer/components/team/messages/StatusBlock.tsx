@@ -109,6 +109,7 @@ export const StatusBlock = ({
           {hasPendingReplies ? (
             <PendingRepliesBlock
               members={members}
+              nowMs={nowMs}
               messages={messages}
               isTeamAlive={isTeamAlive}
               pendingRepliesByMember={pendingRepliesByMember}

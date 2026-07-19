@@ -31,6 +31,7 @@ export interface PendingCrossTeamReply {
 
 interface PendingRepliesBlockProps {
   members: ResolvedTeamMember[];
+  nowMs: number;
   pendingRepliesByMember: Record<string, number>;
   messages?: InboxMessage[];
   isTeamAlive?: boolean;
@@ -41,6 +42,7 @@ interface PendingRepliesBlockProps {
 
 export const PendingRepliesBlock = memo(function PendingRepliesBlock({
   members,
+  nowMs,
   pendingRepliesByMember,
   messages = [],
   isTeamAlive,
@@ -103,7 +105,7 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
           const advisoryLabel = getMemberRuntimeAdvisoryLabel(
             member.runtimeAdvisory,
             member.providerId,
-            Date.now(),
+            nowMs,
             member.model
           );
           const advisoryTitle = getMemberRuntimeAdvisoryTitle(

@@ -3,6 +3,7 @@ import {
   buildRuntimeDestinationMessageId,
   hashRuntimeDeliveryEnvelope,
   hashRuntimeDeliveryEnvelopeLegacyTaskRefs,
+  hashRuntimeDeliveryEnvelopeLegacyTransport,
   normalizeRuntimeDeliveryEnvelope,
   resolveRuntimeDeliveryDestination,
   type RuntimeDeliveryDestinationRef,
@@ -139,11 +140,14 @@ export class RuntimeDeliveryService {
     const requestedDestination = resolveRuntimeDeliveryDestination(envelope);
     const requestedDestinationMessageId = buildRuntimeDestinationMessageId(envelope);
     const payloadHash = hashRuntimeDeliveryEnvelope(envelope);
+    const legacyTransportPayloadHash = hashRuntimeDeliveryEnvelopeLegacyTransport(envelope);
     const legacyPayloadHash = hashRuntimeDeliveryEnvelopeLegacyTaskRefs(envelope);
     const begin = await this.journal.begin({
       idempotencyKey: envelope.idempotencyKey,
       payloadHash,
-      ...(legacyPayloadHash ? { compatiblePayloadHashes: [legacyPayloadHash] } : {}),
+      compatiblePayloadHashes: [legacyTransportPayloadHash, legacyPayloadHash].filter(
+        (candidate): candidate is string => candidate !== null
+      ),
       runId: envelope.runId,
       teamName: envelope.teamName,
       fromMemberName: envelope.fromMemberName,
@@ -175,7 +179,7 @@ export class RuntimeDeliveryService {
         message: 'Runtime delivery idempotency key was reused with a different payload',
         data: {
           idempotencyKey: envelope.idempotencyKey,
-          existingPayloadHash: begin.record.payloadHash,
+          existingPayloadHash: begin.record.logicalPayloadHash ?? begin.record.payloadHash,
           newPayloadHash: payloadHash,
         },
         createdAt: now,

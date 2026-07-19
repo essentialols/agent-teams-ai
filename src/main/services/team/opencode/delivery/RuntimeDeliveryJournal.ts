@@ -42,6 +42,7 @@ export interface RuntimeDeliveryJournalRecord {
   providerId: 'opencode';
   runtimeSessionId: string;
   payloadHash: string;
+  logicalPayloadHash: string | null;
   destination: RuntimeDeliveryDestinationRef;
   destinationMessageId: string;
   committedLocation: RuntimeDeliveryLocation | null;
@@ -52,6 +53,17 @@ export interface RuntimeDeliveryJournalRecord {
   committedAt: string | null;
   lastError: string | null;
 }
+
+export interface RuntimeDeliveryCommittedReceipt {
+  kind: 'committed_receipt';
+  idempotencyKey: string;
+  teamName: string;
+  logicalPayloadHash: string | null;
+  committedLocation: RuntimeDeliveryLocation;
+  committedAt: string;
+}
+
+type RuntimeDeliveryJournalEntry = RuntimeDeliveryJournalRecord | RuntimeDeliveryCommittedReceipt;
 
 export interface RuntimeDeliveryJournalBeginInput {
   idempotencyKey: string;
@@ -82,39 +94,65 @@ export type RuntimeDeliveryJournalBeginResult = (
 
 export class RuntimeDeliveryJournalStore {
   constructor(
-    private readonly store: VersionedJsonStore<RuntimeDeliveryJournalRecord[]>,
+    private readonly store: VersionedJsonStore<RuntimeDeliveryJournalEntry[]>,
     private readonly maxTerminalRecords = RUNTIME_DELIVERY_JOURNAL_MAX_TERMINAL_RECORDS
   ) {}
 
   async begin(input: RuntimeDeliveryJournalBeginInput): Promise<RuntimeDeliveryJournalBeginResult> {
-    const canonicalInput = canonicalizeRuntimeDeliveryJournalInput(input);
+    const canonicalInput: RuntimeDeliveryJournalBeginInput = {
+      ...canonicalizeRuntimeDeliveryJournalInput(input),
+      fromMemberName: input.fromMemberName.trim(),
+      runtimeSessionId: input.runtimeSessionId.trim(),
+      destination: normalizeRuntimeDeliveryDestinationRef(input.destination),
+    };
     let result: RuntimeDeliveryJournalBeginResult | null = null;
-    await this.store.updateLocked((records) => {
-      // A committed record closes its delivery generation. Only uncommitted local generations
-      // carry destination proof into a new run, so a key may still identify a later message.
-      const recoveryRecords = records.filter((record) =>
+    await this.store.updateLocked((entries) => {
+      const records = entries.filter(isRuntimeDeliveryJournalRecord);
+      const committedReceipt = entries.find(
+        (entry): entry is RuntimeDeliveryCommittedReceipt =>
+          isRuntimeDeliveryCommittedReceipt(entry) &&
+          matchesRuntimeDeliveryLogicalKey(entry, canonicalInput)
+      );
+      if (committedReceipt) {
+        const committedRecord = buildRuntimeDeliveryRecordFromReceipt(
+          canonicalInput,
+          committedReceipt
+        );
+        result =
+          committedReceipt.logicalPayloadHash !== null &&
+          committedReceipt.logicalPayloadHash === canonicalInput.payloadHash
+            ? { state: 'already_committed', record: committedRecord }
+            : { state: 'payload_conflict', record: committedRecord };
+        return pruneRuntimeDeliveryJournalEntries(entries, this.maxTerminalRecords);
+      }
+
+      const logicalKeyRecords = records.filter((record) =>
+        matchesRuntimeDeliveryLogicalKey(record, canonicalInput)
+      );
+      const conflictingRecord = logicalKeyRecords.find(
+        (record) => !hasCompatibleRuntimeDeliveryPayload(record, canonicalInput)
+      );
+      if (conflictingRecord) {
+        result = { state: 'payload_conflict', record: conflictingRecord };
+        return pruneRuntimeDeliveryJournalEntries(entries, this.maxTerminalRecords);
+      }
+
+      const recoveryRecords = logicalKeyRecords.filter((record) =>
         canCarryRuntimeDeliveryAcrossRuns(record, canonicalInput)
       );
       const existing = records.find((record) =>
         matchesRuntimeDeliveryJournalKey(record, canonicalInput)
       );
       if (existing) {
-        const hasCompatiblePayloadHash =
-          existing.payloadHash === canonicalInput.payloadHash ||
-          canonicalInput.compatiblePayloadHashes?.includes(existing.payloadHash) === true;
-        if (!hasCompatiblePayloadHash) {
-          result = { state: 'payload_conflict', record: existing };
-          return pruneRuntimeDeliveryJournalRecords(records, this.maxTerminalRecords);
-        }
-
         if (existing.status === 'committed') {
           result = { state: 'already_committed', record: existing };
-          return pruneRuntimeDeliveryJournalRecords(records, this.maxTerminalRecords);
+          return pruneRuntimeDeliveryJournalEntries(entries, this.maxTerminalRecords);
         }
 
         const resumed = {
           ...existing,
           payloadHash: canonicalInput.payloadHash,
+          logicalPayloadHash: canonicalInput.payloadHash,
           attempts: existing.attempts + 1,
           status: existing.status === 'failed_terminal' ? existing.status : 'pending',
           updatedAt: canonicalInput.now,
@@ -124,9 +162,12 @@ export class RuntimeDeliveryJournalStore {
           record: resumed,
           ...(recoveryRecords.length > 0 ? { recoveryRecords } : {}),
         };
-        return pruneRuntimeDeliveryJournalRecords(
-          records.map((record) =>
-            matchesRuntimeDeliveryJournalKey(record, canonicalInput) ? resumed : record
+        return pruneRuntimeDeliveryJournalEntries(
+          entries.map((entry) =>
+            isRuntimeDeliveryJournalRecord(entry) &&
+            matchesRuntimeDeliveryJournalKey(entry, canonicalInput)
+              ? resumed
+              : entry
           ),
           this.maxTerminalRecords
         );
@@ -140,6 +181,7 @@ export class RuntimeDeliveryJournalStore {
         providerId: canonicalInput.providerId,
         runtimeSessionId: canonicalInput.runtimeSessionId,
         payloadHash: canonicalInput.payloadHash,
+        logicalPayloadHash: canonicalInput.payloadHash,
         destination: canonicalInput.destination,
         destinationMessageId:
           recoveryRecords[0]?.destinationMessageId ?? canonicalInput.destinationMessageId,
@@ -156,7 +198,7 @@ export class RuntimeDeliveryJournalStore {
         record: created,
         ...(recoveryRecords.length > 0 ? { recoveryRecords } : {}),
       };
-      return pruneRuntimeDeliveryJournalRecords([...records, created], this.maxTerminalRecords);
+      return pruneRuntimeDeliveryJournalEntries([...entries, created], this.maxTerminalRecords);
     });
 
     if (!result) {
@@ -174,28 +216,38 @@ export class RuntimeDeliveryJournalStore {
   }): Promise<void> {
     const canonicalInput = canonicalizeRuntimeDeliveryJournalInput(input);
     let found = false;
-    await this.store.updateLocked((records) => {
+    await this.store.updateLocked((entries) => {
+      const records = entries.filter(isRuntimeDeliveryJournalRecord);
       const current = records.find((record) =>
         matchesRuntimeDeliveryJournalKey(record, canonicalInput)
       );
       if (!current) {
-        return records;
+        return entries;
       }
       found = true;
-      const committed = records.map((record) =>
-        matchesRuntimeDeliveryJournalKey(record, canonicalInput) ||
-        belongsToRuntimeDeliveryRecoveryLineage(record, current)
-          ? {
-              ...record,
+      const committed = entries.map((entry) =>
+        isRuntimeDeliveryJournalRecord(entry) &&
+        (matchesRuntimeDeliveryJournalKey(entry, canonicalInput) ||
+          belongsToRuntimeDeliveryRecoveryLineage(entry, current))
+          ? ({
+              ...entry,
               committedLocation: canonicalInput.location,
               status: 'committed' as const,
               updatedAt: canonicalInput.committedAt,
               committedAt: canonicalInput.committedAt,
               lastError: null,
-            }
-          : record
+            } satisfies RuntimeDeliveryJournalRecord)
+          : entry
       );
-      return pruneRuntimeDeliveryJournalRecords(committed, this.maxTerminalRecords);
+      const withReceipt = upsertRuntimeDeliveryCommittedReceipt(
+        committed,
+        createRuntimeDeliveryCommittedReceipt(
+          current,
+          canonicalInput.location,
+          canonicalInput.committedAt
+        )
+      );
+      return pruneRuntimeDeliveryJournalEntries(withReceipt, this.maxTerminalRecords);
     });
 
     if (!found) {
@@ -269,15 +321,18 @@ export class RuntimeDeliveryJournalStore {
     updater: (record: RuntimeDeliveryJournalRecord) => RuntimeDeliveryJournalRecord
   ): Promise<void> {
     let found = false;
-    await this.store.updateLocked((records) => {
-      const updated = records.map((record) => {
-        if (!matchesRuntimeDeliveryJournalKey(record, input)) {
-          return record;
+    await this.store.updateLocked((entries) => {
+      const updated = entries.map((entry) => {
+        if (
+          !isRuntimeDeliveryJournalRecord(entry) ||
+          !matchesRuntimeDeliveryJournalKey(entry, input)
+        ) {
+          return entry;
         }
         found = true;
-        return updater(record);
+        return updater(entry);
       });
-      return pruneRuntimeDeliveryJournalRecords(updated, this.maxTerminalRecords);
+      return pruneRuntimeDeliveryJournalEntries(updated, this.maxTerminalRecords);
     });
 
     if (!found) {
@@ -290,8 +345,31 @@ export class RuntimeDeliveryJournalStore {
     if (!result.ok) {
       throw new VersionedJsonStoreError(result.message, result.reason, result.quarantinePath);
     }
-    return result.data;
+    return result.data.filter(isRuntimeDeliveryJournalRecord);
   }
+}
+
+function matchesRuntimeDeliveryLogicalKey(
+  record: Pick<RuntimeDeliveryJournalRecord, 'idempotencyKey' | 'teamName'>,
+  input: Pick<RuntimeDeliveryJournalKeyInput, 'idempotencyKey' | 'teamName'>
+): boolean {
+  return record.idempotencyKey === input.idempotencyKey && record.teamName === input.teamName;
+}
+
+function hasCompatibleRuntimeDeliveryPayload(
+  record: RuntimeDeliveryJournalRecord,
+  input: RuntimeDeliveryJournalBeginInput
+): boolean {
+  if (record.logicalPayloadHash !== null) {
+    return record.logicalPayloadHash === input.payloadHash;
+  }
+  if (record.status === 'committed') {
+    return false;
+  }
+  return (
+    record.payloadHash === input.payloadHash ||
+    input.compatiblePayloadHashes?.includes(record.payloadHash) === true
+  );
 }
 
 function matchesRuntimeDeliveryJournalKey(
@@ -316,7 +394,7 @@ function canCarryRuntimeDeliveryAcrossRuns(
     (record.status === 'pending' ||
       record.status === 'failed_retryable' ||
       record.status === 'failed_terminal') &&
-    matchesLocalRuntimeDeliveryDestination(record.destination, input.destination)
+    matchesRuntimeDeliveryDestination(record.destination, input.destination)
   );
 }
 
@@ -331,11 +409,11 @@ function belongsToRuntimeDeliveryRecoveryLineage(
     (record.status === 'pending' ||
       record.status === 'failed_retryable' ||
       record.status === 'failed_terminal') &&
-    matchesLocalRuntimeDeliveryDestination(record.destination, current.destination)
+    matchesRuntimeDeliveryDestination(record.destination, current.destination)
   );
 }
 
-function matchesLocalRuntimeDeliveryDestination(
+function matchesRuntimeDeliveryDestination(
   left: RuntimeDeliveryDestinationRef,
   right: RuntimeDeliveryDestinationRef
 ): boolean {
@@ -345,28 +423,40 @@ function matchesLocalRuntimeDeliveryDestination(
   if (left.kind === 'member_inbox' && right.kind === 'member_inbox') {
     return left.teamName === right.teamName && left.memberName === right.memberName;
   }
-  // Cross-team sends retain run-scoped message ids and use conversationId for duplicate proof.
-  return false;
+  return (
+    left.kind === 'cross_team_outbox' &&
+    right.kind === 'cross_team_outbox' &&
+    left.fromTeamName === right.fromTeamName &&
+    left.toTeamName === right.toTeamName &&
+    left.toMemberName === right.toMemberName
+  );
 }
 
-function pruneRuntimeDeliveryJournalRecords(
-  records: RuntimeDeliveryJournalRecord[],
+function pruneRuntimeDeliveryJournalEntries(
+  entries: RuntimeDeliveryJournalEntry[],
   maxTerminalRecords: number
-): RuntimeDeliveryJournalRecord[] {
-  const terminalRecords = records
-    .map((record, index) => ({ record, index }))
-    .filter(({ record }) => isPrunableRuntimeDeliveryJournalRecord(record));
+): RuntimeDeliveryJournalEntry[] {
+  const terminalRecords = entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(
+      (candidate): candidate is { entry: RuntimeDeliveryJournalRecord; index: number } =>
+        isRuntimeDeliveryJournalRecord(candidate.entry) &&
+        isPrunableRuntimeDeliveryJournalRecord(candidate.entry)
+    );
   if (terminalRecords.length <= maxTerminalRecords) {
-    return records;
+    return entries;
   }
 
   const newestTerminal = terminalRecords
-    .sort(compareRuntimeDeliveryJournalRecency)
+    .toSorted(compareRuntimeDeliveryJournalRecency)
     .slice(0, maxTerminalRecords);
   const retainedIndexes = new Set(newestTerminal.map(({ index }) => index));
 
-  return records.filter(
-    (record, index) => !isPrunableRuntimeDeliveryJournalRecord(record) || retainedIndexes.has(index)
+  return entries.filter(
+    (entry, index) =>
+      !isRuntimeDeliveryJournalRecord(entry) ||
+      !isPrunableRuntimeDeliveryJournalRecord(entry) ||
+      retainedIndexes.has(index)
   );
 }
 
@@ -376,12 +466,12 @@ function isPrunableRuntimeDeliveryJournalRecord(record: RuntimeDeliveryJournalRe
 }
 
 function compareRuntimeDeliveryJournalRecency(
-  left: { record: RuntimeDeliveryJournalRecord; index: number },
-  right: { record: RuntimeDeliveryJournalRecord; index: number }
+  left: { entry: RuntimeDeliveryJournalRecord; index: number },
+  right: { entry: RuntimeDeliveryJournalRecord; index: number }
 ): number {
   const timestampDifference =
-    getRuntimeDeliveryJournalTimestamp(right.record) -
-    getRuntimeDeliveryJournalTimestamp(left.record);
+    getRuntimeDeliveryJournalTimestamp(right.entry) -
+    getRuntimeDeliveryJournalTimestamp(left.entry);
   return timestampDifference || right.index - left.index;
 }
 
@@ -392,6 +482,84 @@ function getRuntimeDeliveryJournalTimestamp(record: RuntimeDeliveryJournalRecord
   }
   const createdAt = Date.parse(record.createdAt);
   return Number.isFinite(createdAt) ? createdAt : Number.NEGATIVE_INFINITY;
+}
+
+function createRuntimeDeliveryCommittedReceipt(
+  record: RuntimeDeliveryJournalRecord,
+  committedLocation: RuntimeDeliveryLocation,
+  committedAt: string
+): RuntimeDeliveryCommittedReceipt {
+  return {
+    kind: 'committed_receipt',
+    idempotencyKey: record.idempotencyKey,
+    teamName: record.teamName,
+    logicalPayloadHash: record.logicalPayloadHash,
+    committedLocation,
+    committedAt,
+  };
+}
+
+function upsertRuntimeDeliveryCommittedReceipt(
+  entries: RuntimeDeliveryJournalEntry[],
+  receipt: RuntimeDeliveryCommittedReceipt
+): RuntimeDeliveryJournalEntry[] {
+  const existingIndex = entries.findIndex(
+    (entry) =>
+      isRuntimeDeliveryCommittedReceipt(entry) && matchesRuntimeDeliveryLogicalKey(entry, receipt)
+  );
+  if (existingIndex < 0) {
+    return [...entries, receipt];
+  }
+
+  const existing = entries[existingIndex] as RuntimeDeliveryCommittedReceipt;
+  const merged = mergeRuntimeDeliveryCommittedReceipts(existing, receipt);
+  return entries.map((entry, index) => (index === existingIndex ? merged : entry));
+}
+
+function mergeRuntimeDeliveryCommittedReceipts(
+  existing: RuntimeDeliveryCommittedReceipt,
+  candidate: RuntimeDeliveryCommittedReceipt
+): RuntimeDeliveryCommittedReceipt {
+  const existingCommittedAt = Date.parse(existing.committedAt);
+  const candidateCommittedAt = Date.parse(candidate.committedAt);
+  const original =
+    Number.isFinite(candidateCommittedAt) &&
+    (!Number.isFinite(existingCommittedAt) || candidateCommittedAt < existingCommittedAt)
+      ? candidate
+      : existing;
+  return {
+    ...original,
+    logicalPayloadHash:
+      existing.logicalPayloadHash !== null &&
+      existing.logicalPayloadHash === candidate.logicalPayloadHash
+        ? existing.logicalPayloadHash
+        : null,
+  };
+}
+
+function buildRuntimeDeliveryRecordFromReceipt(
+  input: RuntimeDeliveryJournalBeginInput,
+  receipt: RuntimeDeliveryCommittedReceipt
+): RuntimeDeliveryJournalRecord {
+  return {
+    idempotencyKey: receipt.idempotencyKey,
+    runId: input.runId,
+    teamName: receipt.teamName,
+    fromMemberName: input.fromMemberName,
+    providerId: input.providerId,
+    runtimeSessionId: input.runtimeSessionId,
+    payloadHash: receipt.logicalPayloadHash ?? 'untrusted:legacy-committed-payload',
+    logicalPayloadHash: receipt.logicalPayloadHash,
+    destination: input.destination,
+    destinationMessageId: receipt.committedLocation.messageId,
+    committedLocation: receipt.committedLocation,
+    status: 'committed',
+    attempts: 1,
+    createdAt: receipt.committedAt,
+    updatedAt: receipt.committedAt,
+    committedAt: receipt.committedAt,
+    lastError: null,
+  };
 }
 
 function throwRuntimeDeliveryJournalRecordNotFound(input: RuntimeDeliveryJournalKeyInput): never {
@@ -412,11 +580,11 @@ export function createRuntimeDeliveryJournalStore(options: {
     throw new Error('Runtime delivery journal maxTerminalRecords must be a positive integer');
   }
   return new RuntimeDeliveryJournalStore(
-    new VersionedJsonStore<RuntimeDeliveryJournalRecord[]>({
+    new VersionedJsonStore<RuntimeDeliveryJournalEntry[]>({
       filePath: options.filePath,
       schemaVersion: RUNTIME_DELIVERY_JOURNAL_SCHEMA_VERSION,
       defaultData: () => [],
-      validate: validateRuntimeDeliveryJournalRecords,
+      validate: validateRuntimeDeliveryJournalEntries,
       clock,
     }),
     maxTerminalRecords
@@ -431,15 +599,10 @@ export function validateRuntimeDeliveryJournalRecords(
   }
   const seen = new Set<string>();
   return value.map((record, index) => {
-    if (!isRuntimeDeliveryJournalRecord(record)) {
+    const normalizedRecord = normalizeRuntimeDeliveryJournalRecord(record);
+    if (!normalizedRecord) {
       throw new Error(`Invalid runtime delivery journal record at index ${index}`);
     }
-    const normalizedRecord = {
-      ...record,
-      idempotencyKey: canonicalizeRuntimeIdempotencyKey(record.idempotencyKey, {
-        errorPrefix: 'Runtime delivery journal record',
-      }),
-    };
     const key = buildRuntimeDeliveryJournalKey(normalizedRecord);
     if (seen.has(key)) {
       throw new Error(
@@ -451,12 +614,77 @@ export function validateRuntimeDeliveryJournalRecords(
   });
 }
 
+function validateRuntimeDeliveryJournalEntries(value: unknown): RuntimeDeliveryJournalEntry[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Runtime delivery journal must be an array');
+  }
+
+  const records: RuntimeDeliveryJournalRecord[] = [];
+  const receipts: RuntimeDeliveryCommittedReceipt[] = [];
+  for (const [index, entry] of value.entries()) {
+    const record = normalizeRuntimeDeliveryJournalRecord(entry);
+    if (record) {
+      records.push(record);
+      continue;
+    }
+    const receipt = normalizeRuntimeDeliveryCommittedReceipt(entry);
+    if (receipt) {
+      receipts.push(receipt);
+      continue;
+    }
+    throw new Error(`Invalid runtime delivery journal entry at index ${index}`);
+  }
+
+  validateRuntimeDeliveryJournalRecords(records);
+  let entries: RuntimeDeliveryJournalEntry[] = [...records];
+  for (const receipt of receipts) {
+    entries = upsertRuntimeDeliveryCommittedReceipt(entries, receipt);
+  }
+  for (const record of records) {
+    if (record.status !== 'committed') {
+      continue;
+    }
+    entries = upsertRuntimeDeliveryCommittedReceipt(
+      entries,
+      createRuntimeDeliveryCommittedReceipt(
+        record,
+        buildLocationFromJournal(record),
+        record.committedAt ?? record.updatedAt
+      )
+    );
+  }
+  return entries;
+}
+
 function buildRuntimeDeliveryJournalKey(record: RuntimeDeliveryJournalRecord): string {
   return `${record.teamName}\u0000${record.runId}\u0000${record.idempotencyKey}`;
 }
 
 export function hashRuntimeDeliveryEnvelope(envelope: RuntimeDeliveryEnvelope): string {
-  return hashRuntimeDeliveryEnvelopeWithTaskRefs(envelope, envelope.taskRefs ?? []);
+  return `sha256:${stableHash({
+    destination: resolveRuntimeDeliveryDestinationForHash(envelope),
+    sender: envelope.fromMemberName.trim(),
+    content: envelope.text,
+    summary: envelope.summary ?? null,
+    taskRefs: normalizeRuntimeDeliveryTaskRefs(envelope.taskRefs) ?? [],
+    createdAt: requireRuntimeDeliveryIso(envelope.createdAt, 'createdAt'),
+  })}`;
+}
+
+function resolveRuntimeDeliveryDestinationForHash(
+  envelope: RuntimeDeliveryEnvelope
+): RuntimeDeliveryDestinationRef {
+  return resolveRuntimeDeliveryDestination({
+    ...envelope,
+    teamName: envelope.teamName.trim(),
+    to: normalizeRuntimeDeliveryTarget(envelope.to),
+  });
+}
+
+export function hashRuntimeDeliveryEnvelopeLegacyTransport(
+  envelope: RuntimeDeliveryEnvelope
+): string {
+  return hashRuntimeDeliveryTransportEnvelopeWithTaskRefs(envelope, envelope.taskRefs ?? []);
 }
 
 export function hashRuntimeDeliveryEnvelopeLegacyTaskRefs(
@@ -465,13 +693,13 @@ export function hashRuntimeDeliveryEnvelopeLegacyTaskRefs(
   if (!envelope.taskRefs?.length) {
     return null;
   }
-  return hashRuntimeDeliveryEnvelopeWithTaskRefs(
+  return hashRuntimeDeliveryTransportEnvelopeWithTaskRefs(
     envelope,
     envelope.taskRefs.map((taskRef) => taskRef.taskId)
   );
 }
 
-function hashRuntimeDeliveryEnvelopeWithTaskRefs(
+function hashRuntimeDeliveryTransportEnvelopeWithTaskRefs(
   envelope: RuntimeDeliveryEnvelope,
   taskRefs: unknown[]
 ): string {
@@ -494,8 +722,8 @@ export function buildRuntimeDestinationMessageId(envelope: RuntimeDeliveryEnvelo
     idempotencyKey: canonicalizeRuntimeIdempotencyKey(envelope.idempotencyKey, {
       errorPrefix: 'Runtime delivery envelope',
     }),
-    runId: envelope.runId,
-    teamName: envelope.teamName,
+    runId: envelope.runId.trim(),
+    teamName: envelope.teamName.trim(),
   }).slice(0, 32)}`;
 }
 
@@ -528,11 +756,11 @@ export function normalizeRuntimeDeliveryEnvelope(value: unknown): RuntimeDeliver
     idempotencyKey: canonicalizeRuntimeIdempotencyKey(value.idempotencyKey, {
       errorPrefix: 'Runtime delivery envelope',
     }),
-    runId: requireNonEmptyString(value.runId, 'runId'),
-    teamName: requireNonEmptyString(value.teamName, 'teamName'),
-    fromMemberName: requireNonEmptyString(value.fromMemberName, 'fromMemberName'),
+    runId: requireTrimmedNonEmptyString(value.runId, 'runId'),
+    teamName: requireTrimmedNonEmptyString(value.teamName, 'teamName'),
+    fromMemberName: requireTrimmedNonEmptyString(value.fromMemberName, 'fromMemberName'),
     providerId: value.providerId === 'opencode' ? 'opencode' : fail('providerId must be opencode'),
-    runtimeSessionId: requireNonEmptyString(value.runtimeSessionId, 'runtimeSessionId'),
+    runtimeSessionId: requireTrimmedNonEmptyString(value.runtimeSessionId, 'runtimeSessionId'),
     to: normalizeRuntimeDeliveryTarget(value.to),
     text: requireNonEmptyString(value.text, 'text'),
     createdAt: requireRuntimeDeliveryIso(value.createdAt, 'createdAt'),
@@ -608,9 +836,9 @@ function normalizeRuntimeDeliveryTarget(value: unknown): RuntimeDeliveryTarget {
   if (!isRecord(value)) {
     throw new Error('Runtime delivery target must be user or object');
   }
-  const memberName = requireNonEmptyString(value.memberName, 'to.memberName');
+  const memberName = requireTrimmedNonEmptyString(value.memberName, 'to.memberName');
   if (typeof value.teamName === 'string' && value.teamName.trim()) {
-    return { teamName: value.teamName, memberName };
+    return { teamName: value.teamName.trim(), memberName };
   }
   return { memberName };
 }
@@ -646,7 +874,68 @@ function requireRuntimeDeliveryTaskRefString(value: unknown, fieldName: string):
   return value.trim();
 }
 
+function normalizeRuntimeDeliveryJournalRecord(
+  value: unknown
+): RuntimeDeliveryJournalRecord | null {
+  if (!isRuntimeDeliveryJournalRecordShape(value)) {
+    return null;
+  }
+  if (
+    value.logicalPayloadHash !== undefined &&
+    value.logicalPayloadHash !== null &&
+    !isNonEmptyString(value.logicalPayloadHash)
+  ) {
+    return null;
+  }
+  return {
+    ...value,
+    idempotencyKey: canonicalizeRuntimeIdempotencyKey(value.idempotencyKey, {
+      errorPrefix: 'Runtime delivery journal record',
+    }),
+    runId: value.runId.trim(),
+    teamName: value.teamName.trim(),
+    fromMemberName: value.fromMemberName.trim(),
+    runtimeSessionId: value.runtimeSessionId.trim(),
+    logicalPayloadHash: value.logicalPayloadHash ?? null,
+    destination: normalizeRuntimeDeliveryDestinationRef(value.destination),
+    committedLocation:
+      value.committedLocation === null
+        ? null
+        : normalizeRuntimeDeliveryLocation(value.committedLocation),
+  };
+}
+
+function normalizeRuntimeDeliveryCommittedReceipt(
+  value: unknown
+): RuntimeDeliveryCommittedReceipt | null {
+  if (!isRuntimeDeliveryCommittedReceiptShape(value)) {
+    return null;
+  }
+  return {
+    kind: 'committed_receipt',
+    idempotencyKey: canonicalizeRuntimeIdempotencyKey(value.idempotencyKey, {
+      errorPrefix: 'Runtime delivery committed receipt',
+    }),
+    teamName: value.teamName.trim(),
+    logicalPayloadHash: value.logicalPayloadHash,
+    committedLocation: normalizeRuntimeDeliveryLocation(value.committedLocation),
+    committedAt: value.committedAt,
+  };
+}
+
 function isRuntimeDeliveryJournalRecord(value: unknown): value is RuntimeDeliveryJournalRecord {
+  return (
+    isRuntimeDeliveryJournalRecordShape(value) &&
+    (value.logicalPayloadHash === null || isNonEmptyString(value.logicalPayloadHash))
+  );
+}
+
+function isRuntimeDeliveryJournalRecordShape(value: unknown): value is Omit<
+  RuntimeDeliveryJournalRecord,
+  'logicalPayloadHash'
+> & {
+  logicalPayloadHash?: unknown;
+} {
   return (
     isRecord(value) &&
     isNonEmptyString(value.idempotencyKey) &&
@@ -666,6 +955,26 @@ function isRuntimeDeliveryJournalRecord(value: unknown): value is RuntimeDeliver
     isNonEmptyString(value.updatedAt) &&
     (value.committedAt === null || isNonEmptyString(value.committedAt)) &&
     (value.lastError === null || typeof value.lastError === 'string')
+  );
+}
+
+function isRuntimeDeliveryCommittedReceipt(
+  value: unknown
+): value is RuntimeDeliveryCommittedReceipt {
+  return isRuntimeDeliveryCommittedReceiptShape(value);
+}
+
+function isRuntimeDeliveryCommittedReceiptShape(
+  value: unknown
+): value is RuntimeDeliveryCommittedReceipt {
+  return (
+    isRecord(value) &&
+    value.kind === 'committed_receipt' &&
+    isNonEmptyString(value.idempotencyKey) &&
+    isNonEmptyString(value.teamName) &&
+    (value.logicalPayloadHash === null || isNonEmptyString(value.logicalPayloadHash)) &&
+    isRuntimeDeliveryLocation(value.committedLocation) &&
+    isNonEmptyString(value.committedAt)
   );
 }
 
@@ -696,6 +1005,28 @@ function isRuntimeDeliveryDestinationRef(value: unknown): value is RuntimeDelive
   );
 }
 
+function normalizeRuntimeDeliveryDestinationRef(
+  value: RuntimeDeliveryDestinationRef
+): RuntimeDeliveryDestinationRef {
+  switch (value.kind) {
+    case 'user_sent_messages':
+      return { kind: value.kind, teamName: value.teamName.trim() };
+    case 'member_inbox':
+      return {
+        kind: value.kind,
+        teamName: value.teamName.trim(),
+        memberName: value.memberName.trim(),
+      };
+    case 'cross_team_outbox':
+      return {
+        kind: value.kind,
+        fromTeamName: value.fromTeamName.trim(),
+        toTeamName: value.toTeamName.trim(),
+        toMemberName: value.toMemberName.trim(),
+      };
+  }
+}
+
 function isRuntimeDeliveryLocation(value: unknown): value is RuntimeDeliveryLocation {
   if (!isRecord(value) || !isNonEmptyString(value.messageId)) {
     return false;
@@ -714,6 +1045,32 @@ function isRuntimeDeliveryLocation(value: unknown): value is RuntimeDeliveryLoca
   );
 }
 
+function normalizeRuntimeDeliveryLocation(value: RuntimeDeliveryLocation): RuntimeDeliveryLocation {
+  switch (value.kind) {
+    case 'user_sent_messages':
+      return {
+        kind: value.kind,
+        teamName: value.teamName.trim(),
+        messageId: value.messageId.trim(),
+      };
+    case 'member_inbox':
+      return {
+        kind: value.kind,
+        teamName: value.teamName.trim(),
+        memberName: value.memberName.trim(),
+        messageId: value.messageId.trim(),
+      };
+    case 'cross_team_outbox':
+      return {
+        kind: value.kind,
+        fromTeamName: value.fromTeamName.trim(),
+        toTeamName: value.toTeamName.trim(),
+        toMemberName: value.toMemberName.trim(),
+        messageId: value.messageId.trim(),
+      };
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -729,11 +1086,17 @@ function requireNonEmptyString(value: unknown, field: string): string {
   return value;
 }
 
+function requireTrimmedNonEmptyString(value: unknown, field: string): string {
+  return requireNonEmptyString(value, field).trim();
+}
+
 function canonicalizeRuntimeDeliveryJournalInput<T extends RuntimeDeliveryJournalKeyInput>(
   input: T
 ): Omit<T, 'idempotencyKey'> & RuntimeDeliveryJournalKeyInput {
   return {
     ...input,
+    runId: input.runId.trim(),
+    teamName: input.teamName.trim(),
     idempotencyKey: canonicalizeRuntimeIdempotencyKey(input.idempotencyKey, {
       errorPrefix: 'Runtime delivery envelope',
     }),

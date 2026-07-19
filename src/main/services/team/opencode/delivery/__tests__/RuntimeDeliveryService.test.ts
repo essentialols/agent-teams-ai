@@ -526,6 +526,7 @@ function recordFromBegin(input: RuntimeDeliveryJournalBeginInput): RuntimeDelive
     providerId: input.providerId,
     runtimeSessionId: input.runtimeSessionId,
     payloadHash: input.payloadHash,
+    logicalPayloadHash: input.payloadHash,
     destination: input.destination,
     destinationMessageId: input.destinationMessageId,
     committedLocation: null,

@@ -142,7 +142,6 @@ describe('RuntimeDeliveryJournal cross-run recovery identity', () => {
         beginInput({
           runId: 'run-2',
           runtimeSessionId: 'session-2',
-          payloadHash: 'sha256:run-2',
           destinationMessageId: 'run-2-member-message',
           now: '2026-01-01T00:00:01.000Z',
         })
@@ -150,6 +149,7 @@ describe('RuntimeDeliveryJournal cross-run recovery identity', () => {
       const otherTeam = await journal.begin(
         beginInput({
           runId: 'run-2',
+          idempotencyKey: 'other-team-key',
           teamName: 'OtherTeam',
           runtimeSessionId: 'session-other-team',
           payloadHash: 'sha256:other-team',
@@ -161,6 +161,7 @@ describe('RuntimeDeliveryJournal cross-run recovery identity', () => {
       const otherMember = await journal.begin(
         beginInput({
           runId: 'run-3',
+          idempotencyKey: 'other-member-key',
           runtimeSessionId: 'session-other-member',
           payloadHash: 'sha256:other-member',
           destination: { kind: 'member_inbox', teamName: 'Team', memberName: 'Architect' },
@@ -171,6 +172,7 @@ describe('RuntimeDeliveryJournal cross-run recovery identity', () => {
       const crossTeam = await journal.begin(
         beginInput({
           runId: 'run-4',
+          idempotencyKey: 'cross-team-key',
           runtimeSessionId: 'session-cross-team',
           payloadHash: 'sha256:cross-team',
           destination: {
@@ -188,6 +190,64 @@ describe('RuntimeDeliveryJournal cross-run recovery identity', () => {
       expect(otherTeam.record.destinationMessageId).toBe('other-team-message');
       expect(otherMember.record.destinationMessageId).toBe('other-member-message');
       expect(crossTeam.record.destinationMessageId).toBe('cross-team-message');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('carries a retryable cross-team destination id into the replacement run', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'runtime-delivery-journal-'));
+    const journal = createRuntimeDeliveryJournalStore({
+      filePath: join(directory, 'journal.json'),
+    });
+    const destination: RuntimeDeliveryDestinationRef = {
+      kind: 'cross_team_outbox',
+      fromTeamName: 'Team',
+      toTeamName: 'OtherTeam',
+      toMemberName: 'Reviewer',
+    };
+
+    try {
+      await journal.begin(
+        beginInput({
+          idempotencyKey: 'retryable-cross-team-key',
+          payloadHash: 'sha256:logical-payload',
+          destination,
+          destinationMessageId: 'run-1-cross-team-message',
+        })
+      );
+      await journal.markFailed({
+        idempotencyKey: 'retryable-cross-team-key',
+        runId: 'run-1',
+        teamName: 'Team',
+        status: 'failed_retryable',
+        error: 'temporary destination failure',
+        updatedAt: '2026-01-01T00:00:01.000Z',
+      });
+
+      const recovered = await journal.begin(
+        beginInput({
+          idempotencyKey: 'retryable-cross-team-key',
+          payloadHash: 'sha256:logical-payload',
+          runId: 'run-2',
+          runtimeSessionId: 'session-2',
+          destination,
+          destinationMessageId: 'run-2-cross-team-message',
+          now: '2026-01-01T00:00:02.000Z',
+        })
+      );
+
+      expect(recovered).toMatchObject({
+        state: 'new',
+        record: { destinationMessageId: 'run-1-cross-team-message' },
+        recoveryRecords: [
+          {
+            runId: 'run-1',
+            status: 'failed_retryable',
+            destinationMessageId: 'run-1-cross-team-message',
+          },
+        ],
+      });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

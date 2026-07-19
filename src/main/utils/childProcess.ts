@@ -243,7 +243,7 @@ function execShellAsync(
   // internal or external command").
   return execFileAsync(
     getWindowsCmdPath(),
-    ['/d', '/s', '/c', wrapForCmdSlashS(cmd)],
+    ['/d', '/s', '/v:off', '/c', wrapForCmdSlashS(cmd)],
     {
       ...options,
       windowsVerbatimArguments: true,
@@ -407,8 +407,49 @@ export function quoteWindowsCmdArg(arg: string): string {
   return arg;
 }
 
-function quoteArg(arg: string): string {
-  return quoteWindowsCmdArg(arg);
+const WINDOWS_CMD_META_CHARACTERS = /([()\][%!^"`<>&|;, *?])/g;
+
+function escapeWindowsCmdMetaCharacters(value: string): string {
+  return value.replace(WINDOWS_CMD_META_CHARACTERS, '^$1');
+}
+
+/**
+ * Escape the executable token for a command line that cmd.exe will parse.
+ * The executable and argv use different encodings: quoting the command as an
+ * argv value changes how cmd locates paths that contain spaces.
+ */
+function escapeWindowsCmdCommand(command: string): string {
+  return escapeWindowsCmdMetaCharacters(command);
+}
+
+/**
+ * Encode one argv value through both cmd.exe parsing and the target process'
+ * Windows argv parser. Caret-escaping the quotes and shell metacharacters is
+ * essential once windowsVerbatimArguments disables Node's escaping.
+ */
+function escapeWindowsCmdFallbackArg(arg: string, doubleEscapeMetaCharacters: boolean): string {
+  const quoted = `"${arg
+    .replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
+    .replace(/(?=(\\+?)?)\1$/g, '$1$1')}"`;
+  let escaped = escapeWindowsCmdMetaCharacters(quoted);
+  if (doubleEscapeMetaCharacters) {
+    escaped = escapeWindowsCmdMetaCharacters(escaped);
+  }
+  return escaped;
+}
+
+/** Batch launchers that substitute %1..%9, their %~ modifiers, or %* parse argv again. */
+function windowsBatchLauncherReparsesArgs(binaryPath: string): boolean {
+  if (!isWindowsBatchLauncher(binaryPath)) {
+    return false;
+  }
+  try {
+    return /%(?:\*|[1-9]|~[^\s%]*[1-9])/.test(readFileSync(binaryPath, 'utf8'));
+  } catch {
+    // A launcher that cannot be inspected is safer with the additional escape
+    // layer than with metacharacters becoming active during a second parse.
+    return true;
+  }
 }
 
 function containsWindowsShellUnsafeControlChar(part: string): boolean {
@@ -431,7 +472,15 @@ function buildWindowsShellFallbackCommand(parts: string[]): string {
   for (const part of parts) {
     assertSafeWindowsShellFallbackPart(part);
   }
-  return parts.map(quoteArg).join(' ');
+  const [command, ...args] = parts;
+  if (command === undefined) {
+    return '';
+  }
+  const doubleEscapeMetaCharacters = windowsBatchLauncherReparsesArgs(command);
+  return [
+    escapeWindowsCmdCommand(command),
+    ...args.map((arg) => escapeWindowsCmdFallbackArg(arg, doubleEscapeMetaCharacters)),
+  ].join(' ');
 }
 
 function getWindowsCmdPath(): string {
@@ -445,7 +494,7 @@ function spawnWindowsShellFallback(
   // See execShellAsync/wrapForCmdSlashS above: windowsVerbatimArguments
   // avoids double-quoting the already-quoted `cmd` string, and the extra
   // quote wrapper survives cmd.exe's /s quote-stripping.
-  return spawn(getWindowsCmdPath(), ['/d', '/s', '/c', wrapForCmdSlashS(cmd)], {
+  return spawn(getWindowsCmdPath(), ['/d', '/s', '/v:off', '/c', wrapForCmdSlashS(cmd)], {
     ...options,
     shell: false,
     windowsVerbatimArguments: true,

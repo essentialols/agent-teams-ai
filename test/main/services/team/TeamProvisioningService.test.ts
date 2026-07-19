@@ -32040,6 +32040,7 @@ describe('TeamProvisioningService', () => {
     const teamName = 'atlas-hq-source-aware-persisted';
     const exactOpenCodeReason =
       'Latest assistant message msg_alice failed with APIError - Insufficient credits.';
+    const promotedOpenCodeReason = 'Insufficient credits.';
     const transientBobMcpFailure =
       'resources/read failed: resources/read failed for `agent-teams` (member_briefing?teamName=atlas-hq-source-aware-persisted&memberName=bob): Mcp error: -32601: Method not found';
     writeTeamMeta(teamName, {
@@ -32167,7 +32168,7 @@ describe('TeamProvisioningService', () => {
     expect(result.statuses.alice).toMatchObject({
       status: 'error',
       launchState: 'failed_to_start',
-      hardFailureReason: exactOpenCodeReason,
+      hardFailureReason: promotedOpenCodeReason,
     });
     expect(result.statuses.tom).toMatchObject({
       status: 'error',
@@ -32857,6 +32858,7 @@ describe('TeamProvisioningService', () => {
     );
     const exactOpenCodeReason =
       'Latest assistant message msg_alice failed with APIError - Insufficient credits.';
+    const promotedOpenCodeReason = 'Insufficient credits.';
     fs.writeFileSync(
       getTeamLaunchStatePath(teamName),
       `${JSON.stringify(
@@ -32918,7 +32920,7 @@ describe('TeamProvisioningService', () => {
     expect(result.statuses.alice).toMatchObject({
       status: 'error',
       launchState: 'failed_to_start',
-      hardFailureReason: exactOpenCodeReason,
+      hardFailureReason: promotedOpenCodeReason,
     });
     const persisted = JSON.parse(
       await fsPromises.readFile(getTeamLaunchStatePath(teamName), 'utf8')
@@ -32926,7 +32928,7 @@ describe('TeamProvisioningService', () => {
     expect(persisted.members.alice).toMatchObject({
       laneId: 'secondary:opencode:alice',
       launchState: 'failed_to_start',
-      hardFailureReason: exactOpenCodeReason,
+      hardFailureReason: promotedOpenCodeReason,
     });
   });
 

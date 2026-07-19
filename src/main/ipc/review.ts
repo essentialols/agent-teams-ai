@@ -28,6 +28,7 @@ import {
   type ReviewMutationJournalRecord,
   ReviewMutationJournalStore,
 } from '@main/services/team/ReviewMutationJournalStore';
+import { withReviewPersistenceScopeLock } from '@main/services/team/ReviewPersistenceScopeLock';
 import { TeamConfigReader } from '@main/services/team/TeamConfigReader';
 import {
   cleanupAtomicCreateTempLinks,
@@ -166,7 +167,7 @@ async function withReviewDecisionPersistenceLock<T>(
 
   await previous.catch(() => undefined);
   try {
-    return await operation();
+    return await withReviewPersistenceScopeLock(teamName, persistenceScope, operation);
   } finally {
     release();
     if (reviewDecisionPersistenceQueues.get(key) === queueTail) {
@@ -3920,9 +3921,12 @@ async function handleClearDecisions(
     return withReviewDecisionPersistenceLock(teamName, persistenceScope, async () => {
       if (expectedRevision === undefined) {
         // Only the explicit "discard unreadable state" UI uses this recovery escape hatch.
-        const pending = await reviewMutationJournal.list(teamName, persistenceScope);
+        const inspection = await reviewMutationJournal.inspectForRecoveryDiscard(
+          teamName,
+          persistenceScope
+        );
         if (
-          pending.some(
+          inspection.records.some(
             (record) => record.decisions.length > 0 || (record.diskSteps?.length ?? 0) > 0
           )
         ) {
@@ -3931,7 +3935,11 @@ async function handleClearDecisions(
           );
         }
         await reviewDecisionStore.clearUnreadableExactScope(teamName, scopeKey, scopeToken);
-        await reviewMutationJournal.clearScope(teamName, persistenceScope);
+        if (inspection.corruptRecordCount > 0) {
+          await reviewMutationJournal.quarantineCorruptScope(teamName, persistenceScope);
+        } else {
+          await reviewMutationJournal.clearScope(teamName, persistenceScope);
+        }
         return { revision: 0 };
       }
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {

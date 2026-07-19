@@ -24,6 +24,9 @@ const MAX_STORED_DECISION_ENTRIES = 200_000;
 const MAX_STORED_CONTEXT_FILES = 2_000;
 const MAX_STORED_KEY_LENGTH = 32_768;
 const MAX_STORED_REVIEW_ACTIONS = 100_000;
+const MAX_RETAINED_DECISION_SCOPES = 16;
+const EXACT_SCOPE_FILE_PATTERN = /^[a-f0-9]{64}\.json$/;
+const EXACT_SCOPE_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface ReviewDecisionsData {
   scopeToken?: string;
@@ -935,7 +938,44 @@ export class ReviewDecisionStore {
     return this.extractDecisions(data, scopeToken);
   }
 
-  private async pruneScopeDir(teamName: string, scopeKey: string): Promise<void> {
+  private async getPendingMutationScopeHashes(
+    teamName: string,
+    scopeKey: string
+  ): Promise<Set<string>> {
+    const journalScopeDir = path.join(
+      getTeamsBasePath(),
+      teamName,
+      'review-decisions',
+      'mutation-journal',
+      scopeKey
+    );
+    let entries: string[];
+    try {
+      entries = await fs.promises.readdir(journalScopeDir);
+    } catch {
+      return new Set();
+    }
+
+    const pendingHashes = await Promise.all(
+      entries
+        .filter((entry) => EXACT_SCOPE_HASH_PATTERN.test(entry))
+        .map(async (entry) => {
+          try {
+            const stats = await fs.promises.lstat(path.join(journalScopeDir, entry));
+            return stats.isDirectory() && !stats.isSymbolicLink() ? entry : null;
+          } catch {
+            return null;
+          }
+        })
+    );
+    return new Set(pendingHashes.filter((entry): entry is string => entry !== null));
+  }
+
+  private async pruneScopeDir(
+    teamName: string,
+    scopeKey: string,
+    protectedPath: string
+  ): Promise<void> {
     const dirPath = this.getV2DirPath(teamName, scopeKey);
     let entries: string[];
     try {
@@ -944,28 +984,43 @@ export class ReviewDecisionStore {
       return;
     }
 
-    if (entries.length <= 16) {
-      return;
-    }
-
     const files = await Promise.all(
       entries
-        .filter((entry) => entry.endsWith('.json'))
+        .filter((entry) => EXACT_SCOPE_FILE_PATTERN.test(entry))
         .map(async (entry) => {
           const filePath = path.join(dirPath, entry);
           try {
-            const stats = await fs.promises.stat(filePath);
-            return { filePath, mtimeMs: stats.mtimeMs };
+            const stats = await fs.promises.lstat(filePath);
+            return stats.isFile() && !stats.isSymbolicLink()
+              ? { filePath, mtimeMs: stats.mtimeMs }
+              : null;
           } catch {
             return null;
           }
         })
     );
 
-    const staleFiles = files
-      .filter((entry): entry is { filePath: string; mtimeMs: number } => !!entry)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
-      .slice(16);
+    const existingFiles = files.filter(
+      (entry): entry is { filePath: string; mtimeMs: number } => entry !== null
+    );
+    if (existingFiles.length <= MAX_RETAINED_DECISION_SCOPES) return;
+
+    const pendingMutationHashes = await this.getPendingMutationScopeHashes(teamName, scopeKey);
+    const protectedPaths = new Set([
+      protectedPath,
+      ...[...pendingMutationHashes].map((scopeHash) => path.join(dirPath, `${scopeHash}.json`)),
+    ]);
+    const protectedExistingCount = existingFiles.filter((entry) =>
+      protectedPaths.has(entry.filePath)
+    ).length;
+    const unprotectedRetention = Math.max(
+      0,
+      MAX_RETAINED_DECISION_SCOPES - protectedExistingCount
+    );
+    const staleFiles = existingFiles
+      .filter((entry) => !protectedPaths.has(entry.filePath))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || a.filePath.localeCompare(b.filePath))
+      .slice(unprotectedRetention);
 
     await Promise.all(
       staleFiles.map((entry) => fs.promises.unlink(entry.filePath).catch(() => undefined))
@@ -1089,10 +1144,11 @@ export class ReviewDecisionStore {
         );
       }
       await atomicWriteAsync(filePath, serialized, {
+        mode: 0o600,
         durability: 'strict',
         syncDirectory: true,
       });
-      await this.pruneScopeDir(teamName, scopeKey);
+      await this.pruneScopeDir(teamName, scopeKey, filePath);
       return revision;
     } catch (error) {
       logger.error(`Failed to save review decisions for ${teamName}/${scopeKey}: ${String(error)}`);

@@ -24,7 +24,7 @@ import {
   REVIEW_SAVE_EDITED_FILE,
 } from '@preload/constants/ipcChannels';
 import { createHash } from 'crypto';
-import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'fs/promises';
+import { link, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -795,6 +795,49 @@ describe('review IPC path confinement', () => {
     });
     await expect(journal.list('safe-team', persistenceScope)).resolves.toMatchObject([
       { id: prepared.id, blocked: true },
+    ]);
+  });
+
+  it('quarantines corrupt WAL and restores the exact scope after confirmed discard', async () => {
+    const scopeKey = 'agent-worker';
+    const scopeToken = 'agent:worker:content:corrupt-wal';
+    const scopeHash = createHash('sha256').update(scopeToken).digest('hex');
+    const decisionPath = path.join(
+      decisionTeamsBasePath,
+      'safe-team',
+      'review-decisions',
+      'v2',
+      scopeKey,
+      `${scopeHash}.json`
+    );
+    const journalScopeDir = path.join(
+      decisionTeamsBasePath,
+      'safe-team',
+      'review-decisions',
+      'mutation-journal',
+      scopeKey,
+      scopeHash
+    );
+    await mkdir(path.dirname(decisionPath), { recursive: true });
+    await mkdir(journalScopeDir, { recursive: true });
+    await writeFile(decisionPath, '{broken-decisions', 'utf8');
+    await writeFile(
+      path.join(journalScopeDir, '11111111-1111-4111-8111-111111111111.json'),
+      '{broken-wal',
+      'utf8'
+    );
+
+    await expect(
+      ipcMain.invoke(REVIEW_LOAD_DECISIONS, 'safe-team', scopeKey, scopeToken)
+    ).resolves.toMatchObject({ success: false });
+    await expect(
+      ipcMain.invoke(REVIEW_CLEAR_DECISIONS, 'safe-team', scopeKey, scopeToken)
+    ).resolves.toEqual({ success: true, data: { revision: 0 } });
+    await expect(
+      ipcMain.invoke(REVIEW_LOAD_DECISIONS, 'safe-team', scopeKey, scopeToken)
+    ).resolves.toEqual({ success: true, data: null });
+    await expect(readdir(path.dirname(journalScopeDir))).resolves.toEqual([
+      expect.stringMatching(`${scopeHash}\\.corrupt-`),
     ]);
   });
 

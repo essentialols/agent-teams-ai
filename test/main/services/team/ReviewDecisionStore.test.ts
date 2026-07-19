@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -243,6 +243,85 @@ describe('ReviewDecisionStore', () => {
       textBlobs: {},
       fileSummaryBlobs: {},
     });
+  });
+
+  it('never prunes the just-written scope when retained files have equal mtimes', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeKey = 'task-prune-current';
+    const scopeToken = 'task:prune:req:current';
+    await store.save('demo', scopeKey, {
+      scopeToken,
+      hunkDecisions: { 'current:0': 'accepted' },
+      fileDecisions: {},
+    });
+    const currentPath = exactScopeFilePath('demo', scopeKey, scopeToken);
+    const scopeDir = path.dirname(currentPath);
+    const oldPaths = Array.from({ length: 16 }, (_, index) =>
+      path.join(scopeDir, `${createHash('sha256').update(`old-${index}`).digest('hex')}.json`)
+    );
+    await Promise.all(oldPaths.map((filePath) => writeFile(filePath, '{}', 'utf8')));
+    const sameMtime = new Date('2026-01-01T00:00:00.000Z');
+    await Promise.all([...oldPaths, currentPath].map((filePath) => utimes(filePath, sameMtime, sameMtime)));
+
+    await (
+      store as unknown as {
+        pruneScopeDir(teamName: string, key: string, protectedPath: string): Promise<void>;
+      }
+    ).pruneScopeDir('demo', scopeKey, currentPath);
+
+    await expect(access(currentPath)).resolves.toBeUndefined();
+    await expect(readdir(scopeDir)).resolves.toHaveLength(16);
+  });
+
+  it('protects a scope snapshot while its mutation journal is pending', async () => {
+    const { ReviewDecisionStore } = await import('@main/services/team/ReviewDecisionStore');
+    const store = new ReviewDecisionStore();
+    const scopeKey = 'task-prune-pending';
+    const currentToken = 'task:prune:req:current-pending';
+    const pendingToken = 'task:prune:req:wal-pending';
+    await store.save('demo', scopeKey, {
+      scopeToken: currentToken,
+      hunkDecisions: { 'current:0': 'accepted' },
+      fileDecisions: {},
+    });
+    const currentPath = exactScopeFilePath('demo', scopeKey, currentToken);
+    const pendingPath = exactScopeFilePath('demo', scopeKey, pendingToken);
+    const scopeDir = path.dirname(currentPath);
+    const otherPaths = Array.from({ length: 15 }, (_, index) =>
+      path.join(scopeDir, `${createHash('sha256').update(`other-${index}`).digest('hex')}.json`)
+    );
+    await Promise.all(
+      [pendingPath, ...otherPaths].map((filePath) => writeFile(filePath, '{}', 'utf8'))
+    );
+    const pendingHash = createHash('sha256').update(pendingToken).digest('hex');
+    await mkdir(
+      path.join(
+        teamsBasePath,
+        'demo',
+        'review-decisions',
+        'mutation-journal',
+        scopeKey,
+        pendingHash
+      ),
+      { recursive: true }
+    );
+    const sameMtime = new Date('2026-01-01T00:00:00.000Z');
+    await Promise.all(
+      [currentPath, pendingPath, ...otherPaths].map((filePath) =>
+        utimes(filePath, sameMtime, sameMtime)
+      )
+    );
+
+    await (
+      store as unknown as {
+        pruneScopeDir(teamName: string, key: string, protectedPath: string): Promise<void>;
+      }
+    ).pruneScopeDir('demo', scopeKey, currentPath);
+
+    await expect(access(currentPath)).resolves.toBeUndefined();
+    await expect(access(pendingPath)).resolves.toBeUndefined();
+    await expect(readdir(scopeDir)).resolves.toHaveLength(16);
   });
 
   it('rejects stale CAS writes and makes a committed mutation retry idempotent', async () => {

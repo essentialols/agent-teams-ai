@@ -4253,7 +4253,7 @@ export default interface Resources {
         deleteForever: 'Delete forever';
         deletePermanently: 'Delete permanently';
         deleteTeam: 'Delete team';
-        importTeam: 'Import from folder';
+        importTeam: 'Import';
         launchTeam: 'Launch team';
         launching: 'Launching...';
         organizationMap: 'Org Map';

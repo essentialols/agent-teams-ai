@@ -51,6 +51,7 @@ import {
   Copy,
   FolderOpen,
   GitBranch,
+  Import,
   Loader2,
   Network,
   Play,
@@ -1235,16 +1236,11 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
             disabled={!canCreate}
             onClick={() => setShowImportDialog(true)}
           >
-            <FolderOpen size={13} />
+            <Import size={13} />
             {t('list.actions.importTeam')}
           </Button>
-          <Button
-            size="sm"
-            className="gap-1.5"
-            disabled={!canCreate}
-            onClick={() => setShowCreateDialog(true)}
-          >
-            <Plus size={13} />
+          <Button className="gap-2" disabled={!canCreate} onClick={() => setShowCreateDialog(true)}>
+            <Plus size={15} />
             {t('list.actions.createTeam')}
           </Button>
         </div>

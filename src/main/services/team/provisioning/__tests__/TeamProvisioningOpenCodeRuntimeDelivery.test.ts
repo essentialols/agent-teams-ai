@@ -96,6 +96,22 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
         diagnostics: ['cross-team target runtime proof required'],
       });
 
+      sentMessages[0] = { ...sentMessages[0], to: 'other-team.team-lead' };
+
+      await expect(
+        crossTeamPort.verify({
+          destination,
+          destinationMessageId: 'cross-message-1',
+          location: { ...destination, toMemberName: 'team-lead' },
+        })
+      ).resolves.toMatchObject({
+        found: false,
+        location: null,
+        diagnostics: ['cross-team target runtime proof mismatch'],
+      });
+
+      sentMessages[0] = { ...sentMessages[0], to: 'other-team.Reviewer' };
+
       await expect(
         crossTeamPort.verify({
           destination,
@@ -108,7 +124,7 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
       });
     });
 
-    it('verifies cross-team delivery with canonical sender-copy location', async () => {
+    it('uses explicit target-runtime location instead of a sender copy for another member', async () => {
       const sentMessages: InboxMessage[] = [
         {
           from: 'Runtime',
@@ -123,10 +139,14 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
         deliveredToInbox: true,
         deduplicated: true,
         messageId: 'existing-cross-message',
+        toTeam: 'other-team',
+        toMember: 'lead',
       }));
       const ports = createOpenCodeRuntimeDeliveryPorts({
         sentMessagesStore: {
-          appendMessage: vi.fn(),
+          appendMessage: vi.fn(async (_teamName: string, message: InboxMessage) => {
+            sentMessages.push(message);
+          }),
           readMessages: vi.fn(async () => sentMessages),
         },
         inboxReader: {
@@ -154,9 +174,15 @@ describe('TeamProvisioningOpenCodeRuntimeDelivery', () => {
         kind: 'cross_team_outbox',
         fromTeamName: 'Team',
         toTeamName: 'other-team',
-        toMemberName: 'Captain',
+        toMemberName: 'lead',
         messageId: 'existing-cross-message',
       });
+      expect(sentMessages).toContainEqual(
+        expect.objectContaining({
+          to: 'other-team.lead',
+          messageId: 'existing-cross-message',
+        })
+      );
       await expect(
         crossTeamPort.verify({
           destination: {

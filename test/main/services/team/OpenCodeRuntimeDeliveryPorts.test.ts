@@ -176,7 +176,7 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
     }
   });
 
-  it('recovers an exact cross-team sender copy after a crash before markCommitted', async () => {
+  it('requires explicit target-runtime proof even when an exact sender copy exists', async () => {
     const sentMessages: InboxMessage[] = [];
     const crossTeamSender = vi.fn(
       (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) => {
@@ -249,15 +249,9 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
         destinationMessageId: 'runtime-delivery-message',
       })
     ).resolves.toEqual({
-      found: true,
-      location: {
-        kind: 'cross_team_outbox',
-        fromTeamName: 'team-a',
-        toTeamName: 'team-b',
-        toMemberName: 'Reviewer',
-        messageId: 'runtime-delivery-message',
-      },
-      diagnostics: [],
+      found: false,
+      location: null,
+      diagnostics: ['cross-team target runtime proof required'],
     });
     await expect(
       port.verify({
@@ -273,23 +267,32 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
     ).resolves.toMatchObject({ found: true });
   });
 
-  it('commits cross-team recovery without redelivery after markCommitted crashes', async () => {
+  it('repeats target-runtime delivery after markCommitted crashes instead of trusting sender copy', async () => {
     const journalDir = await mkdtemp(join(tmpdir(), 'cross-team-delivery-recovery-'));
     try {
       const sentMessages: InboxMessage[] = [];
       const crossTeamSender = vi.fn(
         (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) => {
           const messageId = request.messageId ?? 'runtime-delivery-message';
-          sentMessages.push({
-            from: request.fromMember,
-            to: `${request.toTeam}.${request.toMember ?? 'team-lead'}`,
-            text: request.text,
-            timestamp: request.timestamp ?? '2026-04-21T12:00:00.000Z',
-            read: true,
+          const deduplicated = sentMessages.some((message) => message.messageId === messageId);
+          if (!deduplicated) {
+            sentMessages.push({
+              from: request.fromMember,
+              to: `${request.toTeam}.${request.toMember ?? 'team-lead'}`,
+              text: request.text,
+              timestamp: request.timestamp ?? '2026-04-21T12:00:00.000Z',
+              read: true,
+              messageId,
+              source: CROSS_TEAM_SENT_SOURCE,
+            });
+          }
+          return Promise.resolve({
             messageId,
-            source: CROSS_TEAM_SENT_SOURCE,
+            deliveredToInbox: true,
+            deduplicated,
+            toTeam: request.toTeam,
+            toMember: request.toMember,
           });
-          return Promise.resolve({ messageId, deliveredToInbox: true });
         }
       );
       const ports = createOpenCodeRuntimeDeliveryPorts({
@@ -340,8 +343,8 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
 
       await expect(service.deliver(deliveryEnvelope)).resolves.toMatchObject({
         ok: true,
-        delivered: false,
-        reason: 'duplicate_destination_found',
+        delivered: true,
+        reason: null,
         location: {
           kind: 'cross_team_outbox',
           fromTeamName: 'team-a',
@@ -350,7 +353,7 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
           messageId: destinationMessageId,
         },
       });
-      expect(crossTeamSender).toHaveBeenCalledTimes(1);
+      expect(crossTeamSender).toHaveBeenCalledTimes(2);
       expect(sentMessages).toEqual([
         expect.objectContaining({
           to: 'team-b.Reviewer',
@@ -375,16 +378,6 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
   });
 
   it.each([
-    {
-      name: 'message id',
-      destination: {
-        kind: 'cross_team_outbox' as const,
-        fromTeamName: 'team-a',
-        toTeamName: 'team-b',
-        toMemberName: 'Reviewer',
-      },
-      destinationMessageId: 'other-runtime-delivery-message',
-    },
     {
       name: 'source team',
       destination: {
@@ -416,7 +409,7 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
       destinationMessageId: 'runtime-delivery-message',
     },
   ])(
-    'does not recover a cross-team sender copy with mismatched $name identity',
+    'rejects target-runtime proof with mismatched $name identity',
     async ({ destination, destinationMessageId }) => {
       const sentMessagesByTeam = new Map<string, InboxMessage[]>([
         [
@@ -461,11 +454,18 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
         port.verify({
           destination,
           destinationMessageId,
+          location: {
+            kind: 'cross_team_outbox',
+            fromTeamName: 'team-a',
+            toTeamName: 'team-b',
+            toMemberName: 'Reviewer',
+            messageId: 'runtime-delivery-message',
+          },
         })
       ).resolves.toMatchObject({
         found: false,
         location: null,
-        diagnostics: ['cross-team sender copy proof missing'],
+        diagnostics: ['cross-team target runtime proof mismatch'],
       });
     }
   );

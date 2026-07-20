@@ -173,6 +173,35 @@ describe('team provisioning stop flow', () => {
     expect(ports.cleanupRun).toHaveBeenCalledWith(currentRun);
   });
 
+  it('retains secondary lane ownership until asynchronous lane cleanup completes', async () => {
+    const teamName = 'opencode-team-owned-stop';
+    const currentRun = makeRun('aggregate-run-owned-stop', teamName);
+    const runs = new Map([[currentRun.runId, currentRun]]);
+    const aliveRunByTeam = new Map([[teamName, currentRun.runId]]);
+    const ports = makePorts(teamName, runs, new Map(), aliveRunByTeam);
+    let releaseLaneStop: (() => void) | undefined;
+    const laneStopReleased = new Promise<void>((resolve) => {
+      releaseLaneStop = resolve;
+    });
+    ports.hasSecondaryRuntimeRuns = vi.fn(() => true);
+    const stopMixedSecondaryRuntimeLanes = vi.fn(async () => {
+      await laneStopReleased;
+      expect(runs.has(currentRun.runId)).toBe(true);
+    });
+    ports.stopMixedSecondaryRuntimeLanes = stopMixedSecondaryRuntimeLanes;
+
+    const stopping = stopTeamFlow(teamName, ports);
+    await vi.waitFor(() => {
+      expect(stopMixedSecondaryRuntimeLanes).toHaveBeenCalledWith(teamName);
+    });
+
+    expect(ports.cleanupRun).not.toHaveBeenCalled();
+    releaseLaneStop?.();
+    await stopping;
+    expect(ports.cleanupRun).toHaveBeenCalledWith(currentRun);
+    expect(runs.has(currentRun.runId)).toBe(false);
+  });
+
   it('retries aggregate lane cleanup when the tracked run was already marked stopped', async () => {
     const teamName = 'opencode-team-retry';
     const currentRun = makeRun('aggregate-run-retry', teamName);

@@ -78,21 +78,6 @@ function isCrossTeamSendResult(value: unknown): value is CrossTeamSendResult {
   return typeof messageId === 'string' && messageId.trim().length > 0 && deliveredToInbox === true;
 }
 
-function parseCrossTeamRecipient(
-  value: string | undefined,
-  fallbackTeamName: string,
-  fallbackMemberName: string | undefined
-): { teamName: string; memberName: string } {
-  const separator = typeof value === 'string' ? value.indexOf('.') : -1;
-  if (separator > 0 && separator < String(value).length - 1) {
-    return {
-      teamName: String(value).slice(0, separator),
-      memberName: String(value).slice(separator + 1),
-    };
-  }
-  return { teamName: fallbackTeamName, memberName: fallbackMemberName?.trim() || 'team-lead' };
-}
-
 function getCrossTeamSendResultTarget(value: unknown): {
   teamName: string | undefined;
   memberName: string | undefined;
@@ -126,6 +111,20 @@ function findCrossTeamSenderCopy(
   const expectedRecipient = `${location.toTeamName}.${location.toMemberName}`;
   return messages.find(
     (message) => message.messageId === location.messageId && message.to === expectedRecipient
+  );
+}
+
+function isExactCrossTeamRuntimeProof(input: {
+  destination: Extract<
+    Parameters<RuntimeDeliveryDestinationPort['verify']>[0]['destination'],
+    { kind: 'cross_team_outbox' }
+  >;
+  location: Extract<RuntimeDeliveryLocation, { kind: 'cross_team_outbox' }>;
+}): boolean {
+  return (
+    input.location.fromTeamName === input.destination.fromTeamName &&
+    input.location.toTeamName === input.destination.toTeamName &&
+    input.location.toMemberName === input.destination.toMemberName
   );
 }
 
@@ -266,15 +265,11 @@ export function createOpenCodeRuntimeDeliveryPorts(
 
       const deliveredMessageId = result.messageId.trim();
       const senderMessages = await deps.sentMessagesStore.readMessages(envelope.teamName);
-      const senderCopy =
-        senderMessages.find((message) => message.messageId === deliveredMessageId) ??
-        senderMessages.find((message) => message.messageId === destinationMessageId);
       const resultTarget = getCrossTeamSendResultTarget(result);
-      const recipient = parseCrossTeamRecipient(
-        senderCopy?.to,
-        resultTarget.teamName ?? envelope.to.teamName,
-        resultTarget.memberName ?? envelope.to.memberName
-      );
+      const recipient = {
+        teamName: resultTarget.teamName ?? envelope.to.teamName,
+        memberName: resultTarget.memberName ?? (envelope.to.memberName?.trim() || 'team-lead'),
+      };
       const location: Extract<RuntimeDeliveryLocation, { kind: 'cross_team_outbox' }> = {
         kind: 'cross_team_outbox',
         fromTeamName: envelope.teamName,
@@ -301,21 +296,25 @@ export function createOpenCodeRuntimeDeliveryPorts(
 
       return location;
     },
-    verify: async ({ destination, destinationMessageId, location }) => {
+    verify: async ({ destination, location }) => {
       if (destination.kind !== 'cross_team_outbox') {
         return { found: false, location: null, diagnostics: ['destination kind mismatch'] };
       }
-      const expectedLocation: Extract<RuntimeDeliveryLocation, { kind: 'cross_team_outbox' }> =
-        isCrossTeamLocation(location)
-          ? location
-          : {
-              // Pending recovery records have not persisted a committed location yet.
-              kind: 'cross_team_outbox',
-              fromTeamName: destination.fromTeamName,
-              toTeamName: destination.toTeamName,
-              toMemberName: destination.toMemberName,
-              messageId: destinationMessageId,
-            };
+      if (!isCrossTeamLocation(location)) {
+        return {
+          found: false,
+          location: null,
+          diagnostics: ['cross-team target runtime proof required'],
+        };
+      }
+      if (!isExactCrossTeamRuntimeProof({ destination, location })) {
+        return {
+          found: false,
+          location: null,
+          diagnostics: ['cross-team target runtime proof mismatch'],
+        };
+      }
+      const expectedLocation = location;
       const messages = await deps.sentMessagesStore.readMessages(expectedLocation.fromTeamName);
       const found = Boolean(findCrossTeamSenderCopy(messages, expectedLocation));
       return {

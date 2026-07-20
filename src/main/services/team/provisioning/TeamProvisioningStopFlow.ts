@@ -150,9 +150,14 @@ async function stopTeamRuntimeFlow<TRun extends TeamProvisioningStopRun>(
   const stopCurrentRuntimeLanes = stopRuntimeLanesForRun(run.runId);
   const progress = ports.updateProgress(run, 'disconnected', 'Team stopped by user');
   run.onProgress(progress);
-  ports.cleanupRun(run);
   ports.logger.info(`[${teamName}] Process stopped (SIGKILL)`);
-  await stopCurrentRuntimeLanes;
+  try {
+    await stopCurrentRuntimeLanes;
+  } finally {
+    // Secondary lane cleanup revalidates immutable run ownership after async
+    // adapter calls. Keep the owning run tracked until those checks complete.
+    ports.cleanupRun(run);
+  }
 }
 
 export async function stopTeamFlow<TRun extends TeamProvisioningStopRun>(

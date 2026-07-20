@@ -439,7 +439,30 @@ describe('TeamProvisioningLaunchStateStoreBoundary', () => {
     );
   });
 
-  it('removes a snapshot whose run loses authority while its write is pending', async () => {
+  it('does not persist a run snapshot after tracking has been cleared', async () => {
+    const previousSnapshot = snapshot({ updatedAt: '2026-01-01T00:00:01.000Z' });
+    const nextSnapshot = snapshot();
+    const { boundary, ports, setTrackedRunId } = createBoundary();
+    await boundary.writeLaunchStateSnapshotNow('demo', previousSnapshot, {
+      runId: 'run-1',
+    });
+    vi.mocked(ports.launchStateStore.write).mockClear();
+    vi.mocked(ports.logDebug).mockClear();
+    setTrackedRunId(undefined);
+
+    const result = await boundary.writeLaunchStateSnapshotNow('demo', nextSnapshot, {
+      runId: 'run-1',
+    });
+
+    expect(result).toEqual({ snapshot: previousSnapshot, wrote: false });
+    expect(ports.launchStateStore.write).not.toHaveBeenCalled();
+    expect(ports.launchStateStore.clear).not.toHaveBeenCalled();
+    expect(ports.logDebug).toHaveBeenCalledWith(
+      '[demo] Skipping stale launch-state write for run run-1'
+    );
+  });
+
+  it('removes a pending snapshot write after run tracking has been cleared', async () => {
     const writeStarted = deferred();
     const writeGate = deferred();
     let persistedSnapshot: PersistedTeamLaunchSnapshot | null = null;
@@ -458,7 +481,7 @@ describe('TeamProvisioningLaunchStateStoreBoundary', () => {
 
     const writing = boundary.writeLaunchStateSnapshotNow('demo', snapshot(), { runId: 'run-1' });
     await writeStarted.promise;
-    setTrackedRunId('run-2');
+    setTrackedRunId(undefined);
     writeGate.resolve();
 
     await expect(writing).resolves.toMatchObject({ wrote: false });

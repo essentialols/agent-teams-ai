@@ -44,6 +44,7 @@ export interface MemberWorkSyncNudgeDispatchOptions {
   itemTimeoutMs?: number;
   teamTimeoutMs?: number;
   claimTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 function emptySummary(): MemberWorkSyncNudgeDispatchSummary {
@@ -173,12 +174,13 @@ function reviewPickupRequestIdsStillMatch(
 interface MemberWorkSyncNudgeDispatchRun {
   cancelled: boolean;
   parent?: MemberWorkSyncNudgeDispatchRun;
+  signal?: AbortSignal;
 }
 
 function isDispatchRunCancelled(run?: MemberWorkSyncNudgeDispatchRun): boolean {
   let current: MemberWorkSyncNudgeDispatchRun | undefined = run;
   while (current) {
-    if (current.cancelled) {
+    if (current.cancelled || current.signal?.aborted) {
       return true;
     }
     current = current.parent;
@@ -214,6 +216,9 @@ export class MemberWorkSyncNudgeDispatcher {
     const teamNames = [...new Set(options.teamNames.map((name) => name.trim()).filter(Boolean))];
     let summary = emptySummary();
     for (const teamName of teamNames) {
+      if (options.signal?.aborted) {
+        break;
+      }
       try {
         summary = addSummary(
           summary,
@@ -240,7 +245,10 @@ export class MemberWorkSyncNudgeDispatcher {
     timeouts: { itemTimeoutMs: number; teamTimeoutMs: number; claimTimeoutMs: number }
   ): Promise<MemberWorkSyncNudgeDispatchSummary> {
     let timeout: ReturnType<typeof setTimeout> | null = null;
-    const run: MemberWorkSyncNudgeDispatchRun = { cancelled: false };
+    const run: MemberWorkSyncNudgeDispatchRun = {
+      cancelled: false,
+      ...(options.signal ? { signal: options.signal } : {}),
+    };
     const work = this.dispatchTeam(teamName, options, nowIso, timeouts, run);
     void work.catch(() => undefined);
 

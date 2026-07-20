@@ -66,6 +66,7 @@ vi.mock('@renderer/api', () => ({
 import { api } from '@renderer/api';
 import { useStore } from '@renderer/store';
 import {
+  CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT,
   getCliProviderStatusScopeKey,
   getIncompleteMultimodelProviderIds,
   getModelOnlyFallbackProviderIds,
@@ -165,6 +166,45 @@ function createDeferredProvider(
   });
 }
 
+function createReadyOpenCodeCatalogProvider(
+  model: string
+): CliInstallationStatus['providers'][number] {
+  return createMultimodelProvider({
+    providerId: 'opencode',
+    displayName: 'OpenCode',
+    authenticated: true,
+    authMethod: 'opencode_managed',
+    models: [model],
+    modelCatalogRefreshState: 'ready',
+    modelCatalog: {
+      schemaVersion: 1,
+      providerId: 'opencode',
+      source: 'app-server',
+      status: 'ready',
+      fetchedAt: '2026-07-20T00:00:00.000Z',
+      staleAt: '2026-07-20T00:10:00.000Z',
+      defaultModelId: model,
+      defaultLaunchModel: model,
+      models: [],
+      diagnostics: {
+        configReadState: 'ready',
+        appServerState: 'healthy',
+      },
+    },
+  });
+}
+
+function createDeferredValue<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('cliInstallerSlice', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -173,6 +213,7 @@ describe('cliInstallerSlice', () => {
       cliStatus: null,
       cliStatusLoading: false,
       cliProviderStatusLoading: {},
+      cliProviderStatusByScope: {},
       cliStatusError: null,
       cliInstallerState: 'idle',
       cliDownloadProgress: 0,
@@ -2388,14 +2429,12 @@ describe('cliInstallerSlice', () => {
         state.cliStatus?.providers.find((provider) => provider.providerId === 'opencode')?.models
       ).toEqual(['opencode/big-pickle']);
       expect(
-        state.cliProviderStatusByScope[
-          getCliProviderStatusScopeKey('opencode', '/tmp/project-a')
-        ]?.models
+        state.cliProviderStatusByScope[getCliProviderStatusScopeKey('opencode', '/tmp/project-a')]
+          ?.models
       ).toEqual(['ollama/qwen2.5:0.5b']);
       expect(
-        state.cliProviderStatusByScope[
-          getCliProviderStatusScopeKey('opencode', '/tmp/project-b')
-        ]?.models
+        state.cliProviderStatusByScope[getCliProviderStatusScopeKey('opencode', '/tmp/project-b')]
+          ?.models
       ).toEqual(['openrouter/openai/gpt-5.4']);
       expect(api.cliInstaller.getProviderStatus).toHaveBeenNthCalledWith(1, 'opencode', {
         projectPath: '/tmp/project-a',
@@ -2403,6 +2442,72 @@ describe('cliInstallerSlice', () => {
       expect(api.cliInstaller.getProviderStatus).toHaveBeenNthCalledWith(2, 'opencode', {
         projectPath: '/tmp/project-b',
       });
+    });
+
+    it('does not let an invalidated scoped request repopulate or replace a newer catalog', async () => {
+      const globalProvider = createReadyOpenCodeCatalogProvider('opencode/big-pickle');
+      const staleProvider = createReadyOpenCodeCatalogProvider('ollama/stale-model');
+      const freshProvider = createReadyOpenCodeCatalogProvider('ollama/fresh-model');
+      const staleRequest = createDeferredValue<CliInstallationStatus['providers'][number]>();
+      const freshRequest = createDeferredValue<CliInstallationStatus['providers'][number]>();
+      useStore.setState({
+        cliStatus: createMultimodelStatus([globalProvider]),
+      });
+      vi.mocked(api.cliInstaller.getProviderStatus)
+        .mockReturnValueOnce(staleRequest.promise)
+        .mockReturnValueOnce(freshRequest.promise);
+
+      const firstFetch = useStore
+        .getState()
+        .fetchCliProviderStatus('opencode', { projectPath: '/tmp/project-race' });
+      await Promise.resolve();
+      await useStore.getState().invalidateCliStatus();
+      const secondFetch = useStore
+        .getState()
+        .fetchCliProviderStatus('opencode', { projectPath: '/tmp/project-race' });
+
+      expect(api.cliInstaller.getProviderStatus).toHaveBeenCalledTimes(2);
+      freshRequest.resolve(freshProvider);
+      await expect(secondFetch).resolves.toBe(true);
+      staleRequest.resolve(staleProvider);
+      await expect(firstFetch).resolves.toBe(false);
+
+      expect(
+        useStore.getState().cliProviderStatusByScope[
+          getCliProviderStatusScopeKey('opencode', '/tmp/project-race')
+        ]?.models
+      ).toEqual(['ollama/fresh-model']);
+    });
+
+    it('bounds project-scoped provider catalogs and evicts the least recently written scope', async () => {
+      const globalProvider = createReadyOpenCodeCatalogProvider('opencode/big-pickle');
+      useStore.setState({
+        cliStatus: createMultimodelStatus([globalProvider]),
+      });
+      vi.mocked(api.cliInstaller.getProviderStatus).mockImplementation(
+        async (_providerId, options) =>
+          createReadyOpenCodeCatalogProvider(`ollama/model-${options?.projectPath ?? 'unknown'}`)
+      );
+
+      for (let index = 0; index <= CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT; index += 1) {
+        await useStore
+          .getState()
+          .fetchCliProviderStatus('opencode', { projectPath: `/tmp/project-${index}` });
+      }
+
+      const scopedCatalogs = useStore.getState().cliProviderStatusByScope;
+      expect(Object.keys(scopedCatalogs)).toHaveLength(CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT);
+      expect(
+        scopedCatalogs[getCliProviderStatusScopeKey('opencode', '/tmp/project-0')]
+      ).toBeUndefined();
+      expect(
+        scopedCatalogs[
+          getCliProviderStatusScopeKey(
+            'opencode',
+            `/tmp/project-${CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT}`
+          )
+        ]
+      ).toBeDefined();
     });
   });
 

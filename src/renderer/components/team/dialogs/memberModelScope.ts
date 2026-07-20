@@ -46,6 +46,12 @@ export function resolveProviderScopedMemberModel(input: {
   if (!providerStatus) {
     return { providerId, model: normalizedModel };
   }
+  if (
+    providerStatus.verificationState === 'error' ||
+    providerStatus.modelCatalogRefreshState === 'error'
+  ) {
+    return { providerId, model: normalizedModel };
+  }
   if (!isTeamModelAvailableForUi(providerId, normalizedModel, providerStatus)) {
     return { providerId, model: '' };
   }
@@ -62,7 +68,9 @@ function shouldClearOpenCodeModelToDefault(
   }
   if (
     providerStatus.modelCatalogRefreshState === 'loading' ||
-    providerStatus.modelVerificationState === 'verifying'
+    providerStatus.modelCatalogRefreshState === 'error' ||
+    providerStatus.modelVerificationState === 'verifying' ||
+    providerStatus.verificationState === 'error'
   ) {
     return false;
   }

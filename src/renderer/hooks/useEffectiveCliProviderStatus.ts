@@ -9,6 +9,7 @@ import {
   createLoadingMultimodelCliStatus,
   getCliProviderStatusScopeKey,
 } from '@renderer/store/slices/cliInstallerSlice';
+import { isTeamProviderModelCatalogFresh } from '@renderer/utils/teamModelAvailability';
 
 import type { CliInstallationStatus, CliProviderId, CliProviderStatus } from '@shared/types';
 
@@ -65,16 +66,25 @@ export function useEffectiveCliProviderStatus(
     const globalProvider = withCodexSnapshot.providers.find(
       (provider) => provider.providerId === providerId
     );
-    const projectProvider =
-      scopedProviderStatus ??
-      (globalProvider
-        ? {
-            ...globalProvider,
-            models: [],
-            modelCatalog: null,
-            modelCatalogRefreshState: 'loading' as const,
-          }
-        : null);
+    const scopedProviderFailed =
+      scopedProviderStatus?.verificationState === 'error' ||
+      scopedProviderStatus?.modelCatalogRefreshState === 'error';
+    const scopedProviderReady = Boolean(
+      scopedProviderStatus && isTeamProviderModelCatalogFresh(providerId, scopedProviderStatus)
+    );
+    const projectProviderBase = scopedProviderStatus ?? globalProvider ?? null;
+    const projectProvider: CliProviderStatus | null =
+      scopedProviderReady || scopedProviderFailed
+        ? scopedProviderStatus
+        : projectProviderBase
+          ? {
+              ...projectProviderBase,
+              models: [],
+              modelAvailability: [],
+              modelCatalog: null,
+              modelCatalogRefreshState: 'loading',
+            }
+          : null;
     if (!projectProvider) {
       return withCodexSnapshot;
     }

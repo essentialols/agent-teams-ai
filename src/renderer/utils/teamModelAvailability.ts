@@ -140,6 +140,45 @@ export function isTeamModelUiDisabled(
   return getTeamModelUiDisabledReason(providerId, model, providerStatus) !== null;
 }
 
+function hasTeamProviderRuntimeModelTruth(
+  providerStatus?: TeamModelRuntimeProviderStatus | null
+): boolean {
+  if (!providerStatus) {
+    return false;
+  }
+
+  if ((providerStatus.modelAvailability?.length ?? 0) > 0) {
+    return true;
+  }
+
+  // A static fallback only keeps the picker populated while the real Codex
+  // catalog loads. It must not make verification look complete.
+  if (providerStatus.modelCatalog?.source === 'static-fallback') {
+    return false;
+  }
+
+  return providerStatus.models.length > 0 || (providerStatus.modelCatalog?.models.length ?? 0) > 0;
+}
+
+export function isTeamProviderModelCatalogFresh(
+  providerId: SupportedProviderId | undefined,
+  providerStatus?: TeamModelRuntimeProviderStatus | null,
+  nowMs = Date.now()
+): boolean {
+  const catalog = providerStatus?.modelCatalog;
+  if (
+    !providerId ||
+    catalog?.providerId !== providerId ||
+    catalog.status !== 'ready' ||
+    providerStatus?.modelCatalogRefreshState !== 'ready'
+  ) {
+    return false;
+  }
+
+  const staleAtMs = Date.parse(catalog.staleAt);
+  return Number.isFinite(staleAtMs) && staleAtMs > nowMs;
+}
+
 export function isTeamProviderModelVerificationPending(
   providerId: SupportedProviderId | undefined,
   providerStatus?: TeamModelRuntimeProviderStatus | null
@@ -157,22 +196,19 @@ export function isTeamProviderModelVerificationPending(
     return false;
   }
 
+  const hasRuntimeModelTruth = hasTeamProviderRuntimeModelTruth(providerStatus);
   const statusMessage = providerStatus.statusMessage?.trim().toLowerCase() ?? '';
   const statusMessagePending =
     statusMessage === 'checking...' ||
     statusMessage === CLI_PROVIDER_STATUS_DEFERRED_MESSAGE.toLowerCase();
-  if (statusMessagePending) {
+  if (statusMessagePending && providerId !== 'opencode') {
     return true;
   }
 
-  if (providerStatus.modelCatalogRefreshState === 'loading') {
-    return true;
+  if (statusMessagePending || providerStatus.modelCatalogRefreshState === 'loading') {
+    return !hasRuntimeModelTruth;
   }
 
-  const hasRuntimeModelTruth =
-    providerStatus.models.length > 0 ||
-    (providerStatus.modelCatalog?.models.length ?? 0) > 0 ||
-    (providerStatus.modelAvailability?.length ?? 0) > 0;
   if (!hasRuntimeModelTruth) {
     if (
       providerId === 'codex' &&
@@ -211,11 +247,14 @@ export function isTeamProviderRuntimeStatusLoading(
     return false;
   }
 
-  if (providerLoading) {
+  if (isTeamProviderModelVerificationPending(providerId, providerStatus)) {
     return true;
   }
 
-  return isTeamProviderModelVerificationPending(providerId, providerStatus);
+  // `providerLoading` is reserved for an explicit, non-silent provider/auth
+  // refresh. Cached model truth may keep a background catalog refresh usable,
+  // but it must not make a real connection check look settled.
+  return providerLoading;
 }
 
 function getFallbackTeamProviderModels(providerId: SupportedProviderId): string[] {

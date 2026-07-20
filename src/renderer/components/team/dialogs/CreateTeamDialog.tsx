@@ -54,6 +54,8 @@ import { getTeamColorSet, getThemedBadge } from '@renderer/constants/teamColors'
 import { useChipDraftPersistence } from '@renderer/hooks/useChipDraftPersistence';
 import { useCreateTeamDraft } from '@renderer/hooks/useCreateTeamDraft';
 import { useDraftPersistence } from '@renderer/hooks/useDraftPersistence';
+import { useEffectiveCliProviderStatus } from '@renderer/hooks/useEffectiveCliProviderStatus';
+import { useOpenCodeCatalogPrefetch } from '@renderer/hooks/useOpenCodeCatalogPrefetch';
 import { useTaskSuggestions } from '@renderer/hooks/useTaskSuggestions';
 import { useTeamSuggestions } from '@renderer/hooks/useTeamSuggestions';
 import { useTheme } from '@renderer/hooks/useTheme';
@@ -325,6 +327,7 @@ interface CreateTeamDialogProps {
   initialData?: TeamCopyData;
   initialOrganizationPlacement?: OrganizationPlacementSelection | null;
   defaultProjectPath?: string | null;
+  forceDefaultProjectSelection?: boolean;
   onClose: () => void;
   onCreate: (
     request: TeamCreateRequest,
@@ -507,6 +510,7 @@ export const CreateTeamDialog = ({
   initialData,
   initialOrganizationPlacement,
   defaultProjectPath,
+  forceDefaultProjectSelection = false,
   onClose,
   onCreate,
   onOpenTeam,
@@ -548,7 +552,7 @@ export const CreateTeamDialog = ({
     codexAccount.loading &&
     Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex')) &&
     !codexAccount.snapshot;
-  const runtimeProviderStatusById = useMemo(
+  const globalRuntimeProviderStatusById = useMemo(
     () =>
       new Map(
         (effectiveCliStatus?.providers ?? []).map(
@@ -790,6 +794,17 @@ export const CreateTeamDialog = ({
       ? ''
       : selectedProjectPath.trim();
   const effectiveCwd = cwdMode === 'project' ? selectedProjectCwd : customCwd.trim();
+  const { cliStatus: projectScopedCliStatus, providerStatus: projectScopedOpenCodeStatus } =
+    useEffectiveCliProviderStatus('opencode', {
+      projectPath: effectiveCwd || null,
+    });
+  const runtimeProviderStatusById = useMemo(() => {
+    const statuses = new Map(globalRuntimeProviderStatusById);
+    if (effectiveCwd && projectScopedOpenCodeStatus) {
+      statuses.set('opencode', projectScopedOpenCodeStatus);
+    }
+    return statuses;
+  }, [effectiveCwd, globalRuntimeProviderStatusById, projectScopedOpenCodeStatus]);
   const dialogTeamNameKey = sanitizeTeamName(teamName.trim());
   /** All taken names: existing teams + teams currently being provisioned. */
   const allTakenTeamNames = useMemo(
@@ -848,12 +863,18 @@ export const CreateTeamDialog = ({
       ])
     );
   }, [members, multimodelEnabled, selectedProviderId, soloTeam, syncModelsWithLead]);
+  const { requiredCatalogPending: openCodeCatalogPending } = useOpenCodeCatalogPrefetch({
+    enabled: open && multimodelEnabled,
+    projectPath: effectiveCwd || null,
+    priority: selectedMemberProviders.includes('opencode') ? 'required' : 'background',
+    deferBackground: prepareState === 'loading' || isSubmitting,
+  });
   const hasSelectedAnthropicRuntime = selectedMemberProviders.includes('anthropic');
   const effectiveAnthropicRuntimeLimitContext = hasSelectedAnthropicRuntime ? limitContext : false;
 
   const runtimeBackendSummaryByProvider = useMemo(() => {
     const entries: (readonly [TeamProviderId, string | null])[] = (
-      effectiveCliStatus?.providers ?? []
+      projectScopedCliStatus?.providers ?? []
     ).map(
       (provider) =>
         [
@@ -862,7 +883,7 @@ export const CreateTeamDialog = ({
         ] as const
     );
     return new Map<TeamProviderId, string | null>(entries);
-  }, [effectiveCliStatus?.providers]);
+  }, [projectScopedCliStatus?.providers]);
   const setSelectedModel = useCallback(
     (value: string): void => {
       const normalizedValue = normalizeExplicitTeamModelForUi(selectedProviderId, value);
@@ -922,13 +943,15 @@ export const CreateTeamDialog = ({
                 runtimeProviderStatusById.get(providerId),
                 cliProviderStatusLoading[providerId] === true ||
                   (providerId === 'codex' && codexSnapshotPending)
-              ),
+              ) ||
+                (providerId === 'opencode' && openCodeCatalogPending),
             ] as const
         )
       ),
     [
       cliProviderStatusLoading,
       codexSnapshotPending,
+      openCodeCatalogPending,
       runtimeProviderStatusById,
       selectedMemberProviders,
     ]
@@ -1665,10 +1688,28 @@ export const CreateTeamDialog = ({
     }
   }, [descriptionDraft, initialData, open, suggestedTeamName, t, teamName]);
 
-  // Pre-select defaultProjectPath when projects loaded (only while dialog is open)
+  useEffect(() => {
+    if (
+      !open ||
+      !draftLoaded ||
+      !forceDefaultProjectSelection ||
+      !defaultProjectPath ||
+      isEphemeralProjectPath(defaultProjectPath) ||
+      cwdMode === 'project'
+    ) {
+      return;
+    }
+
+    setCwdMode('project');
+  }, [cwdMode, defaultProjectPath, draftLoaded, forceDefaultProjectSelection, open, setCwdMode]);
+
+  // Pre-select defaultProjectPath when the draft and projects are loaded.
   useEffect(() => {
     if (!open) {
       appliedDefaultProjectPathRef.current = null;
+      return;
+    }
+    if (!draftLoaded) {
       return;
     }
     if (cwdMode !== 'project') {
@@ -1707,7 +1748,15 @@ export const CreateTeamDialog = ({
       }
     }
     setSelectedProjectPath(selectableProjects[0].path);
-  }, [open, cwdMode, projects, selectedProjectPath, defaultProjectPath, setSelectedProjectPath]);
+  }, [
+    open,
+    draftLoaded,
+    cwdMode,
+    projects,
+    selectedProjectPath,
+    defaultProjectPath,
+    setSelectedProjectPath,
+  ]);
 
   useEffect(() => {
     if (!open || cwdMode !== 'project' || !selectedProjectPath) {

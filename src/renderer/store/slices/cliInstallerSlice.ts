@@ -40,6 +40,7 @@ const CODEX_PROVIDER_INSTALL_REFRESH_ATTEMPTS = 3;
 const CODEX_PROVIDER_INSTALL_REFRESH_RETRY_DELAY_MS = 700;
 const CODEX_CATALOG_LOADING_REFRESH_ATTEMPTS = 3;
 const CODEX_CATALOG_LOADING_REFRESH_RETRY_DELAY_MS = 2_000;
+export const CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT = 12;
 
 export const MULTIMODEL_PROVIDER_IDS: CliProviderId[] = isGeminiUiFrozen()
   ? ['anthropic', 'codex', 'opencode']
@@ -942,6 +943,19 @@ export function getCliProviderStatusScopeKey(
   return `${providerId}\0${projectPath?.trim() ?? ''}`;
 }
 
+function setBoundedScopedProviderStatus(
+  current: Readonly<Record<string, CliProviderStatus>>,
+  scopeKey: string,
+  providerStatus: CliProviderStatus
+): Readonly<Record<string, CliProviderStatus>> {
+  const entries = Object.entries(current).filter(([key]) => key !== scopeKey);
+  entries.push([scopeKey, providerStatus]);
+  if (entries.length > CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT) {
+    entries.splice(0, entries.length - CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT);
+  }
+  return Object.fromEntries(entries);
+}
+
 function clearCodexCatalogLoadingRefresh(providerId: CliProviderId): void {
   const timer = codexCatalogLoadingRefreshTimers.get(providerId);
   if (timer) {
@@ -1190,7 +1204,10 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
     if (cliStatusInFlight) return cliStatusInFlight;
 
     const epoch = ++cliStatusEpoch;
-    cliStatusInFlight = (async () => {
+    // Assigned before the first awaited continuation and referenced by its own cleanup.
+    // eslint-disable-next-line prefer-const
+    let request!: Promise<void>;
+    request = (async () => {
       set({ cliStatusLoading: true, cliStatusError: null });
       try {
         const status = await api.cliInstaller.getStatus();
@@ -1227,14 +1244,21 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to check CLI status';
         logger.error('Failed to fetch CLI status:', error);
-        set({ cliStatusError: message });
+        if (epoch === cliStatusEpoch) {
+          set({ cliStatusError: message });
+        }
       } finally {
-        set({ cliStatusLoading: false });
-        cliStatusInFlight = null;
+        if (epoch === cliStatusEpoch) {
+          set({ cliStatusLoading: false });
+        }
+        if (cliStatusInFlight === request) {
+          cliStatusInFlight = null;
+        }
       }
     })();
+    cliStatusInFlight = request;
 
-    return cliStatusInFlight;
+    return request;
   },
 
   fetchCliProviderStatus: async (providerId, options) => {
@@ -1256,7 +1280,10 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
     const previousProviderStatus = getProviderStatus(get().cliStatus, providerId);
     cliProviderStatusSeq.set(requestKey, requestSeq);
 
-    const request = (async () => {
+    // Assigned before the first awaited continuation and referenced by its own cleanup.
+    // eslint-disable-next-line prefer-const
+    let request!: Promise<boolean>;
+    request = (async () => {
       if (!silent) {
         set((state) => {
           const nextLoading = {
@@ -1317,7 +1344,7 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
             requestEpoch !== cliStatusEpoch ||
             cliProviderStatusSeq.get(requestKey) !== requestSeq
           ) {
-            return { cliProviderStatusLoading: nextLoading };
+            return {};
           }
 
           if (!providerStatus || !currentCliStatus) {
@@ -1328,12 +1355,13 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
             const previousScopedProvider = state.cliProviderStatusByScope[scopeKey];
             return {
               cliProviderStatusLoading: nextLoading,
-              cliProviderStatusByScope: {
-                ...state.cliProviderStatusByScope,
-                [scopeKey]: previousScopedProvider
+              cliProviderStatusByScope: setBoundedScopedProviderStatus(
+                state.cliProviderStatusByScope,
+                scopeKey,
+                previousScopedProvider
                   ? mergeProviderCatalogCache(providerStatus, previousScopedProvider)
-                  : providerStatus,
-              },
+                  : providerStatus
+              ),
             };
           }
 
@@ -1388,6 +1416,7 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
         });
         scheduleCodexCatalogLoadingRefresh(get, providerId);
         return Boolean(
+          requestIsCurrent &&
           providerStatus &&
           (!projectPath ||
             (providerStatus.modelCatalog != null &&
@@ -1433,7 +1462,7 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
             requestEpoch !== cliStatusEpoch ||
             cliProviderStatusSeq.get(requestKey) !== requestSeq
           ) {
-            return { cliProviderStatusLoading: nextLoading };
+            return {};
           }
 
           if (projectPath) {
@@ -1441,14 +1470,15 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
             return {
               cliStatusError: message,
               cliProviderStatusLoading: nextLoading,
-              cliProviderStatusByScope: {
-                ...state.cliProviderStatusByScope,
-                [scopeKey]: createProviderStatusErrorSnapshot({
+              cliProviderStatusByScope: setBoundedScopedProviderStatus(
+                state.cliProviderStatusByScope,
+                scopeKey,
+                createProviderStatusErrorSnapshot({
                   providerId,
                   message,
                   currentProvider: currentScopedProvider,
-                }),
-              },
+                })
+              ),
             };
           }
 
@@ -1524,7 +1554,9 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
         clearCodexCatalogLoadingRefresh(providerId);
         return false;
       } finally {
-        cliProviderStatusInFlight.delete(requestKey);
+        if (cliProviderStatusInFlight.get(requestKey) === request) {
+          cliProviderStatusInFlight.delete(requestKey);
+        }
       }
     })();
 
@@ -1534,7 +1566,15 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
 
   invalidateCliStatus: async () => {
     clearCodexCatalogLoadingRefresh('codex');
-    set({ cliProviderStatusByScope: {} });
+    cliStatusEpoch += 1;
+    cliStatusInFlight = null;
+    cliProviderStatusInFlight.clear();
+    cliProviderStatusSeq.clear();
+    set({
+      cliProviderStatusByScope: {},
+      cliStatusLoading: false,
+      cliProviderStatusLoading: {},
+    });
     await api.cliInstaller?.invalidateStatus();
   },
 

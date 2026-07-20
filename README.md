@@ -16,6 +16,8 @@
   <sub>Free desktop app for AI agent teams. Start with a free model with no auth - no signup, API key, or card - or connect Claude Code, Codex, OpenCode, Cursor, SuperGrok, GitHub Copilot, Z.AI, MiniMax, Kiro, and many more. For coding and broader project work.</sub>
 </p>
 
+<img width="1672" height="941" alt="telegram-cloud-photo-size-2-5400238943531374644-w" src="https://github.com/user-attachments/assets/c6de5cdf-74c2-417b-b69a-172e66425d14" />
+
 <table>
 <tr>
 <td width="50%">

@@ -7,7 +7,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: '17 */6 * * *'
 
 permissions: {}
 
@@ -23,20 +23,14 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - name: Skip ReviewRouter for huge pull requests
-        if: ${{ github.event.pull_request.changed_files > 300 }}
-        run: |
-          echo "::notice::Skipping ReviewRouter Codex review because this pull request changes ${{ github.event.pull_request.changed_files }} files, which exceeds GitHub's 300-file pull request diff API limit."
-
       - name: ReviewRouter Codex OAuth review
-        if: ${{ github.event.pull_request.changed_files <= 300 }}
         id: run_codex
         uses: 777genius/review-router@main
         with:
           mode: codex-oauth-rotating
-          api-url: "https://api.reviewrouter.site"
-          provider-instance-id: "codex-rotating:1163183284"
-          workflow-schema-version: "1"
+          api-url: 'https://api.reviewrouter.site'
+          provider-instance-id: 'codex-rotating:1163183284'
+          workflow-schema-version: '1'
           review-drafts: ${{ vars.REVIEW_ROUTER_REVIEW_DRAFTS == 'true' }}
           max-changed-lines: ${{ vars.REVIEW_ROUTER_MAX_CHANGED_LINES }}
           review-timeout-minutes: ${{ vars.REVIEW_ROUTER_TIMEOUT_MINUTES || '60' }}
@@ -58,7 +52,7 @@ jobs:
         uses: 777genius/review-router@main
         with:
           mode: codex-oauth-refresh
-          api-url: "https://api.reviewrouter.site"
-          provider-instance-id: "codex-rotating:1163183284"
-          workflow-schema-version: "1"
+          api-url: 'https://api.reviewrouter.site'
+          provider-instance-id: 'codex-rotating:1163183284'
+          workflow-schema-version: '1'
           auth-json: ${{ secrets.REVIEWROUTER_CODEX_AUTH_JSON }}

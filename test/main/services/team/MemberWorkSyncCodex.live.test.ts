@@ -55,7 +55,7 @@ const liveDescribe =
     : describe.skip;
 
 const DEFAULT_ORCHESTRATOR_CLI = '/Users/belief/dev/projects/claude/agent_teams_orchestrator/cli-source';
-const DEFAULT_MODEL = 'gpt-5.4-mini';
+const DEFAULT_MODEL = 'gpt-5.6-sol';
 const DEFAULT_EFFORT = 'low' as const;
 const LIVE_CODEX_WORKSPACE_TRUST_TARGET_SURFACES: WorkspaceTrustLaunchArgTargetSurface[] = [
   'primary_provider_args',

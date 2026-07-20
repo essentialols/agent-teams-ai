@@ -144,24 +144,61 @@ describe('TeamProvisioningProcessExit', () => {
     expect(trackedRuns.has(run.runId)).toBe(false);
   });
 
-  it('propagates secondary stop rejection and preserves process-exit tracking', async () => {
-    const lifecycleEvents: string[] = [];
-    const stopFailure = new Error('secondary process-exit stop failed');
-    const run = makeProcessExitRun();
-    const { ports, trackedRuns } = makeProcessExitHarness(run, lifecycleEvents);
-    vi.mocked(ports.stopMixedSecondaryRuntimeLanes).mockImplementation(async () => {
-      lifecycleEvents.push('secondary stop failed');
-      throw stopFailure;
-    });
+  it.each([
+    {
+      handling: 'completion',
+      provisioningComplete: true,
+      code: 0,
+      progressStates: ['disconnected'],
+      finalState: 'disconnected',
+    },
+    {
+      handling: 'failure',
+      provisioningComplete: false,
+      code: 1,
+      progressStates: ['verifying', 'failed'],
+      finalState: 'failed',
+    },
+  ] as const)(
+    'reports a secondary stop failure but still performs $handling handling and cleanup',
+    async ({ provisioningComplete, code, progressStates, finalState }) => {
+      const lifecycleEvents: string[] = [];
+      const stopFailure = new Error('secondary stop failed');
+      const run = makeProcessExitRun({
+        provisioningComplete,
+        onProgress: vi.fn((nextProgress: TeamProvisioningProgress) => {
+          lifecycleEvents.push(`progress:${nextProgress.state}`);
+        }),
+      });
+      const { ports, trackedRuns } = makeProcessExitHarness(run, lifecycleEvents);
+      vi.mocked(ports.stopMixedSecondaryRuntimeLanes).mockImplementation(async () => {
+        lifecycleEvents.push('secondary stop failed');
+        throw stopFailure;
+      });
 
-    await expect(handleProvisioningProcessExit(run, 0, ports)).rejects.toBe(stopFailure);
+      await handleProvisioningProcessExit(run, code, ports);
 
-    expect(lifecycleEvents).toEqual(['secondary stop failed']);
-    expect(ports.updateProgress).not.toHaveBeenCalled();
-    expect(ports.cleanupRun).not.toHaveBeenCalled();
-    expect(trackedRuns.get(run.runId)).toBe(run);
-    expect(ports.logger.warn).not.toHaveBeenCalled();
-  });
+      expect(lifecycleEvents).toEqual([
+        'secondary stop failed',
+        ...progressStates.flatMap((state) => ['progress updated', `progress:${state}`]),
+        'cleanup',
+      ]);
+      expect(run.processClosed).toBe(true);
+      expect(run.onProgress).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          runId: run.runId,
+          state: finalState,
+        })
+      );
+      expect(ports.cleanupRun).toHaveBeenCalledOnce();
+      expect(ports.cleanupRun).toHaveBeenCalledWith(run);
+      expect(trackedRuns.has(run.runId)).toBe(false);
+      expect(ports.logger.warn).toHaveBeenCalledWith(
+        `[${run.teamName}] Failed to stop OpenCode secondary lanes after the provisioning process exited; continuing required process-exit cleanup`,
+        stopFailure
+      );
+    }
+  );
 
   it('classifies process exit guards before parser flushing', () => {
     expect(

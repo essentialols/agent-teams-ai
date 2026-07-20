@@ -537,7 +537,14 @@ export async function handleProvisioningProcessExit<TRun extends TeamProvisionin
   // otherwise the external runtime keeps orphan lane sessions that nothing in
   // the UI can stop any more.
   if (ports.hasSecondaryRuntimeRuns(run.teamName)) {
-    await ports.stopMixedSecondaryRuntimeLanes(run.teamName);
+    try {
+      await ports.stopMixedSecondaryRuntimeLanes(run.teamName);
+    } catch (error) {
+      ports.logger.warn(
+        `[${run.teamName}] Failed to stop OpenCode secondary lanes after the provisioning process exited; continuing required process-exit cleanup`,
+        error
+      );
+    }
   }
 
   if (run.provisioningComplete) {

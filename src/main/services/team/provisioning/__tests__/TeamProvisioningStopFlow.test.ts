@@ -286,4 +286,41 @@ describe('team provisioning stop flow', () => {
     expect(ports.stopMixedSecondaryRuntimeLanes).toHaveBeenCalledWith(teamName);
     expect(ports.killTeamProcess).not.toHaveBeenCalled();
   });
+
+  it('does not let a stale pre-lock owner stop secondary lanes registered by a newer run', async () => {
+    const teamName = 'opencode-stale-stop';
+    const staleRunId = 'stale-run';
+    const newerRunId = 'newer-run';
+    const provisioningRunByTeam = new Map([[teamName, staleRunId]]);
+    const ports = makePorts(teamName, new Map(), provisioningRunByTeam);
+    ports.runtimeAdapterRunByTeam.set(teamName, {
+      runId: staleRunId,
+      providerId: 'opencode',
+    });
+    vi.mocked(ports.hasSecondaryRuntimeRuns).mockReturnValue(true);
+    let releaseLock!: () => void;
+    const lockGate = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    ports.withTeamLock = vi.fn(async (_lockedTeamName, fn) => {
+      await lockGate;
+      return fn();
+    });
+
+    const stopping = stopTeamFlow(teamName, ports);
+    await vi.waitFor(() => {
+      expect(ports.withTeamLock).toHaveBeenCalledWith(teamName, expect.any(Function));
+    });
+
+    ports.runtimeAdapterRunByTeam.set(teamName, {
+      runId: newerRunId,
+      providerId: 'opencode',
+    });
+    releaseLock();
+    await stopping;
+
+    expect(ports.stopOpenCodeRuntimeAdapterTeam).not.toHaveBeenCalled();
+    expect(ports.stopMixedSecondaryRuntimeLanes).not.toHaveBeenCalled();
+    expect(ports.runtimeAdapterRunByTeam.get(teamName)?.runId).toBe(newerRunId);
+  });
 });

@@ -128,16 +128,15 @@ async function stopTeamRuntimeFlow<TRun extends TeamProvisioningStopRun>(
     }
     const runtimeRun = ports.runtimeAdapterRunByTeam.get(teamName);
     if (runtimeRun?.runId === runId && runtimeRun.providerId === 'opencode') {
-      const shouldStopSecondaryRuntimes = ports.hasSecondaryRuntimeRuns(teamName);
       await ports.withTeamLock(teamName, async () => {
         const currentRuntimeRun = ports.runtimeAdapterRunByTeam.get(teamName);
         if (currentRuntimeRun?.runId === runId && currentRuntimeRun.providerId === 'opencode') {
           await ports.stopOpenCodeRuntimeAdapterTeam(teamName, runId);
+          if (ports.hasSecondaryRuntimeRuns(teamName)) {
+            await ports.stopMixedSecondaryRuntimeLanes(teamName);
+          }
         }
       });
-      if (shouldStopSecondaryRuntimes) {
-        await ports.stopMixedSecondaryRuntimeLanes(teamName);
-      }
       return;
     }
     if (ports.hasSecondaryRuntimeRuns(teamName)) {

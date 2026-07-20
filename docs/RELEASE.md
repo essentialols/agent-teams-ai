@@ -880,6 +880,33 @@ Do not publish or call a release finished until this is true:
 
 If a draft was published before notes were written, immediately edit the public release body with `gh release edit`; do not leave a release with only generated notes.
 
+### 7. Download and launch a requested build
+
+When the user explicitly asks to download or launch a release build, use the
+exact versioned asset for the requested release. Do not use a stable alias or an
+older file already present in `Downloads`.
+
+For an Apple Silicon build, the required filename is:
+
+```text
+Agent.Teams.AI-<VERSION>-arm64.dmg
+```
+
+Before opening the app:
+
+- Read the asset name and SHA-256 digest from the exact GitHub release.
+- Download the versioned asset, even if another version is already mounted or
+  running.
+- If a file with the same name already exists locally, verify its digest. Move
+  a stale or mismatched file to the Trash before downloading the replacement.
+- Verify the downloaded SHA-256 digest against GitHub.
+- Mount the DMG read-only and confirm the app bundle version equals the exact
+  requested version.
+- Verify the macOS signature and notarization before launching the app.
+
+Never report that the requested build was launched based only on its filename.
+The GitHub digest and bundle version must both match.
+
 ## Release Notes Template
 
 ```markdown

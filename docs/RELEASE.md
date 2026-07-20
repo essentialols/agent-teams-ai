@@ -1,37 +1,43 @@
 # Release Guide
 
-## Draft: v2.9.1 (2026-07-19)
+## Draft: v2.9.1 (2026-07-20)
 
 Target branch: `dev`.
 
 Runtime gate:
 
-- Agent Teams runtime: `v0.0.69`.
+- Agent Teams runtime: `v0.0.70`.
 - Terminal Platform runtime: `v0.3.2`.
 
 Draft body source for GitHub release:
 
 <!-- RELEASE_BODY_START v2.9.1 -->
-Recover code review work safely after app crashes or reloads, including interrupted accept/reject actions and renamed or deleted files. This patch also adds quick setup for OpenRouter and Vercel AI Gateway, improves Kiro setup and usage reporting, and fixes local model, OpenCode, terminal, and Windows launch issues.
+Local models are now checked before a team starts, so missing tool support, insufficient context, and offline servers are caught early. This patch also adds GPT-5.6 Codex models, keeps crash-safe review work, and makes provider setup, agent recovery, and troubleshooting more reliable.
 
 ### What's New
 
+- Use GPT-5.6 Sol, Terra, and Luna, with Sol as the default Codex model.
+- Check that local models can use Agent Teams tools and have enough context before launch.
 - Connect OpenRouter and Vercel AI Gateway directly from provider quick setup.
 - Set up or update Kiro from the app and view Kiro usage in the Usage dashboard.
 - Select project-specific local models when configuring teammates.
 
 ### Improvements
 
+- Show only chat-capable Ollama models and save detected tool and context limits during setup.
+- Load the correct providers and models separately for each project, with automatic retries while OpenCode starts.
 - Keep Changes decisions, undo/redo history, and recovery state available after crashes, reloads, and file watcher restarts.
-- Make provider connection status and Google, Vertex AI, and Claude via Vertex names clearer during setup.
-- Keep team model setup and OpenCode teammate lifecycle changes consistent when configuration changes.
+- Save redacted warning and error logs locally so failed launches are easier to troubleshoot.
+- Make team setup status, model availability, and the team loading layout clearer.
 
 ### Bug Fixes
 
+- Prevent outdated OpenCode versions and stale Codex model choices from reaching team launch.
+- Keep healthy teammates running when another OpenCode teammate fails, and preserve a working teammate when restart checks fail.
+- Report failed Codex turns and provider errors instead of finishing without a useful explanation.
+- Prevent a submitted team name from being reported as already taken while creation is still finishing.
 - Prevent interrupted or concurrent Changes actions from losing recovery state, mixing project data, or leaving stale locks.
-- Fix OpenCode teammate start/stop races and keep other teammates available when one launch fails.
-- Preserve completed terminal command status and report terminal provider failures more clearly.
-- Fix Windows command fallback when project paths contain non-ASCII characters.
+- Preserve completed terminal command status and fix Windows command fallback for project paths with non-ASCII characters.
 
 ### Downloads
 

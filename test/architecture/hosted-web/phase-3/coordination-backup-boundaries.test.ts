@@ -29,6 +29,16 @@ const FORBIDDEN_IMPORTS = [
   '@renderer/',
   '@preload/',
 ] as const;
+const NODE_ADAPTER_PATHS = [
+  'src/features/coordination-backup/main/infrastructure/backupPathLayout.ts',
+  'src/features/coordination-backup/main/infrastructure/canonicalBackupJson.ts',
+  'src/features/coordination-backup/main/infrastructure/NodeBackupManifestHasher.ts',
+  'src/features/coordination-backup/main/infrastructure/NodeBackupPublication.ts',
+  'src/features/coordination-backup/main/infrastructure/NodeImmutableBackupVerifier.ts',
+  'src/features/coordination-backup/main/infrastructure/index.ts',
+  'src/features/coordination-backup/main/participants/TypedFileBackupParticipant.ts',
+  'src/features/coordination-backup/main/participants/index.ts',
+] as const;
 
 describe('Phase 3D coordination backup architecture boundary', () => {
   it('keeps contracts and core process-agnostic and free of direct storage operations', () => {
@@ -49,11 +59,17 @@ describe('Phase 3D coordination backup architecture boundary', () => {
     }
   });
 
-  it('has no main composition or raw-copy fallback surface in the Phase 3D slice', () => {
-    // This resolves one fixed repository-owned feature path.
+  it('adds only the bounded Node publication/participant adapters without composition or raw copy', () => {
+    // These resolve fixed repository-owned feature paths.
     // eslint-disable-next-line security/detect-non-literal-fs-filename
-    expect(existsSync(resolve(ROOT, 'src/features/coordination-backup/main'))).toBe(false);
-    // This resolves one fixed repository-owned source path.
+    expect(existsSync(resolve(ROOT, 'src/features/coordination-backup/main/composition'))).toBe(
+      false
+    );
+    for (const relativePath of NODE_ADAPTER_PATHS) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      expect(existsSync(resolve(ROOT, relativePath)), relativePath).toBe(true);
+    }
+    // This resolves fixed repository-owned source paths.
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     const ports = readFileSync(
       resolve(ROOT, 'src/features/coordination-backup/core/application/ports.ts'),
@@ -62,6 +78,64 @@ describe('Phase 3D coordination backup architecture boundary', () => {
     expect(ports).toContain('SqliteOnlineBackupPort');
     expect(ports).toContain('createOnlineSnapshot');
     expect(ports).not.toMatch(/\b(copyDatabase|copyWal|copyShm|rawCopy|fallbackCopy)\b/);
+    for (const relativePath of NODE_ADAPTER_PATHS) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      const source = readFileSync(resolve(ROOT, relativePath), 'utf8');
+      expect(source).not.toMatch(/\b(copyFile|copyFileSync|cpSync|copyDatabase|copyWal|copyShm)\b/);
+      expect(source).not.toMatch(/better-sqlite3|(?:^|[^A-Za-z])(?:-wal|-shm)(?:[^A-Za-z]|$)/);
+    }
+  });
+
+  it('keeps the generic typed-file source pathless and stages only through the artifact writer', () => {
+    // This resolves one fixed repository-owned source path.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    const source = readFileSync(
+      resolve(
+        ROOT,
+        'src/features/coordination-backup/main/participants/TypedFileBackupParticipant.ts'
+      ),
+      'utf8'
+    );
+    const sourceContract = source.slice(
+      source.indexOf('export interface TypedFileBackupSourceSnapshot<'),
+      source.indexOf('export interface TypedFileBackupParticipantOptions<')
+    );
+    expect(sourceContract).toContain('bytes: Uint8Array');
+    expect(sourceContract).toContain('generation: TGeneration');
+    expect(sourceContract).toContain('durableBarrier: string');
+    expect(sourceContract).toContain('exclusions: readonly TypedFileSourceExclusion[]');
+    expect(sourceContract).not.toMatch(/\b(?:root|path|directory|filename)s?\b/i);
+    expect(source).toContain('this.options.artifactWriter.writeArtifact({');
+    expect(source).not.toMatch(/from ['"]node:(?:fs|path)['"]/);
+  });
+
+  it('keeps canonical hashing and exact verifier inspection at the Node boundary', () => {
+    // These resolve fixed repository-owned source paths.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    const canonical = readFileSync(
+      resolve(ROOT, 'src/features/coordination-backup/main/infrastructure/canonicalBackupJson.ts'),
+      'utf8'
+    );
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    const hasher = readFileSync(
+      resolve(
+        ROOT,
+        'src/features/coordination-backup/main/infrastructure/NodeBackupManifestHasher.ts'
+      ),
+      'utf8'
+    );
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    const verifier = readFileSync(
+      resolve(
+        ROOT,
+        'src/features/coordination-backup/main/infrastructure/NodeImmutableBackupVerifier.ts'
+      ),
+      'utf8'
+    );
+    expect(canonical).toContain('Object.keys(record).sort()');
+    expect(hasher).toContain("createHash('sha256')");
+    expect(verifier).toContain('validateImmutableBackupInspection(inspection)');
+    expect(verifier).toContain("status: 'verified', inspection");
   });
 
   it('makes root manifest, hash-bound marker-last, immutable rename, and commit ordering explicit', () => {

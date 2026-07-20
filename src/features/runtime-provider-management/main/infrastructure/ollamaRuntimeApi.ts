@@ -37,7 +37,7 @@ export function parseOllamaShowMetadata(raw: string): OllamaShowMetadata | null 
       ([key, value]) => key.endsWith('.context_length') && isPositiveSafeInteger(value)
     )?.[1] ?? null;
   const parameters = typeof root.parameters === 'string' ? root.parameters : '';
-  const configuredContextMatch = parameters.match(OLLAMA_CONTEXT_PARAMETER_PATTERN);
+  const configuredContextMatch = OLLAMA_CONTEXT_PARAMETER_PATTERN.exec(parameters);
   const configuredContextTokens = configuredContextMatch
     ? Number.parseInt(configuredContextMatch[1], 10)
     : null;

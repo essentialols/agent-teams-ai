@@ -7,6 +7,8 @@ import type {
   RuntimeLocalProviderListResponse,
 } from '../../contracts';
 
+const TEST_PROJECT_PATH = process.cwd();
+
 describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
   it('blocks an Ollama model that the execution runtime loaded with only 4K context', async () => {
     const inventory = createInventory([ollamaProvider()]);
@@ -31,7 +33,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/qwen2.5:0.5b',
       },
       { inventory, fetchImpl, probeCoordination: coordinationPassed }
@@ -67,7 +69,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/qwen2.5:0.5b',
       },
       { inventory, fetchImpl, probeCoordination: coordinationPassed }
@@ -105,7 +107,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/qwen3:1.7b',
       },
       { inventory, fetchImpl, probeCoordination }
@@ -138,7 +140,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/legacy',
       },
       { inventory, fetchImpl, probeCoordination: coordinationPassed }
@@ -177,7 +179,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/qwen2.5:0.5b',
       },
       { inventory, fetchImpl, probeCoordination: coordinationPassed }
@@ -205,7 +207,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/qwen3:8b',
       },
       {
@@ -242,7 +244,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'local-lab/team-model',
       },
       { inventory, probeCoordination }
@@ -261,7 +263,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'ollama/qwen3:8b',
       },
       { inventory }
@@ -282,7 +284,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'openrouter/qwen/qwen3-8b',
       },
       { inventory }
@@ -304,7 +306,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'local-lab/team-model',
       },
       { inventory, probeCoordination }
@@ -326,7 +328,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'local-lab/missing-model',
       },
       { inventory, probeCoordination }
@@ -347,7 +349,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
 
     const result = await inspectOpenCodeLocalModelRuntimeReadiness(
       {
-        projectPath: '/tmp/project',
+        projectPath: TEST_PROJECT_PATH,
         modelRoute: 'local-lab/team-model',
       },
       { inventory, probeCoordination: coordinationPassed }
@@ -364,7 +366,7 @@ describe('inspectOpenCodeLocalModelRuntimeReadiness', () => {
     expect(inventory.listLocalProviders).toHaveBeenCalledWith({
       runtimeId: 'opencode',
       scope: 'project',
-      projectPath: '/tmp/project',
+      projectPath: TEST_PROJECT_PATH,
       providerId: 'local-lab',
     });
   });

@@ -56,8 +56,8 @@ describe('TeamLoadingSkeleton Kanban', () => {
     expect(columns.every((column) => !column.className.includes('rounded-md'))).toBe(true);
 
     const gridItems = columns.map((column) => column.parentElement!);
-    const grid = gridItems[0]?.parentElement as HTMLElement | null;
-    const fullBleedWrapper = grid?.parentElement as HTMLElement | null;
+    const grid = gridItems[0]?.parentElement;
+    const fullBleedWrapper = grid?.parentElement;
     expect(fullBleedWrapper?.className).toContain('-mx-4');
     expect(fullBleedWrapper?.className).toContain('w-[calc(100%+2rem)]');
     expect(gridItems.map((item) => item.style.gridColumn)).toEqual([

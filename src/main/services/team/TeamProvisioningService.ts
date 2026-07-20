@@ -12726,7 +12726,7 @@ export class TeamProvisioningService {
       members: {
         ...skippedResult.members,
         [lane.member.name]: {
-          ...skippedResult.members[lane.member.name]!,
+          ...skippedResult.members[lane.member.name],
           diagnostics: [rootCause, message],
         },
       },

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { api } from '@renderer/api';
-
 import {
   LOADING_TEAM_LIFECYCLE_LIST_VIEW_MODEL,
   type TeamLifecycleListViewModel,
@@ -17,7 +15,7 @@ export interface UseTeamLifecycleListResult {
 }
 
 export function useTeamLifecycleList(
-  transport: Pick<TeamLifecycleReadTransportApi, 'listTeamLifecycle'> = api
+  transport: Pick<TeamLifecycleReadTransportApi, 'listTeamLifecycle'>
 ): UseTeamLifecycleListResult {
   const [viewModel, setViewModel] = useState<TeamLifecycleListViewModel>(
     LOADING_TEAM_LIFECYCLE_LIST_VIEW_MODEL

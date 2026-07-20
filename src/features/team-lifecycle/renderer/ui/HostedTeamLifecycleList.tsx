@@ -11,7 +11,7 @@ import type {
 } from '../adapters/teamLifecycleListViewModel';
 
 export interface HostedTeamLifecycleListProps {
-  readonly transport?: Pick<TeamLifecycleReadTransportApi, 'listTeamLifecycle'>;
+  readonly transport: Pick<TeamLifecycleReadTransportApi, 'listTeamLifecycle'>;
 }
 
 const STATUS_CLASSES: Readonly<Record<TeamLifecycleListStatusTone, string>> = Object.freeze({

@@ -1563,5 +1563,5 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
 });
 
 export const TeamListView = memo(function TeamListView(): React.JSX.Element {
-  return isElectronMode() ? <DesktopTeamListView /> : <HostedTeamLifecycleList />;
+  return isElectronMode() ? <DesktopTeamListView /> : <HostedTeamLifecycleList transport={api} />;
 });

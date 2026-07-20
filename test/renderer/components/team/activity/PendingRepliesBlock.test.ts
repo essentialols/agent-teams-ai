@@ -68,8 +68,17 @@ describe('PendingRepliesBlock', () => {
     });
 
     expect(host.textContent).toContain('Gemini quota retry');
+    expect(host.textContent).toContain('1m');
+    expect(host.textContent).not.toContain('1 minute ago');
+    expect(host.textContent).not.toContain('Reviewer');
     const retryElement = host.querySelector('[title*="Gemini quota exhausted"]');
     expect(retryElement).not.toBeNull();
+    const coloredName = Array.from(host.querySelectorAll<HTMLElement>('span')).find(
+      (element) => element.textContent === 'alice' && element.style.color !== ''
+    );
+    expect(coloredName).toBeDefined();
+    expect(coloredName?.style.backgroundColor).toBe('');
+    expect(coloredName?.style.border).toBe('');
 
     await act(async () => {
       root.unmount();

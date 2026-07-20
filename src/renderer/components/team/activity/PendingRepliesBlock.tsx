@@ -5,20 +5,19 @@ import { CARD_BG, CARD_BORDER_STYLE, CARD_ICON_MUTED } from '@renderer/constants
 import { getTeamColorSet, getThemedBadge } from '@renderer/constants/teamColors';
 import { useTheme } from '@renderer/hooks/useTheme';
 import { useStore } from '@renderer/store';
-import { formatAgentRole } from '@renderer/utils/formatAgentRole';
+import { formatCompactRelativeTime } from '@renderer/utils/formatters';
 import {
   agentAvatarUrl,
   buildMemberAvatarMap,
   buildMemberColorMap,
-  displayMemberName,
   getMemberRuntimeAdvisoryLabel,
   getMemberRuntimeAdvisoryTitle,
 } from '@renderer/utils/memberHelpers';
 import { nameColorSet } from '@renderer/utils/projectColor';
-import { formatDistanceToNowStrict } from 'date-fns';
 import { Check, Clock3, Loader2, ShieldQuestion, Users } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { MemberBadge } from '../MemberBadge';
 import { getPendingMemberDeliveryState } from '../messages/messagesPanelLogic';
 
 import type { InboxMessage, ResolvedTeamMember } from '@shared/types';
@@ -94,14 +93,11 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
         {headerRight ? <div className="shrink-0">{headerRight}</div> : null}
       </div>
       {pending.map((entry) => {
-        const since = formatDistanceToNowStrict(entry.sentAtMs, { addSuffix: true });
+        const since = formatCompactRelativeTime(new Date(entry.sentAtMs), new Date(nowMs));
 
         if (entry.kind === 'member') {
           const { member } = entry;
           const colors = getTeamColorSet(colorMap.get(member.name) ?? '');
-          const roleLabel = formatAgentRole(
-            member.role ?? (member.agentType !== 'general-purpose' ? member.agentType : undefined)
-          );
           const advisoryLabel = getMemberRuntimeAdvisoryLabel(
             member.runtimeAdvisory,
             member.providerId,
@@ -180,37 +176,16 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
                     />
                   </span>
                 </span>
-                {onMemberClick ? (
-                  <button
-                    type="button"
-                    className="rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide transition-opacity hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-[var(--color-border)]"
-                    style={{
-                      backgroundColor: getThemedBadge(colors, isLight),
-                      color: colors.text,
-                      border: `1px solid ${colors.border}40`,
-                    }}
-                    onClick={() => onMemberClick(member)}
-                    title={t('activity.pendingReplies.openMember')}
-                  >
-                    {displayMemberName(member.name)}
-                  </button>
-                ) : (
-                  <span
-                    className="rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide"
-                    style={{
-                      backgroundColor: getThemedBadge(colors, isLight),
-                      color: colors.text,
-                      border: `1px solid ${colors.border}40`,
-                    }}
-                  >
-                    {displayMemberName(member.name)}
-                  </span>
-                )}
-                {roleLabel ? (
-                  <span className="text-[10px]" style={{ color: CARD_ICON_MUTED }}>
-                    {roleLabel}
-                  </span>
-                ) : null}
+                <MemberBadge
+                  name={member.name}
+                  color={colorMap.get(member.name)}
+                  isLight={isLight}
+                  size="sm"
+                  hideAvatar
+                  disableHoverCard
+                  variant="text"
+                  onClick={onMemberClick ? () => onMemberClick(member) : undefined}
+                />
                 <span
                   className={`min-w-0 flex-1 truncate text-[10px] ${statusColorClass}`}
                   title={statusTitle ?? undefined}

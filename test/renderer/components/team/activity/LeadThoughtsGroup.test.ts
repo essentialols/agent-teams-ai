@@ -217,6 +217,7 @@ System-level bootstrap rules:
       root.render(
         React.createElement(LeadThoughtsGroupRow, {
           group: { type: 'lead-thoughts', thoughts: [thought] },
+          memberColor: 'green',
           collapseMode: 'managed',
           isCollapsed: true,
           canToggleCollapse: true,
@@ -235,6 +236,16 @@ System-level bootstrap rules:
     expect(previewNode?.className).toContain('max-w-full');
     expect(previewNode?.className).not.toContain('min-h-8');
     expect(previewNode?.className).not.toContain('truncate');
+
+    const accent = host.querySelector<HTMLElement>('[data-timeline-header-accent]');
+    expect(accent).not.toBeNull();
+    expect(accent?.className).toContain('left-0');
+    expect(accent?.className).toContain('h-6');
+    expect(accent?.style.backgroundColor).toBe('#22c55e');
+    expect(accent?.parentElement?.className).toContain('relative');
+    expect((accent?.closest('[role="button"]') as HTMLElement | null)?.style.backgroundImage).toBe(
+      ''
+    );
 
     await act(async () => {
       root.unmount();

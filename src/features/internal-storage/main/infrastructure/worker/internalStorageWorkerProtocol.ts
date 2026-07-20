@@ -48,11 +48,11 @@ type TypedApplicationCommandLedgerWorkerRequest = {
   };
 }[keyof ApplicationCommandLedgerWorkerPayloadByOp];
 
-type UntypedApplicationCommandLedgerWorkerRequest = {
+interface UntypedApplicationCommandLedgerWorkerRequest {
   id: string;
   op: Exclude<ApplicationCommandLedgerWorkerOp, keyof ApplicationCommandLedgerWorkerPayloadByOp>;
   payload: unknown;
-};
+}
 
 export type InternalStorageWorkerRequest =
   | { id: string; op: 'ping'; payload: Record<string, never> }

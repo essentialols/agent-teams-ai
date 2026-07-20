@@ -184,7 +184,7 @@ export function materializeEventJournalWatermark(value: unknown): EventJournalWa
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw invalidWatermark('Event journal watermark must be a data object');
   }
-  const record = value as object;
+  const record = value;
   const watermark = Object.freeze({
     schemaVersion: readWatermarkDataProperty(record, 'schemaVersion'),
     deploymentId: readWatermarkDataProperty(record, 'deploymentId'),

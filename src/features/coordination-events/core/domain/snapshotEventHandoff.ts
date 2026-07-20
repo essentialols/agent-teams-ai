@@ -1073,7 +1073,7 @@ function rememberProcessedEventId(seenEventIds: Set<string>, eventId: string): v
   if (seenEventIds.size <= MAX_RECONCILIATION_PROCESSED_EVENT_IDS) {
     return;
   }
-  const oldestEventId = seenEventIds.values().next().value as string | undefined;
+  const oldestEventId = seenEventIds.values().next().value;
   if (oldestEventId !== undefined) {
     seenEventIds.delete(oldestEventId);
   }

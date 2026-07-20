@@ -123,9 +123,6 @@ export interface DurableApplicationCommandEffectTransitionRequest extends Durabl
   readonly transitionedAtIso: string;
 }
 
-/** Positive safe integer validated at every storage boundary. */
-export type DurableApplicationCommandSemanticRevision = number;
-
 export interface DurableApplicationCommandOutboxInput {
   readonly eventId: string;
   readonly eventType: string;
@@ -135,8 +132,9 @@ export interface DurableApplicationCommandOutboxInput {
   /**
    * Monotonic domain revision of the projection changed by this event. This
    * is envelope metadata, not an optional convention inside payloadJson.
+   * Positive safe integer validated at every storage boundary.
    */
-  readonly semanticRevision: DurableApplicationCommandSemanticRevision;
+  readonly semanticRevision: number;
   readonly payloadJson: string;
   readonly createdAtIso: string;
 }
@@ -189,7 +187,7 @@ export interface DurableApplicationCommandConsumerProjectionRequest {
 
 export interface DurableApplicationCommandConsumerApplyRequest extends DurableApplicationCommandConsumerProjectionRequest {
   readonly eventId: string;
-  readonly semanticRevision: DurableApplicationCommandSemanticRevision;
+  readonly semanticRevision: number;
   /** Durable projection state written in the same transaction as the event fence. */
   readonly stateJson: string;
   readonly appliedAtIso: string;
@@ -197,13 +195,13 @@ export interface DurableApplicationCommandConsumerApplyRequest extends DurableAp
 
 export interface DurableApplicationCommandConsumerApplicationRecord extends DurableApplicationCommandConsumerProjectionRequest {
   readonly eventId: string;
-  readonly semanticRevision: DurableApplicationCommandSemanticRevision;
+  readonly semanticRevision: number;
   readonly stateJson: string;
   readonly appliedAt: string;
 }
 
 export interface DurableApplicationCommandConsumerProjectionRecord extends DurableApplicationCommandConsumerProjectionRequest {
-  readonly semanticRevision: DurableApplicationCommandSemanticRevision;
+  readonly semanticRevision: number;
   readonly lastEventId: string;
   readonly stateJson: string;
   /** Number of distinct semantic events atomically applied to this projection. */

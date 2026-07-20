@@ -653,12 +653,8 @@ function releaseSnapshotLeaseBeforeDeadline(input: {
     signal: abortController.signal,
     deadlineAtMs: input.deadlineAtMs,
   });
-  let operation: Promise<void>;
-  try {
-    operation = Promise.resolve(input.retentionLeases.releaseSnapshotLease(input.leaseId, context));
-  } catch (error) {
-    operation = Promise.reject(error);
-  }
+  const operation = (async (): Promise<void> =>
+    input.retentionLeases.releaseSnapshotLease(input.leaseId, context))();
 
   const remainingMs = input.deadlineAtMs - Date.now();
   if (remainingMs <= 0) {

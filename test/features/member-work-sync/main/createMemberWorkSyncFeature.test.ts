@@ -123,7 +123,10 @@ async function seedBlockingShadowCollectingMetrics(input: {
   teamsBasePath: string;
   teamName: string;
   memberName: string;
+  metricKind?: 'would_nudge' | 'fingerprint_changed' | 'report_rejected';
+  metricKinds?: Array<'would_nudge' | 'fingerprint_changed' | 'report_rejected'>;
 }): Promise<void> {
+  const metricKinds = input.metricKinds ?? [input.metricKind ?? 'would_nudge'];
   const nowMs = Date.now();
   const firstObservedAt = new Date(nowMs - 1_000).toISOString();
   const secondObservedAt = new Date(nowMs).toISOString();
@@ -160,17 +163,97 @@ async function seedBlockingShadowCollectingMetrics(input: {
             recordedAt: firstObservedAt,
             actionableCount: 1,
           },
-          {
-            id: 'seed-would-nudge-0',
+          ...metricKinds.map((metricKind, index) => ({
+            id: `seed-${metricKind}-${index}`,
             teamName: input.teamName,
             memberName: input.memberName,
-            kind: 'would_nudge',
+            kind: metricKind,
             state: 'needs_sync',
             agendaFingerprint: 'agenda:v1:seed',
             recordedAt: secondObservedAt,
             actionableCount: 1,
-          },
+          })),
         ],
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  );
+}
+
+async function seedMatureBlockingMetrics(input: {
+  teamsBasePath: string;
+  teamName: string;
+  memberName: string;
+  memberNames?: string[];
+  metricKinds: Array<'would_nudge' | 'fingerprint_changed' | 'report_rejected'>;
+}): Promise<void> {
+  const memberNames = [...new Set(input.memberNames ?? [input.memberName])];
+  const nowMs = Date.now();
+  const observationWindowMs = 2 * 60 * 60_000;
+  const startMs = nowMs - observationWindowMs;
+  const metricEventCounts = {
+    would_nudge: 12,
+    fingerprint_changed: 6,
+    report_rejected: 6,
+  } as const;
+  const metricsPath = path.join(
+    input.teamsBasePath,
+    input.teamName,
+    '.member-work-sync',
+    'indexes',
+    'metrics.json'
+  );
+  const members = Object.fromEntries(
+    memberNames.map((memberName) => [
+      memberName,
+      {
+        memberName,
+        state: 'caught_up',
+        agendaFingerprint: `agenda:v1:seed:${memberName}`,
+        actionableCount: 0,
+        evaluatedAt: new Date(startMs).toISOString(),
+        providerId: 'codex',
+      },
+    ])
+  );
+  const statusEvents = Array.from({ length: 24 }, (_, index) => {
+    const memberName = memberNames[index % memberNames.length]!;
+    return {
+      id: `mature-status-${index}`,
+      teamName: input.teamName,
+      memberName,
+      kind: 'status_evaluated',
+      state: 'caught_up',
+      agendaFingerprint: `agenda:v1:seed:${memberName}:${index}`,
+      recordedAt: new Date(startMs + Math.round((observationWindowMs * index) / 23)).toISOString(),
+      actionableCount: 0,
+      providerId: 'codex',
+    };
+  });
+  const metricEvents = input.metricKinds.flatMap((metricKind) =>
+    Array.from({ length: metricEventCounts[metricKind] }, (_, index) => ({
+      id: `mature-${metricKind}-${index}`,
+      teamName: input.teamName,
+      memberName: input.memberName,
+      kind: metricKind,
+      state: 'needs_sync',
+      agendaFingerprint: 'agenda:v1:noisy-member',
+      recordedAt: new Date(nowMs - index * 1_000).toISOString(),
+      actionableCount: 1,
+      providerId: 'codex',
+    }))
+  );
+
+  await fs.promises.mkdir(path.dirname(metricsPath), { recursive: true });
+  await fs.promises.writeFile(
+    metricsPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: 2,
+        members,
+        recentEvents: [...statusEvents, ...metricEvents],
       },
       null,
       2
@@ -1782,7 +1865,12 @@ describe('createMemberWorkSyncFeature composition', () => {
     });
 
     try {
-      await seedBlockingShadowCollectingMetrics({ teamsBasePath, teamName, memberName });
+      await seedBlockingShadowCollectingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKind: 'report_rejected',
+      });
       feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
 
       await waitForAssertion(async () => {
@@ -2723,7 +2811,7 @@ describe('createMemberWorkSyncFeature composition', () => {
     }
   });
 
-  it('keeps nudges gated until shadow readiness is reached, then delivers on the next reconcile', async () => {
+  it('delivers native targeted recovery when agenda telemetry makes readiness noisy', async () => {
     const claudeRoot = makeTempRoot();
     setClaudeBasePathOverride(claudeRoot);
     const teamsBasePath = getTeamsBasePath();
@@ -2742,7 +2830,7 @@ describe('createMemberWorkSyncFeature composition', () => {
           {
             id: 'task-1',
             displayId: '11111111',
-            subject: 'Ship sync after readiness',
+            subject: 'Ship sync despite self-noisy readiness',
             status: 'pending',
             owner: memberName,
           },
@@ -2763,37 +2851,27 @@ describe('createMemberWorkSyncFeature composition', () => {
     });
 
     try {
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKinds: ['would_nudge', 'fingerprint_changed'],
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+        },
+      });
       feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
 
       await waitForAssertion(async () => {
         expect(feature.getQueueDiagnostics()).toMatchObject({ reconciled: 1 });
-        expect(await readInboxMessages({ teamsBasePath, teamName, memberName })).toEqual([]);
-        expect(await readMemberOutboxItems({ teamsBasePath, teamName, memberName })).toEqual({});
-        await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
-          phase2Readiness: { state: 'collecting_shadow_data' },
+        const metrics = await feature.getMetrics({ teamName });
+        expect(metrics.phase2Readiness).toMatchObject({
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
         });
-      });
-
-      await waitForAssertion(async () => {
-        const journal = await fs.promises.readFile(
-          path.join(
-            teamsBasePath,
-            teamName,
-            'members',
-            memberName,
-            '.member-work-sync',
-            'journal.jsonl'
-          ),
-          'utf8'
-        );
-        expect(journal).toContain('"event":"nudge_skipped"');
-        expect(journal).toContain('"reason":"blocking_metrics"');
-      });
-
-      await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
-      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
-
-      await waitForAssertion(async () => {
         const nudges = (await readInboxMessages({ teamsBasePath, teamName, memberName })).filter(
           (message) => message.messageKind === 'member_work_sync_nudge'
         );
@@ -2808,6 +2886,570 @@ describe('createMemberWorkSyncFeature composition', () => {
           }),
         ]);
       });
+
+      const journal = await fs.promises.readFile(
+        path.join(
+          teamsBasePath,
+          teamName,
+          'members',
+          memberName,
+          '.member-work-sync',
+          'journal.jsonl'
+        ),
+        'utf8'
+      );
+      expect(journal).toContain('"event":"nudge_delivered"');
+      expect(journal).not.toContain('"reason":"blocking_metrics"');
+    } finally {
+      await feature.dispose();
+    }
+  });
+
+  it('keeps the planner silent for a peer safety blocker and recovers after metrics clear', async () => {
+    const claudeRoot = makeTempRoot();
+    setClaudeBasePathOverride(claudeRoot);
+    const teamsBasePath = getTeamsBasePath();
+    const teamName = 'team-report-rejection-planner';
+    const safetyMemberName = 'alice';
+    const memberName = 'bob';
+    const feature = createMemberWorkSyncFeature({
+      teamsBasePath,
+      configReader: {
+        getConfig: vi.fn(async () => ({
+          name: teamName,
+          members: [
+            { name: safetyMemberName, providerId: 'codex' },
+            { name: memberName, providerId: 'codex' },
+          ],
+        })),
+      } as never,
+      taskReader: {
+        getTasks: vi.fn(async () => [
+          {
+            id: 'task-1',
+            displayId: '11111111',
+            subject: 'Wait until safety metrics recover',
+            status: 'pending',
+            owner: memberName,
+          },
+        ]),
+      } as never,
+      kanbanManager: {
+        getState: vi.fn(async () => ({
+          teamName,
+          reviewers: [],
+          tasks: {},
+        })),
+      } as never,
+      membersMetaStore: {
+        getMembers: vi.fn(async () => []),
+      } as never,
+      isTeamActive: vi.fn(async () => true),
+      queueQuietWindowMs: 1,
+    });
+
+    try {
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName: safetyMemberName,
+        memberNames: [safetyMemberName, memberName],
+        metricKinds: ['would_nudge', 'fingerprint_changed', 'report_rejected'],
+      });
+      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
+
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics()).toMatchObject({ reconciled: 1 });
+        await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+          phase2Readiness: {
+            state: 'blocked',
+            reasons: expect.arrayContaining([
+              'would_nudge_rate_high',
+              'fingerprint_churn_high',
+              'report_rejection_rate_high',
+            ]),
+          },
+          recentEvents: expect.arrayContaining([
+            expect.objectContaining({
+              memberName: safetyMemberName,
+              kind: 'report_rejected',
+            }),
+          ]),
+        });
+        await expect(readInboxMessages({ teamsBasePath, teamName, memberName })).resolves.toEqual(
+          []
+        );
+        await expect(
+          readMemberOutboxItems({ teamsBasePath, teamName, memberName })
+        ).resolves.toEqual({});
+      });
+
+      const blockedJournal = await fs.promises.readFile(
+        path.join(
+          teamsBasePath,
+          teamName,
+          'members',
+          memberName,
+          '.member-work-sync',
+          'journal.jsonl'
+        ),
+        'utf8'
+      );
+      const plannerBlock = blockedJournal
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((event) => event.source === 'nudge_planner' && event.reason === 'blocking_metrics');
+      expect(plannerBlock).toMatchObject({
+        event: 'nudge_skipped',
+        diagnostics: expect.arrayContaining([
+          'phase2_readiness:would_nudge_rate_high',
+          'phase2_readiness:fingerprint_churn_high',
+          'phase2_readiness:report_rejection_rate_high',
+        ]),
+        metadata: expect.objectContaining({
+          phase2ReadinessState: 'blocked',
+          phase2ReadinessReasons: expect.stringContaining('report_rejection_rate_high'),
+          reportRejectionRate: 1,
+          maxReportRejectionRate: 0.2,
+        }),
+      });
+
+      await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
+      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics().reconciled).toBeGreaterThanOrEqual(2);
+        const nudges = (await readInboxMessages({ teamsBasePath, teamName, memberName })).filter(
+          (message) => message.messageKind === 'member_work_sync_nudge'
+        );
+        expect(nudges).toHaveLength(1);
+        expect(nudges[0]?.text).toContain('11111111');
+        expect(
+          Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+        ).toEqual([expect.objectContaining({ status: 'delivered' })]);
+      });
+    } finally {
+      await feature.dispose();
+    }
+  });
+
+  it('keeps a queued native nudge retryable when report rejection becomes unsafe before dispatch', async () => {
+    const claudeRoot = makeTempRoot();
+    setClaudeBasePathOverride(claudeRoot);
+    const teamsBasePath = getTeamsBasePath();
+    const teamName = 'team-report-rejection-dispatch';
+    const memberName = 'bob';
+    let canDispatchNudges = false;
+    const feature = createMemberWorkSyncFeature({
+      teamsBasePath,
+      configReader: {
+        getConfig: vi.fn(async () => ({
+          name: teamName,
+          members: [{ name: memberName, providerId: 'codex' }],
+        })),
+      } as never,
+      taskReader: {
+        getTasks: vi.fn(async () => [
+          {
+            id: 'task-1',
+            displayId: '11111111',
+            subject: 'Keep unsafe report recovery queued',
+            status: 'pending',
+            owner: memberName,
+          },
+        ]),
+      } as never,
+      kanbanManager: {
+        getState: vi.fn(async () => ({
+          teamName,
+          reviewers: [],
+          tasks: {},
+        })),
+      } as never,
+      membersMetaStore: {
+        getMembers: vi.fn(async () => []),
+      } as never,
+      isTeamActive: vi.fn(async () => true),
+      canDispatchNudges: vi.fn(async () => canDispatchNudges),
+      queueQuietWindowMs: 1,
+    });
+
+    try {
+      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
+
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics()).toMatchObject({ reconciled: 1 });
+        expect(
+          Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+        ).toEqual([expect.objectContaining({ status: 'pending' })]);
+      });
+
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKinds: ['would_nudge', 'fingerprint_changed', 'report_rejected'],
+      });
+      canDispatchNudges = true;
+
+      await expect(feature.dispatchDueNudges([teamName])).resolves.toEqual({
+        claimed: 1,
+        delivered: 0,
+        superseded: 0,
+        retryable: 1,
+        terminal: 0,
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining([
+            'would_nudge_rate_high',
+            'fingerprint_churn_high',
+            'report_rejection_rate_high',
+          ]),
+        },
+      });
+      await expect(readInboxMessages({ teamsBasePath, teamName, memberName })).resolves.toEqual([]);
+      expect(
+        Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+      ).toEqual([
+        expect.objectContaining({
+          status: 'failed_retryable',
+          lastError: 'blocking_metrics',
+        }),
+      ]);
+
+      const journal = await fs.promises.readFile(
+        path.join(
+          teamsBasePath,
+          teamName,
+          'members',
+          memberName,
+          '.member-work-sync',
+          'journal.jsonl'
+        ),
+        'utf8'
+      );
+      const dispatcherBlock = journal
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find(
+          (event) => event.source === 'nudge_dispatcher' && event.reason === 'blocking_metrics'
+        );
+      expect(dispatcherBlock).toMatchObject({
+        event: 'nudge_skipped',
+        diagnostics: expect.arrayContaining([
+          'phase2_readiness:would_nudge_rate_high',
+          'phase2_readiness:fingerprint_churn_high',
+          'phase2_readiness:report_rejection_rate_high',
+        ]),
+        metadata: expect.objectContaining({
+          phase2ReadinessReasons: expect.stringContaining('report_rejection_rate_high'),
+          reportRejectionRate: 1,
+          maxReportRejectionRate: 0.2,
+        }),
+      });
+      expect(journal).not.toContain('"event":"nudge_delivered"');
+
+      await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
+      await forceRetryableOutboxDue({
+        teamsBasePath,
+        teamName,
+        memberName,
+        nextAttemptAt: new Date(Date.now() - 1_000).toISOString(),
+      });
+      await expect(feature.dispatchDueNudges([teamName])).resolves.toEqual({
+        claimed: 1,
+        delivered: 1,
+        superseded: 0,
+        retryable: 0,
+        terminal: 0,
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'shadow_ready',
+          reasons: [],
+        },
+      });
+      expect(
+        (await readInboxMessages({ teamsBasePath, teamName, memberName })).filter(
+          (message) => message.messageKind === 'member_work_sync_nudge'
+        )
+      ).toHaveLength(1);
+      expect(
+        Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+      ).toEqual([expect.objectContaining({ status: 'delivered' })]);
+      const recoveredJournal = await fs.promises.readFile(
+        path.join(
+          teamsBasePath,
+          teamName,
+          'members',
+          memberName,
+          '.member-work-sync',
+          'journal.jsonl'
+        ),
+        'utf8'
+      );
+      expect(recoveredJournal).toContain('"event":"nudge_delivered"');
+    } finally {
+      await feature.dispose();
+    }
+  });
+
+  it('delivers a queued native nudge when another member makes team metrics self-noisy before dispatch', async () => {
+    const claudeRoot = makeTempRoot();
+    setClaudeBasePathOverride(claudeRoot);
+    const teamsBasePath = getTeamsBasePath();
+    const teamName = 'team-cross-member-noise';
+    const noisyMemberName = 'alice';
+    const targetMemberName = 'bob';
+    let canDispatchNudges = false;
+    const feature = createMemberWorkSyncFeature({
+      teamsBasePath,
+      configReader: {
+        getConfig: vi.fn(async () => ({
+          name: teamName,
+          members: [
+            { name: noisyMemberName, providerId: 'codex' },
+            { name: targetMemberName, providerId: 'codex' },
+          ],
+        })),
+      } as never,
+      taskReader: {
+        getTasks: vi.fn(async () => [
+          {
+            id: 'task-1',
+            displayId: '11111111',
+            subject: 'Recover despite noisy peer telemetry',
+            status: 'pending',
+            owner: targetMemberName,
+          },
+        ]),
+      } as never,
+      kanbanManager: {
+        getState: vi.fn(async () => ({
+          teamName,
+          reviewers: [],
+          tasks: {},
+        })),
+      } as never,
+      membersMetaStore: {
+        getMembers: vi.fn(async () => []),
+      } as never,
+      isTeamActive: vi.fn(async () => true),
+      canDispatchNudges: vi.fn(async () => canDispatchNudges),
+      queueQuietWindowMs: 1,
+    });
+
+    try {
+      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics()).toMatchObject({ reconciled: 1 });
+        expect(
+          Object.values(
+            await readMemberOutboxItems({
+              teamsBasePath,
+              teamName,
+              memberName: targetMemberName,
+            })
+          )
+        ).toEqual([expect.objectContaining({ status: 'pending' })]);
+      });
+
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName: noisyMemberName,
+        memberNames: [noisyMemberName, targetMemberName],
+        metricKinds: ['would_nudge', 'fingerprint_changed'],
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+        },
+        recentEvents: expect.arrayContaining([
+          expect.objectContaining({
+            memberName: noisyMemberName,
+            kind: 'would_nudge',
+          }),
+          expect.objectContaining({
+            memberName: noisyMemberName,
+            kind: 'fingerprint_changed',
+          }),
+        ]),
+      });
+
+      const reconciledBeforeTeamWideRefresh = feature.getQueueDiagnostics().reconciled;
+      feature.noteTeamChange({ type: 'config', teamName } as never);
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics()).toMatchObject({
+          queued: 0,
+          running: 0,
+        });
+        expect(feature.getQueueDiagnostics().reconciled).toBeGreaterThanOrEqual(
+          reconciledBeforeTeamWideRefresh + 2
+        );
+        await expect(
+          readMemberOutboxItems({
+            teamsBasePath,
+            teamName,
+            memberName: noisyMemberName,
+          })
+        ).resolves.toEqual({});
+        await expect(
+          readInboxMessages({
+            teamsBasePath,
+            teamName,
+            memberName: noisyMemberName,
+          })
+        ).resolves.toEqual([]);
+      });
+
+      canDispatchNudges = true;
+      await expect(feature.dispatchDueNudges([teamName])).resolves.toEqual({
+        claimed: 1,
+        delivered: 1,
+        superseded: 0,
+        retryable: 0,
+        terminal: 0,
+      });
+      const targetNudges = (
+        await readInboxMessages({
+          teamsBasePath,
+          teamName,
+          memberName: targetMemberName,
+        })
+      ).filter((message) => message.messageKind === 'member_work_sync_nudge');
+      expect(targetNudges).toHaveLength(1);
+      expect(targetNudges[0]?.text).toContain('11111111');
+      await expect(
+        readInboxMessages({
+          teamsBasePath,
+          teamName,
+          memberName: noisyMemberName,
+        })
+      ).resolves.toEqual([]);
+
+      const journal = await fs.promises.readFile(
+        path.join(
+          teamsBasePath,
+          teamName,
+          'members',
+          targetMemberName,
+          '.member-work-sync',
+          'journal.jsonl'
+        ),
+        'utf8'
+      );
+      expect(journal).toContain('"event":"nudge_delivered"');
+      expect(journal).not.toContain('"reason":"blocking_metrics"');
+    } finally {
+      await feature.dispose();
+    }
+  });
+
+  it('keeps noisy native recovery idempotent after the feature restarts', async () => {
+    const claudeRoot = makeTempRoot();
+    setClaudeBasePathOverride(claudeRoot);
+    const teamsBasePath = getTeamsBasePath();
+    const teamName = 'team-noisy-restart-idempotency';
+    const memberName = 'bob';
+    const createFeature = () =>
+      createMemberWorkSyncFeature({
+        teamsBasePath,
+        configReader: {
+          getConfig: vi.fn(async () => ({
+            name: teamName,
+            members: [{ name: memberName, providerId: 'codex' }],
+          })),
+        } as never,
+        taskReader: {
+          getTasks: vi.fn(async () => [
+            {
+              id: 'task-1',
+              displayId: '11111111',
+              subject: 'Do not redeliver after restart',
+              status: 'pending',
+              owner: memberName,
+            },
+          ]),
+        } as never,
+        kanbanManager: {
+          getState: vi.fn(async () => ({
+            teamName,
+            reviewers: [],
+            tasks: {},
+          })),
+        } as never,
+        membersMetaStore: {
+          getMembers: vi.fn(async () => []),
+        } as never,
+        isTeamActive: vi.fn(async () => true),
+        queueQuietWindowMs: 1,
+      });
+    let feature = createFeature();
+
+    try {
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKinds: ['would_nudge', 'fingerprint_changed'],
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+        },
+      });
+      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
+      await waitForAssertion(async () => {
+        const nudges = (await readInboxMessages({ teamsBasePath, teamName, memberName })).filter(
+          (message) => message.messageKind === 'member_work_sync_nudge'
+        );
+        expect(nudges).toHaveLength(1);
+        expect(
+          Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+        ).toEqual([expect.objectContaining({ status: 'delivered' })]);
+      });
+
+      await feature.dispose();
+      feature = createFeature();
+      feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics().reconciled).toBeGreaterThanOrEqual(1);
+      });
+      await expect(feature.dispatchDueNudges([teamName])).resolves.toMatchObject({
+        delivered: 0,
+      });
+
+      const nudges = (await readInboxMessages({ teamsBasePath, teamName, memberName })).filter(
+        (message) => message.messageKind === 'member_work_sync_nudge'
+      );
+      expect(nudges).toHaveLength(1);
+      expect(
+        Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+      ).toEqual([expect.objectContaining({ status: 'delivered' })]);
+      const journal = await fs.promises.readFile(
+        path.join(
+          teamsBasePath,
+          teamName,
+          'members',
+          memberName,
+          '.member-work-sync',
+          'journal.jsonl'
+        ),
+        'utf8'
+      );
+      expect(
+        journal
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { event?: string })
+          .filter((event) => event.event === 'nudge_delivered')
+      ).toHaveLength(1);
     } finally {
       await feature.dispose();
     }
@@ -2890,6 +3532,41 @@ describe('createMemberWorkSyncFeature composition', () => {
           report: { accepted: true, state: 'still_working' },
         },
       });
+
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKinds: ['would_nudge', 'fingerprint_changed'],
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+        },
+      });
+      const reconciledBeforeLeaseRefresh = feature.getQueueDiagnostics().reconciled;
+      feature.noteTeamChange({ type: 'config', teamName } as never);
+      await waitForAssertion(async () => {
+        expect(feature.getQueueDiagnostics()).toMatchObject({
+          queued: 0,
+          running: 0,
+        });
+        expect(feature.getQueueDiagnostics().reconciled).toBeGreaterThanOrEqual(
+          reconciledBeforeLeaseRefresh + 1
+        );
+        await expect(feature.getStatus({ teamName, memberName })).resolves.toMatchObject({
+          state: 'still_working',
+          report: { accepted: true, state: 'still_working' },
+        });
+        const nudges = (await readInboxMessages({ teamsBasePath, teamName, memberName })).filter(
+          (message) => message.messageKind === 'member_work_sync_nudge'
+        );
+        expect(nudges).toHaveLength(1);
+        expect(
+          Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+        ).toEqual([expect.objectContaining({ status: 'delivered' })]);
+      });
       await expect(feature.dispatchDueNudges([teamName])).resolves.toEqual({
         claimed: 0,
         delivered: 0,
@@ -2930,6 +3607,12 @@ describe('createMemberWorkSyncFeature composition', () => {
           wouldNudge: true,
           fingerprintChanged: true,
           previousFingerprint: firstFingerprint,
+        });
+        await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+          phase2Readiness: {
+            state: 'blocked',
+            reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+          },
         });
       });
 
@@ -3395,7 +4078,7 @@ describe('createMemberWorkSyncFeature composition', () => {
     }
   });
 
-  it('defers nudges while a member is busy and recovers on the next agenda change', async () => {
+  it('defers noisy fail-open nudges while a member is busy and recovers on the next agenda change', async () => {
     const claudeRoot = makeTempRoot();
     setClaudeBasePathOverride(claudeRoot);
     const teamsBasePath = getTeamsBasePath();
@@ -3436,7 +4119,18 @@ describe('createMemberWorkSyncFeature composition', () => {
     });
 
     try {
-      await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKinds: ['would_nudge', 'fingerprint_changed'],
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+        },
+      });
       feature.noteTeamChange({
         type: 'tool-activity',
         teamName,
@@ -3633,7 +4327,7 @@ describe('createMemberWorkSyncFeature composition', () => {
     }
   });
 
-  it('rate-limits the active loop after two delivered nudges per member per hour', async () => {
+  it('rate-limits the noisy fail-open loop after two delivered nudges per member per hour', async () => {
     const claudeRoot = makeTempRoot();
     setClaudeBasePathOverride(claudeRoot);
     const teamsBasePath = getTeamsBasePath();
@@ -3674,7 +4368,18 @@ describe('createMemberWorkSyncFeature composition', () => {
     });
 
     try {
-      await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
+      await seedMatureBlockingMetrics({
+        teamsBasePath,
+        teamName,
+        memberName,
+        metricKinds: ['would_nudge', 'fingerprint_changed'],
+      });
+      await expect(feature.getMetrics({ teamName })).resolves.toMatchObject({
+        phase2Readiness: {
+          state: 'blocked',
+          reasons: expect.arrayContaining(['would_nudge_rate_high', 'fingerprint_churn_high']),
+        },
+      });
       feature.noteTeamChange({ type: 'task', teamName, taskId: 'task-1' } as never);
 
       await waitForAssertion(async () => {
@@ -4284,7 +4989,9 @@ describe('createMemberWorkSyncFeature composition', () => {
     try {
       await seedBlockingShadowCollectingMetrics({ teamsBasePath, teamName, memberName });
       const current = await feature.refreshStatus({ teamName, memberName });
-      expect(await readMemberOutboxItems({ teamsBasePath, teamName, memberName })).toEqual({});
+      expect(
+        Object.values(await readMemberOutboxItems({ teamsBasePath, teamName, memberName }))
+      ).toEqual([expect.objectContaining({ status: 'pending' })]);
 
       await expect(
         feature.report({

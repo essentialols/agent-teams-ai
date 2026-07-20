@@ -29,6 +29,12 @@ The journal is append-only JSONL and records sync decisions, not raw agent trans
 - `nudge_planned`, `nudge_delivered`, `nudge_skipped`, `nudge_retryable`, `nudge_superseded`
 - `member_busy`, `watchdog_cooldown_active`, `team_inactive`, `legacy_fallback_used`
 
+When planning is skipped by `blocking_metrics` or `phase2_not_ready`, the event includes
+`phase2_readiness:*` diagnostics plus observed rates and matching thresholds in `metadata`.
+The same fields are recorded if dispatcher revalidation blocks a queued nudge.
+`would_nudge_rate_high` and `fingerprint_churn_high` remain diagnostic-only for delivery;
+`report_rejection_rate_high` remains delivery-blocking.
+
 Team-level shared/index state remains under:
 
 ```text

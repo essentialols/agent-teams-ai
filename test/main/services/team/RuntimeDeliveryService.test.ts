@@ -856,7 +856,7 @@ describe('RuntimeDeliveryService', () => {
     });
   });
 
-  it('does not commit cross-team retry from sender-copy proof without target runtime proof', async () => {
+  it('commits cross-team recovery from exact sender-copy proof without redelivery', async () => {
     const crossTeamEnvelope = envelope({
       to: { teamName: 'team-b', memberName: 'Reviewer' },
     });
@@ -907,10 +907,10 @@ describe('RuntimeDeliveryService', () => {
 
     expect(ack).toMatchObject({
       ok: true,
-      delivered: true,
-      reason: null,
+      delivered: false,
+      reason: 'duplicate_destination_found',
     });
-    expect(crossTeamSender).toHaveBeenCalledTimes(1);
+    expect(crossTeamSender).not.toHaveBeenCalled();
     await expect(journal.get(journalKey(crossTeamEnvelope))).resolves.toMatchObject({
       status: 'committed',
       committedLocation: expect.objectContaining({

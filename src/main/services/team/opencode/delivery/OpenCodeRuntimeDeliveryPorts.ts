@@ -301,18 +301,21 @@ export function createOpenCodeRuntimeDeliveryPorts(
 
       return location;
     },
-    verify: async ({ destination, location }) => {
+    verify: async ({ destination, destinationMessageId, location }) => {
       if (destination.kind !== 'cross_team_outbox') {
         return { found: false, location: null, diagnostics: ['destination kind mismatch'] };
       }
-      if (!isCrossTeamLocation(location)) {
-        return {
-          found: false,
-          location: null,
-          diagnostics: ['cross-team target runtime proof required'],
-        };
-      }
-      const expectedLocation = location;
+      const expectedLocation: Extract<RuntimeDeliveryLocation, { kind: 'cross_team_outbox' }> =
+        isCrossTeamLocation(location)
+          ? location
+          : {
+              // Pending recovery records have not persisted a committed location yet.
+              kind: 'cross_team_outbox',
+              fromTeamName: destination.fromTeamName,
+              toTeamName: destination.toTeamName,
+              toMemberName: destination.toMemberName,
+              messageId: destinationMessageId,
+            };
       const messages = await deps.sentMessagesStore.readMessages(expectedLocation.fromTeamName);
       const found = Boolean(findCrossTeamSenderCopy(messages, expectedLocation));
       return {

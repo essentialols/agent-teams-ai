@@ -1,13 +1,25 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   createOpenCodeRuntimeDeliveryPorts,
   type OpenCodeRuntimeDeliveryCrossTeamSender,
 } from '../../../../src/main/services/team/opencode/delivery/OpenCodeRuntimeDeliveryPorts';
+import {
+  buildRuntimeDestinationMessageId,
+  createRuntimeDeliveryJournalStore,
+  type RuntimeDeliveryEnvelope,
+} from '../../../../src/main/services/team/opencode/delivery/RuntimeDeliveryJournal';
+import {
+  type RuntimeDeliveryDestinationPort,
+  RuntimeDeliveryDestinationRegistry,
+  RuntimeDeliveryService,
+} from '../../../../src/main/services/team/opencode/delivery/RuntimeDeliveryService';
 import { CROSS_TEAM_SENT_SOURCE } from '../../../../src/shared/constants/crossTeam';
 
-import type { RuntimeDeliveryEnvelope } from '../../../../src/main/services/team/opencode/delivery/RuntimeDeliveryJournal';
-import type { RuntimeDeliveryDestinationPort } from '../../../../src/main/services/team/opencode/delivery/RuntimeDeliveryService';
 import type { CrossTeamSendResult, InboxMessage } from '../../../../src/shared/types/team';
 
 type VoidCrossTeamSender = (
@@ -164,7 +176,7 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
     }
   });
 
-  it('requires runtime proof when an OpenCode runtime delivers cross-team', async () => {
+  it('recovers an exact cross-team sender copy after a crash before markCommitted', async () => {
     const sentMessages: InboxMessage[] = [];
     const crossTeamSender = vi.fn(
       (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) => {
@@ -236,9 +248,16 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
         },
         destinationMessageId: 'runtime-delivery-message',
       })
-    ).resolves.toMatchObject({
-      found: false,
-      diagnostics: ['cross-team target runtime proof required'],
+    ).resolves.toEqual({
+      found: true,
+      location: {
+        kind: 'cross_team_outbox',
+        fromTeamName: 'team-a',
+        toTeamName: 'team-b',
+        toMemberName: 'Reviewer',
+        messageId: 'runtime-delivery-message',
+      },
+      diagnostics: [],
     });
     await expect(
       port.verify({
@@ -254,22 +273,31 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
     ).resolves.toMatchObject({ found: true });
   });
 
-  it('does not treat a sender copy as cross-team runtime proof without a write result', async () => {
-    const sentMessages: InboxMessage[] = [
-      {
-        from: 'Builder',
-        to: 'team-b.Reviewer',
-        text: 'Please review this',
-        timestamp: '2026-04-21T12:00:00.000Z',
-        read: true,
-        messageId: 'runtime-delivery-message',
-        source: CROSS_TEAM_SENT_SOURCE,
-      },
-    ];
-    const port = getCrossTeamPort(
-      createOpenCodeRuntimeDeliveryPorts({
+  it('commits cross-team recovery without redelivery after markCommitted crashes', async () => {
+    const journalDir = await mkdtemp(join(tmpdir(), 'cross-team-delivery-recovery-'));
+    try {
+      const sentMessages: InboxMessage[] = [];
+      const crossTeamSender = vi.fn(
+        (request: Parameters<OpenCodeRuntimeDeliveryCrossTeamSender>[0]) => {
+          const messageId = request.messageId ?? 'runtime-delivery-message';
+          sentMessages.push({
+            from: request.fromMember,
+            to: `${request.toTeam}.${request.toMember ?? 'team-lead'}`,
+            text: request.text,
+            timestamp: request.timestamp ?? '2026-04-21T12:00:00.000Z',
+            read: true,
+            messageId,
+            source: CROSS_TEAM_SENT_SOURCE,
+          });
+          return Promise.resolve({ messageId, deliveredToInbox: true });
+        }
+      );
+      const ports = createOpenCodeRuntimeDeliveryPorts({
         sentMessagesStore: {
-          appendMessage: vi.fn(() => Promise.resolve()),
+          appendMessage: vi.fn((_teamName: string, message: InboxMessage) => {
+            sentMessages.push(message);
+            return Promise.resolve();
+          }),
           readMessages: vi.fn(() => Promise.resolve(sentMessages)),
         },
         inboxReader: {
@@ -277,32 +305,170 @@ describe('OpenCodeRuntimeDeliveryPorts', () => {
         },
         inboxWriter: {
           sendMessage: vi.fn(() =>
-            Promise.resolve({
-              deliveredToInbox: true,
-              messageId: 'unused',
-            })
+            Promise.resolve({ deliveredToInbox: true, messageId: 'unused' })
           ),
         },
-        getCrossTeamSender: () => vi.fn(),
-      })
-    );
+        getCrossTeamSender: () => crossTeamSender,
+      });
+      const journal = createRuntimeDeliveryJournalStore({
+        filePath: join(journalDir, 'delivery-journal.json'),
+        clock: () => new Date('2026-04-21T12:00:00.000Z'),
+      });
+      vi.spyOn(journal, 'markCommitted').mockRejectedValueOnce(
+        new Error('simulated crash before markCommitted')
+      );
+      const service = new RuntimeDeliveryService(
+        { getCurrentRunId: vi.fn(() => Promise.resolve('run-1')) },
+        journal,
+        new RuntimeDeliveryDestinationRegistry(ports),
+        { append: vi.fn(() => Promise.resolve()) },
+        { emit: vi.fn() },
+        () => new Date('2026-04-21T12:00:00.000Z')
+      );
+      const deliveryEnvelope = envelope();
+      const destinationMessageId = buildRuntimeDestinationMessageId(deliveryEnvelope);
 
-    await expect(
-      port.verify({
-        destination: {
+      await expect(service.deliver(deliveryEnvelope)).rejects.toThrow(
+        'simulated crash before markCommitted'
+      );
+      await expect(
+        journal.get({ idempotencyKey: 'delivery-1', runId: 'run-1', teamName: 'team-a' })
+      ).resolves.toMatchObject({
+        status: 'failed_retryable',
+        committedLocation: null,
+      });
+
+      await expect(service.deliver(deliveryEnvelope)).resolves.toMatchObject({
+        ok: true,
+        delivered: false,
+        reason: 'duplicate_destination_found',
+        location: {
           kind: 'cross_team_outbox',
           fromTeamName: 'team-a',
           toTeamName: 'team-b',
           toMemberName: 'Reviewer',
+          messageId: destinationMessageId,
         },
-        destinationMessageId: 'runtime-delivery-message',
-      })
-    ).resolves.toMatchObject({
-      found: false,
-      location: null,
-      diagnostics: ['cross-team target runtime proof required'],
-    });
+      });
+      expect(crossTeamSender).toHaveBeenCalledTimes(1);
+      expect(sentMessages).toEqual([
+        expect.objectContaining({
+          to: 'team-b.Reviewer',
+          messageId: destinationMessageId,
+        }),
+      ]);
+      await expect(
+        journal.get({ idempotencyKey: 'delivery-1', runId: 'run-1', teamName: 'team-a' })
+      ).resolves.toMatchObject({
+        status: 'committed',
+        committedLocation: {
+          kind: 'cross_team_outbox',
+          fromTeamName: 'team-a',
+          toTeamName: 'team-b',
+          toMemberName: 'Reviewer',
+          messageId: destinationMessageId,
+        },
+      });
+    } finally {
+      await rm(journalDir, { recursive: true, force: true });
+    }
   });
+
+  it.each([
+    {
+      name: 'message id',
+      destination: {
+        kind: 'cross_team_outbox' as const,
+        fromTeamName: 'team-a',
+        toTeamName: 'team-b',
+        toMemberName: 'Reviewer',
+      },
+      destinationMessageId: 'other-runtime-delivery-message',
+    },
+    {
+      name: 'source team',
+      destination: {
+        kind: 'cross_team_outbox' as const,
+        fromTeamName: 'other-team-a',
+        toTeamName: 'team-b',
+        toMemberName: 'Reviewer',
+      },
+      destinationMessageId: 'runtime-delivery-message',
+    },
+    {
+      name: 'target team',
+      destination: {
+        kind: 'cross_team_outbox' as const,
+        fromTeamName: 'team-a',
+        toTeamName: 'other-team-b',
+        toMemberName: 'Reviewer',
+      },
+      destinationMessageId: 'runtime-delivery-message',
+    },
+    {
+      name: 'target member',
+      destination: {
+        kind: 'cross_team_outbox' as const,
+        fromTeamName: 'team-a',
+        toTeamName: 'team-b',
+        toMemberName: 'OtherReviewer',
+      },
+      destinationMessageId: 'runtime-delivery-message',
+    },
+  ])(
+    'does not recover a cross-team sender copy with mismatched $name identity',
+    async ({ destination, destinationMessageId }) => {
+      const sentMessagesByTeam = new Map<string, InboxMessage[]>([
+        [
+          'team-a',
+          [
+            {
+              from: 'Builder',
+              to: 'team-b.Reviewer',
+              text: 'Please review this',
+              timestamp: '2026-04-21T12:00:00.000Z',
+              read: true,
+              messageId: 'runtime-delivery-message',
+              source: CROSS_TEAM_SENT_SOURCE,
+            },
+          ],
+        ],
+      ]);
+      const port = getCrossTeamPort(
+        createOpenCodeRuntimeDeliveryPorts({
+          sentMessagesStore: {
+            appendMessage: vi.fn(() => Promise.resolve()),
+            readMessages: vi.fn((teamName: string) =>
+              Promise.resolve(sentMessagesByTeam.get(teamName) ?? [])
+            ),
+          },
+          inboxReader: {
+            getMessagesFor: vi.fn(() => Promise.resolve([])),
+          },
+          inboxWriter: {
+            sendMessage: vi.fn(() =>
+              Promise.resolve({
+                deliveredToInbox: true,
+                messageId: 'unused',
+              })
+            ),
+          },
+          getCrossTeamSender: () => vi.fn(),
+        })
+      );
+
+      await expect(
+        port.verify({
+          destination,
+          destinationMessageId,
+        })
+      ).resolves.toMatchObject({
+        found: false,
+        location: null,
+        diagnostics: ['cross-team sender copy proof missing'],
+      });
+    }
+  );
 
   it('repairs missing sender-copy proof after live cross-team delivery succeeds', async () => {
     const sentMessages: InboxMessage[] = [];

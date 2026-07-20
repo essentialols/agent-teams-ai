@@ -1,3 +1,5 @@
+import { resolve as resolvePath } from 'node:path';
+
 import {
   CLI_INSTALLER_GET_PROVIDER_STATUS,
   CLI_INSTALLER_GET_STATUS,
@@ -36,6 +38,14 @@ interface Deferred<T> {
 type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 
 const PARALLEL_PROVIDER_STATUS_ENV = 'CLAUDE_TEAM_PARALLEL_PROVIDER_STATUS';
+const LOCAL_MODEL_PROJECT_A_PATH = resolvePath(
+  process.cwd(),
+  'test-fixtures/local-model-project-a'
+);
+const LOCAL_MODEL_PROJECT_B_PATH = resolvePath(
+  process.cwd(),
+  'test-fixtures/local-model-project-b'
+);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -239,6 +249,60 @@ describe('cliInstaller IPC provider runtime scheduling', () => {
       { success: true, data: providerStatus },
       { success: true, data: providerStatus },
     ]);
+  });
+
+  test('keeps project-scoped OpenCode status requests distinct and forwards their paths', async () => {
+    const firstDeferred = createDeferred<CliProviderStatus | null>();
+    const secondDeferred = createDeferred<CliProviderStatus | null>();
+    const getProviderStatus = vi
+      .fn()
+      .mockImplementationOnce(() => firstDeferred.promise)
+      .mockImplementationOnce(() => secondDeferred.promise);
+    const service = createInstallerService({ getProviderStatus });
+    const { invoke } = setupHandlers(service);
+
+    const firstRequest = invoke<IpcResult<CliProviderStatus | null>>(
+      CLI_INSTALLER_GET_PROVIDER_STATUS,
+      'opencode',
+      { projectPath: LOCAL_MODEL_PROJECT_A_PATH }
+    );
+    const secondRequest = invoke<IpcResult<CliProviderStatus | null>>(
+      CLI_INSTALLER_GET_PROVIDER_STATUS,
+      'opencode',
+      { projectPath: LOCAL_MODEL_PROJECT_B_PATH }
+    );
+
+    await flushMicrotasks();
+    expect(getProviderStatus).toHaveBeenCalledTimes(1);
+    expect(getProviderStatus).toHaveBeenNthCalledWith(1, 'opencode', {
+      projectPath: LOCAL_MODEL_PROJECT_A_PATH,
+    });
+
+    firstDeferred.resolve(createProviderStatus('opencode'));
+    await flushMicrotasks();
+    expect(getProviderStatus).toHaveBeenCalledTimes(2);
+    expect(getProviderStatus).toHaveBeenNthCalledWith(2, 'opencode', {
+      projectPath: LOCAL_MODEL_PROJECT_B_PATH,
+    });
+
+    secondDeferred.resolve(createProviderStatus('opencode'));
+    const results = await Promise.all([firstRequest, secondRequest]);
+    expect(results.every((result) => result.success)).toBe(true);
+  });
+
+  test('rejects relative provider status project paths at the IPC boundary', async () => {
+    const getProviderStatus = vi.fn();
+    const service = createInstallerService({ getProviderStatus });
+    const { invoke } = setupHandlers(service);
+
+    const result = await invoke<IpcResult<CliProviderStatus | null>>(
+      CLI_INSTALLER_GET_PROVIDER_STATUS,
+      'opencode',
+      { projectPath: 'relative/project' }
+    );
+
+    expect(result.success).toBe(false);
+    expect(getProviderStatus).not.toHaveBeenCalled();
   });
 
   test('keeps status and model verification sequential for the same provider', async () => {

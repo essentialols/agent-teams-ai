@@ -788,6 +788,35 @@ describe('OpenCode runtime stop flow', () => {
     expect(ports.getSecondaryRuntimeRuns('team-a')).toEqual([newerRun]);
   });
 
+  it('preserves a same-lane replacement installed while the immutable old run stop is awaiting', async () => {
+    const secondaryRun: SecondaryRuntimeRunEntry = {
+      runId: 'run-old',
+      providerId: 'opencode',
+      laneId: 'lane-a',
+      memberName: 'A',
+    };
+    const stop = vi.fn(async (input) => {
+      secondaryRun.runId = 'run-new';
+      return {
+        runId: input.runId,
+        teamName: input.teamName,
+        stopped: true,
+        members: {},
+        warnings: [],
+        diagnostics: [],
+      };
+    });
+    const ports = makePorts({ adapter: makeAdapter(stop), secondaryRuns: [secondaryRun] });
+
+    await stopMixedSecondaryRuntimeLanes('team-a', ports);
+
+    expect(stop).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-old' }));
+    expect(secondaryRun.runId).toBe('run-new');
+    expect(ports.clearCalls).toEqual([]);
+    expect(ports.deleteSecondaryRuntimeRun).not.toHaveBeenCalled();
+    expect(ports.clearSecondaryRuntimeRuns).not.toHaveBeenCalled();
+  });
+
   it('preserves primary evidence when no adapter can confirm the stop', async () => {
     const ports = makePorts({ adapter: null });
 

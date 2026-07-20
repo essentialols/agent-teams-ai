@@ -85,7 +85,8 @@ async function stopRuntimeLanesOwnedByRun<TRun extends TeamProvisioningStopRun>(
 
   // Keep the order deterministic and leave secondary tracking untouched when
   // the required primary stop fails. The low-level stop flows own their lane
-  // cleanup after each confirmed stop.
+  // cleanup after each confirmed stop, snapshot their run IDs before awaiting,
+  // and clear only the owners that still match those snapshots.
   if (shouldStopPrimaryRuntime) {
     await ports.stopOpenCodeRuntimeAdapterTeam(teamName, runId);
   }

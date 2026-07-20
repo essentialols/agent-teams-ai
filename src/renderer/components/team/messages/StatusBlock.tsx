@@ -111,6 +111,7 @@ export const StatusBlock = ({
               members={members}
               messages={messages}
               isTeamAlive={isTeamAlive}
+              nowMs={nowMs}
               pendingRepliesByMember={pendingRepliesByMember}
               pendingCrossTeamReplies={pendingCrossTeamReplies}
               headerRight={flowInlineToggle}

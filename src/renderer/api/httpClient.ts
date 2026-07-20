@@ -60,6 +60,7 @@ import type { CodexRuntimeAPI } from '@features/codex-runtime-installer/contract
 import type { MemberLogStreamApi } from '@features/member-log-stream/contracts';
 import type { DashboardRecentProjectsPayload } from '@features/recent-projects/contracts';
 import type {
+  RuntimeProviderCompanionActionInput,
   RuntimeProviderCompanionInput,
   RuntimeProviderCompanionStatusDto,
   RuntimeProviderManagementApi,
@@ -181,7 +182,7 @@ function buildTokenUsageSnapshotRoute(request?: TokenUsageSnapshotRequest): stri
 
 function createBrowserCompanionStatus(
   input: RuntimeProviderCompanionInput,
-  operation: 'status' | 'install' | 'connect'
+  operation: 'status' | 'install' | 'connect' | 'action'
 ): RuntimeProviderCompanionStatusDto {
   const cursor = input.companionId === 'cursor-agent';
   const displayName = cursor ? 'Cursor Agent CLI' : 'Kiro CLI';
@@ -192,6 +193,7 @@ function createBrowserCompanionStatus(
     phase: 'needs-manual-step',
     installed: false,
     authenticated: false,
+    account: null,
     binaryPath: null,
     version: null,
     percent: null,
@@ -1598,6 +1600,8 @@ export class HttpAPIClient implements ElectronAPI {
     getCompanionStatus: async (input) => createBrowserCompanionStatus(input, 'status'),
     installAndConnectCompanion: async (input) => createBrowserCompanionStatus(input, 'install'),
     connectCompanion: async (input) => createBrowserCompanionStatus(input, 'connect'),
+    runCompanionAction: async (input: RuntimeProviderCompanionActionInput) =>
+      createBrowserCompanionStatus(input, 'action'),
     onCompanionProgress: () => () => {},
     loadView: async (input) => ({
       schemaVersion: 1,

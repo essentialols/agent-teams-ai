@@ -53,6 +53,8 @@ function createExpectedSentPayload() {
     to: 'worker',
     text: 'Please review this',
     timestamp: '2026-01-01T00:00:00.000Z',
+    actionMode: 'ask',
+    commentId: 'comment-1',
     summary: 'Review request',
     messageId: 'message-1',
     relayOfMessageId: 'source-1',
@@ -123,6 +125,7 @@ describe('TeamProvisioningMessagePersistence', () => {
       claudeDir: '/home/tester/.claude',
     });
     expect(ports.appendSentMessage).toHaveBeenCalledWith(createExpectedSentPayload());
+    expect(ports.appendSentMessage.mock.calls[0]?.[0]).not.toHaveProperty('workSyncPayloadHash');
     expect(ports.sendMessage).not.toHaveBeenCalled();
     expect(ports.advisoryRefresh).not.toHaveBeenCalled();
     expect(ports.logger.warn).not.toHaveBeenCalled();
@@ -141,9 +144,72 @@ describe('TeamProvisioningMessagePersistence', () => {
       member: 'worker',
       ...expectedPayload,
     });
+    expect(ports.sendMessage.mock.calls[0]?.[0]).not.toHaveProperty('workSyncPayloadHash');
     expect(ports.appendSentMessage).not.toHaveBeenCalled();
     expect(ports.advisoryRefresh).toHaveBeenCalledWith('alpha', message);
     expect(ports.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('keeps absent action mode and comment id absent from persisted rows', () => {
+    const sentPorts = createPorts();
+    const inboxPorts = createPorts();
+    const message = createMessage();
+    delete message.actionMode;
+    delete message.commentId;
+
+    persistTeamProvisioningSentMessage('alpha', message, sentPorts);
+    persistTeamProvisioningInboxMessage('alpha', 'worker', message, inboxPorts);
+
+    expect(sentPorts.appendSentMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ actionMode: undefined, commentId: undefined })
+    );
+    expect(inboxPorts.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ actionMode: undefined, commentId: undefined })
+    );
+  });
+
+  it.each([
+    { label: 'null', actionMode: null, commentId: null },
+    { label: 'invalid', actionMode: 'execute', commentId: 42 },
+    { label: 'blank comment id', actionMode: 'do', commentId: '   ' },
+  ])('filters $label action mode and comment id values using controller contracts', (values) => {
+    const sentPorts = createPorts();
+    const inboxPorts = createPorts();
+    const message = {
+      ...createMessage(),
+      ...values,
+      untrustedProperty: 'must-not-cross-persistence-boundary',
+    } as unknown as InboxMessage;
+
+    persistTeamProvisioningSentMessage('alpha', message, sentPorts);
+    persistTeamProvisioningInboxMessage('alpha', 'worker', message, inboxPorts);
+
+    const expectedActionMode = values.actionMode === 'do' ? 'do' : undefined;
+    expect(sentPorts.appendSentMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ actionMode: expectedActionMode, commentId: undefined })
+    );
+    expect(inboxPorts.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ actionMode: expectedActionMode, commentId: undefined })
+    );
+    expect(sentPorts.appendSentMessage.mock.calls[0]?.[0]).not.toHaveProperty('untrustedProperty');
+    expect(inboxPorts.sendMessage.mock.calls[0]?.[0]).not.toHaveProperty('untrustedProperty');
+  });
+
+  it('normalizes comment ids while preserving every supported action mode', () => {
+    const modes = ['do', 'ask', 'delegate'] as const;
+
+    for (const actionMode of modes) {
+      const ports = createPorts();
+      persistTeamProvisioningSentMessage(
+        'alpha',
+        { ...createMessage(), actionMode, commentId: '  comment-1  ' },
+        ports
+      );
+
+      expect(ports.appendSentMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ actionMode, commentId: 'comment-1' })
+      );
+    }
   });
 
   it('preserves sent-message warning behavior when controller persistence fails', () => {

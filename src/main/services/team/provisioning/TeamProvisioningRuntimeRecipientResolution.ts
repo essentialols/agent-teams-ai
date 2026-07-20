@@ -1,3 +1,4 @@
+import { isLeadMember } from '@shared/utils/leadDetection';
 import { inferTeamProviderIdFromModel } from '@shared/utils/teamProvider';
 
 import { normalizeTeamProviderLike } from './TeamProvisioningMemberSpecs';
@@ -67,19 +68,17 @@ export function resolveRuntimeRecipientProviderIdFromSources(input: {
   const metaMember = input.metaMembers.find(
     (member) => member.name?.trim().toLowerCase() === normalizedMemberName
   );
+  const configLead = input.config?.members?.find((member) => isLeadMember(member));
   const configProvider = (configMember as { provider?: unknown } | undefined)?.provider;
   const metaProvider = (metaMember as { provider?: unknown } | undefined)?.provider;
+  const inheritedProvider = (configLead as { provider?: unknown } | undefined)?.provider;
 
-  if (
-    !configMember &&
-    !metaMember &&
-    resolveOpenCodeSoloRuntimeRecipientProviderId({
+  if (!configMember && !metaMember) {
+    return resolveOpenCodeSoloRuntimeRecipientProviderId({
       memberName: normalizedMemberName,
       config: input.config,
       metaMembers: input.metaMembers,
-    }) === 'opencode'
-  ) {
-    return 'opencode';
+    });
   }
 
   return (
@@ -87,7 +86,11 @@ export function resolveRuntimeRecipientProviderIdFromSources(input: {
     normalizeTeamProviderLike(metaProvider) ??
     normalizeTeamProviderLike(configMember?.providerId) ??
     normalizeTeamProviderLike(configProvider) ??
-    inferTeamProviderIdFromModel(metaMember?.model ?? configMember?.model)
+    normalizeTeamProviderLike(configLead?.providerId) ??
+    normalizeTeamProviderLike(inheritedProvider) ??
+    inferTeamProviderIdFromModel(metaMember?.model) ??
+    inferTeamProviderIdFromModel(configMember?.model) ??
+    inferTeamProviderIdFromModel(configLead?.model)
   );
 }
 

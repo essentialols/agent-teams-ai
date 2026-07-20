@@ -202,7 +202,11 @@ export async function stopMixedSecondaryRuntimeLanes(
   teamName: string,
   ports: OpenCodeRuntimeStopFlowPorts
 ): Promise<void> {
-  const secondaryRuns = ports.getSecondaryRuntimeRuns(teamName);
+  // The store returns live lane objects. Snapshot every stop target before the
+  // first await so a same-lane relaunch cannot retarget this cleanup in place.
+  const secondaryRuns = ports
+    .getSecondaryRuntimeRuns(teamName)
+    .map((secondaryRun) => ({ ...secondaryRun }));
   if (secondaryRuns.length === 0) {
     return;
   }

@@ -47,9 +47,13 @@ export async function materializeOpenCodeRuntimeAdapterDefaults<
     effort: params.request.effort,
   });
   const explicitRootModel = getExplicitLaunchModelSelection(params.request.model);
+  const effectiveOpenCodeMembers = effectiveMembers.filter((member) => {
+    const providerId = normalizeTeamMemberProviderId(member.providerId) ?? 'opencode';
+    return providerId === 'opencode';
+  });
   const memberModels = [
     ...new Set(
-      effectiveMembers
+      effectiveOpenCodeMembers
         .map((member) => member.model?.trim())
         .filter((model): model is string => Boolean(model))
     ),
@@ -61,10 +65,7 @@ export async function materializeOpenCodeRuntimeAdapterDefaults<
   }
   const inheritedRootModel = explicitRootModel ? undefined : memberModels[0];
   const rootModel = explicitRootModel ?? inheritedRootModel;
-  const needsMemberModel = effectiveMembers.some((member) => {
-    const providerId = normalizeTeamMemberProviderId(member.providerId) ?? 'opencode';
-    return providerId === 'opencode' && !member.model?.trim();
-  });
+  const needsMemberModel = effectiveOpenCodeMembers.some((member) => !member.model?.trim());
   if (rootModel && !needsMemberModel) {
     return {
       request: {

@@ -1,6 +1,8 @@
 # Release Guide
 
-## Draft: v2.9.0 (2026-07-18)
+## Published: v2.9.0 (2026-07-19)
+
+GitHub release: [v2.9.0](https://github.com/777genius/agent-teams-ai/releases/tag/v2.9.0).
 
 Target branch: `dev`.
 
@@ -14,6 +16,12 @@ Draft body source for GitHub release:
 <!-- RELEASE_BODY_START v2.9.0 -->
 
 Redesigned the team page and related workflows, added simple setup for local models, improved Cursor-style control over code changes, and fixed issues in agent setup, launch, and recovery.
+
+<img width="2624" height="1652" alt="image" src="https://github.com/user-attachments/assets/b23a09f3-0f08-446f-824d-5623ff111574" />
+
+<img width="853" height="684" alt="image" src="https://github.com/user-attachments/assets/f8aff8c8-88bd-4490-a856-03f6d380adda" />
+
+<img width="1592" height="1110" alt="image" src="https://github.com/user-attachments/assets/00ad2f7b-5f42-4dbc-a0e0-d01401791dee" />
 
 ### What's New
 
@@ -717,7 +725,8 @@ gh workflow run release.yml \
   --repo 777genius/agent-teams-ai \
   --ref v<VERSION> \
   -f release_tag=v<VERSION> \
-  -f publish_release=true
+  -f publish_release=true \
+  -f reuse_existing_draft_assets=true
 
 gh run list \
   --repo 777genius/agent-teams-ai \
@@ -726,6 +735,18 @@ gh run list \
 
 gh run watch <RUN_ID> --repo 777genius/agent-teams-ai
 ```
+
+`reuse_existing_draft_assets=true` is the normal reviewed-draft promotion path.
+It skips the repeated app build and platform packaging, but still verifies that
+the draft targets the exact tag commit, checks the SHA-256 digest of every
+source installer, uploads stable and compatibility aliases, generates all three
+canonical updater feeds, publishes the same release, and runs the updater guard.
+See [Existing Draft Promotion](release-promotion.md) for the full script
+contract, dry-run procedure, safety checks, and recovery guidance.
+
+Use `reuse_existing_draft_assets=false` only when the platform installers must
+be rebuilt before publication. The full build path runs the same promotion
+script after packaging succeeds.
 
 Do not use GitHub's **Publish release** button, `gh release edit --draft=false`,
 or any other direct draft-to-public action. Those paths bypass the
@@ -963,7 +984,8 @@ gh workflow run release.yml --repo 777genius/agent-teams-ai --ref v1.0.0 \
 # Publish the reviewed draft and generate updater metadata
 # Never publish the draft directly through GitHub UI or gh release edit.
 gh workflow run release.yml --repo 777genius/agent-teams-ai --ref v1.0.0 \
-  -f release_tag=v1.0.0 -f publish_release=true
+  -f release_tag=v1.0.0 -f publish_release=true \
+  -f reuse_existing_draft_assets=true
 
 # Watch the publish run, then run the required fail-fast gate from step 5.
 # Do not announce or close the release until that gate passes.

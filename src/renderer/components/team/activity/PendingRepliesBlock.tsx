@@ -15,7 +15,7 @@ import {
   getMemberRuntimeAdvisoryTitle,
 } from '@renderer/utils/memberHelpers';
 import { nameColorSet } from '@renderer/utils/projectColor';
-import { formatDistanceToNowStrict } from 'date-fns';
+import { formatDistanceStrict } from 'date-fns';
 import { Check, Clock3, Loader2, ShieldQuestion, Users } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -32,6 +32,7 @@ export interface PendingCrossTeamReply {
 interface PendingRepliesBlockProps {
   members: ResolvedTeamMember[];
   pendingRepliesByMember: Record<string, number>;
+  nowMs: number;
   messages?: InboxMessage[];
   isTeamAlive?: boolean;
   pendingCrossTeamReplies?: PendingCrossTeamReply[];
@@ -42,6 +43,7 @@ interface PendingRepliesBlockProps {
 export const PendingRepliesBlock = memo(function PendingRepliesBlock({
   members,
   pendingRepliesByMember,
+  nowMs,
   messages = [],
   isTeamAlive,
   pendingCrossTeamReplies = [],
@@ -92,7 +94,7 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
         {headerRight ? <div className="shrink-0">{headerRight}</div> : null}
       </div>
       {pending.map((entry) => {
-        const since = formatDistanceToNowStrict(entry.sentAtMs, { addSuffix: true });
+        const since = formatDistanceStrict(entry.sentAtMs, nowMs, { addSuffix: true });
 
         if (entry.kind === 'member') {
           const { member } = entry;
@@ -102,11 +104,14 @@ export const PendingRepliesBlock = memo(function PendingRepliesBlock({
           );
           const advisoryLabel = getMemberRuntimeAdvisoryLabel(
             member.runtimeAdvisory,
-            member.providerId
+            member.providerId,
+            nowMs,
+            member.model
           );
           const advisoryTitle = getMemberRuntimeAdvisoryTitle(
             member.runtimeAdvisory,
-            member.providerId
+            member.providerId,
+            member.model
           );
           const deliveryState = getPendingMemberDeliveryState(
             isTeamAlive,

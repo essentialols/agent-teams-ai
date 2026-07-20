@@ -33,8 +33,13 @@ vi.mock('@main/services/runtime/anthropicTeamApiKeyHelper', async (importOrigina
   cleanupStaleAnthropicTeamApiKeyHelpers: cleanupStaleAnthropicTeamApiKeyHelpersMock,
 }));
 
+type ServiceOwnedMemberLifecycleUseCaseKey =
+  | keyof TeamProvisioningMemberLifecycleServiceUseCases
+  | 'collectFailedOpenCodeSecondaryRetryCandidates';
+
 const MEMBER_LIFECYCLE_SERVICE_USE_CASE_KEYS = [
   'appendDirectProcessRuntimeEvent',
+  'collectFailedOpenCodeSecondaryRetryCandidates',
   'hasOpenCodeMemberRuntimeEvidenceForControlledRelaunch',
   'persistOpenCodeMemberRestartSystemMessage',
   'preparePrimaryOwnedMemberRestartRuntime',
@@ -42,7 +47,7 @@ const MEMBER_LIFECYCLE_SERVICE_USE_CASE_KEYS = [
   'resolveDirectRestartRuntimeCwd',
   'stopPrimaryOwnedRosterRuntime',
   'updateDirectTmuxRestartMemberConfig',
-] as const satisfies readonly (keyof TeamProvisioningMemberLifecycleServiceUseCases)[];
+] as const satisfies readonly ServiceOwnedMemberLifecycleUseCaseKey[];
 
 describe('team provisioning private harness seams', () => {
   beforeEach(() => {

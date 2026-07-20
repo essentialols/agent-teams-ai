@@ -30,7 +30,10 @@ import {
 import { XiaomiMiMoTokenPlanSetupDialog } from './ui/XiaomiMiMoTokenPlanSetupDialog';
 import { RuntimeLocalProviderSetupDialog } from './RuntimeLocalProviderSetupDialog';
 
-import type { RuntimeProviderDirectoryEntryDto } from '../contracts';
+import type {
+  RuntimeProviderCompanionActionDto,
+  RuntimeProviderDirectoryEntryDto,
+} from '../contracts';
 import type { RuntimeProviderOnboardingPlanId } from '../core/domain';
 import type { CliProviderStatus, OpenCodeRuntimeStatus } from '@shared/types';
 import type { JSX } from 'react';
@@ -169,6 +172,7 @@ export const RuntimeProviderQuickConnect = ({
 }: RuntimeProviderQuickConnectProps): JSX.Element => {
   const { t } = useAppTranslation('dashboard');
   const repositoryGroups = useStore((state) => state.repositoryGroups);
+  const fetchCliProviderStatus = useStore((state) => state.fetchCliProviderStatus);
   const providerMap = useMemo(
     () => new Map(providers.map((provider) => [provider.providerId, provider])),
     [providers]
@@ -231,6 +235,15 @@ export const RuntimeProviderQuickConnect = ({
     };
   }, [localProviderProjectPath, localProviderSetupOpen, projectPath, repositoryGroups]);
 
+  const refreshConfiguredLocalProvider = useCallback(async (): Promise<void> => {
+    directory.refresh();
+    await fetchCliProviderStatus('opencode', {
+      silent: false,
+      checkReason: 'manual_refresh',
+      projectPath: localProviderProjectPath,
+    });
+  }, [directory, fetchCliProviderStatus, localProviderProjectPath]);
+
   const getCompanionState = useCallback(
     (planId: CompanionPlanId): RuntimeProviderCompanionState =>
       planId === 'kiro' ? kiroCompanion : cursorCompanion,
@@ -246,6 +259,15 @@ export const RuntimeProviderQuickConnect = ({
       } else {
         await companion.runConnect();
       }
+      directory.refresh();
+    },
+    [directory, getCompanionState]
+  );
+
+  const runCompanionAction = useCallback(
+    async (planId: CompanionPlanId, action: RuntimeProviderCompanionActionDto): Promise<void> => {
+      setActiveCompanionPlanId(planId);
+      await getCompanionState(planId).runAction(action);
       directory.refresh();
     },
     [directory, getCompanionState]
@@ -543,7 +565,7 @@ export const RuntimeProviderQuickConnect = ({
         projectPath={localProviderProjectPath}
         projects={localProviderProjects}
         onProjectPathChange={setLocalProviderProjectPath}
-        onConfigured={() => directory.refresh()}
+        onConfigured={refreshConfiguredLocalProvider}
       />
       <RuntimeProviderCompanionSetupDialog
         open={activeCompanionPlanId !== null}
@@ -572,6 +594,16 @@ export const RuntimeProviderQuickConnect = ({
             void runCompanionOperation(activeCompanionPlanId, 'connect');
           }
         }}
+        onAction={(action) => {
+          if (activeCompanionPlanId) {
+            void runCompanionAction(activeCompanionPlanId, action);
+          }
+        }}
+        onOpenUsage={
+          activeCompanionPlanId === 'kiro'
+            ? () => void api.openExternal('https://app.kiro.dev/account/usage')
+            : undefined
+        }
         onManage={() => {
           if (!activeCompanionPlanId) return;
           onOpenCodeProviderAction(

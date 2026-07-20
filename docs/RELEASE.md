@@ -1,6 +1,6 @@
 # Release Guide
 
-## Draft: v2.9.1 (2026-07-20)
+## Draft: v2.10.0 (2026-07-20)
 
 Target branch: `dev`.
 
@@ -11,30 +11,32 @@ Runtime gate:
 
 Draft body source for GitHub release:
 
-<!-- RELEASE_BODY_START v2.9.1 -->
-Local models are now checked before a team starts, so missing tool support, insufficient context, and offline servers are caught early. This patch also adds GPT-5.6 Codex models, keeps crash-safe review work, and makes provider setup, agent recovery, and troubleshooting more reliable.
+<!-- RELEASE_BODY_START v2.10.0 -->
+Local model setup and team launch are now more reliable, with project-specific model lists, pre-launch compatibility checks, and direct setup for more providers. This release also improves Changes recovery, the team graph, project navigation, and provider error handling.
 
 ### What's New
 
-- Use GPT-5.6 Sol, Terra, and Luna, with Sol as the default Codex model.
-- Check that local models can use Agent Teams tools and have enough context before launch.
+- Launch GPT-5.6 Sol, Terra, and Luna correctly, with Sol as the default Codex choice.
+- Check local models for tool support, context size, and server availability before launch.
 - Connect OpenRouter and Vercel AI Gateway directly from provider quick setup.
 - Set up or update Kiro from the app and view Kiro usage in the Usage dashboard.
-- Select project-specific local models when configuring teammates.
+- Select project-specific local models when configuring teammates and refresh each project's model list independently.
 
 ### Improvements
 
 - Show only chat-capable Ollama models and save detected tool and context limits during setup.
-- Load the correct providers and models separately for each project, with automatic retries while OpenCode starts.
-- Keep Changes decisions, undo/redo history, and recovery state available after crashes, reloads, and file watcher restarts.
+- Keep available models visible while OpenCode refreshes them, and retry automatically after provider changes or startup delays.
+- Keep Changes decisions, undo/redo history, and recovery state available after crashes and reloads.
+- Keep task cards visible when zooming out in the team graph, and open recent projects at the correct team list.
+- Preserve a custom working directory after opening team creation from a project.
 - Save redacted warning and error logs locally so failed launches are easier to troubleshoot.
-- Make team setup status, model availability, and the team loading layout clearer.
+- Make team setup, model availability, task controls, and team actions clearer.
 
 ### Bug Fixes
 
 - Prevent outdated OpenCode versions and stale Codex model choices from reaching team launch.
 - Keep healthy teammates running when another OpenCode teammate fails, and preserve a working teammate when restart checks fail.
-- Report failed Codex turns and provider errors instead of finishing without a useful explanation.
+- Show Cursor authentication, quota, and model errors, and report failed Codex turns instead of finishing without an explanation.
 - Prevent a submitted team name from being reported as already taken while creation is still finishing.
 - Prevent interrupted or concurrent Changes actions from losing recovery state, mixing project data, or leaving stale locks.
 - Preserve completed terminal command status and fix Windows command fallback for project paths with non-ASCII characters.
@@ -44,16 +46,16 @@ Local models are now checked before a team starts, so missing tool support, insu
 <table>
 <tr>
 <td align="center">
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI-2.9.1-arm64.dmg">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/Agent.Teams.AI-2.10.0-arm64.dmg">
     <img src="https://img.shields.io/badge/macOS_Apple_Silicon-.dmg-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple Silicon" />
   </a>
   <br />
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI-2.9.1-x64.dmg">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/Agent.Teams.AI-2.10.0-x64.dmg">
     <img src="https://img.shields.io/badge/macOS_Intel-.dmg-434343?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Intel" />
   </a>
 </td>
 <td align="center">
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI.Setup.2.9.1.exe">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/Agent.Teams.AI.Setup.2.10.0.exe">
     <img src="https://img.shields.io/badge/Windows-Download_.exe-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
   </a>
   <br />
@@ -62,23 +64,23 @@ Local models are now checked before a team starts, so missing tool support, insu
   <sub>Run normally. Administrator mode may be needed only if the app reports a specific OpenCode symlink or permission error.</sub>
 </td>
 <td align="center">
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/Agent.Teams.AI-2.9.1.AppImage">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/Agent.Teams.AI-2.10.0.AppImage">
     <img src="https://img.shields.io/badge/Linux-Download_.AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux AppImage" />
   </a>
   <br />
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/agent-teams-ai_2.9.1_amd64.deb">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/agent-teams-ai_2.10.0_amd64.deb">
     <img src="https://img.shields.io/badge/.deb-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt=".deb" />
   </a>&nbsp;
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/agent-teams-ai-2.9.1.x86_64.rpm">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/agent-teams-ai-2.10.0.x86_64.rpm">
     <img src="https://img.shields.io/badge/.rpm-294172?style=flat-square&logo=redhat&logoColor=white" alt=".rpm" />
   </a>&nbsp;
-  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.9.1/agent-teams-ai-2.9.1.pacman">
+  <a href="https://github.com/777genius/agent-teams-ai/releases/download/v2.10.0/agent-teams-ai-2.10.0.pacman">
     <img src="https://img.shields.io/badge/.pacman-1793D1?style=flat-square&logo=archlinux&logoColor=white" alt=".pacman" />
   </a>
 </td>
 </tr>
 </table>
-<!-- RELEASE_BODY_END v2.9.1 -->
+<!-- RELEASE_BODY_END v2.10.0 -->
 
 ## Published: v2.9.0 (2026-07-19)
 

@@ -207,6 +207,8 @@ describe('RuntimeProviderQuickConnect', () => {
       entries: [],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: null,
       refresh,
     };
@@ -238,6 +240,8 @@ describe('RuntimeProviderQuickConnect', () => {
       ],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: 'Refresh failed',
       refresh: vi.fn(),
     };
@@ -272,6 +276,8 @@ describe('RuntimeProviderQuickConnect', () => {
       ],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: null,
       refresh: vi.fn(),
     };
@@ -320,6 +326,8 @@ describe('RuntimeProviderQuickConnect', () => {
       ],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: null,
       refresh: vi.fn(),
     };
@@ -360,6 +368,39 @@ describe('RuntimeProviderQuickConnect', () => {
     expect(onOpenCodeProviderAction).toHaveBeenNthCalledWith(2, 'vercel', 'settings-connect');
   });
 
+  it('does not report missing or negative seed providers as not found before reconciliation', async () => {
+    mocks.directory = {
+      entries: [
+        entry('zai-coding-plan'),
+        entry('openrouter', {
+          state: 'error',
+          setupKind: 'unsupported',
+          modelCount: null,
+          metadata: {
+            ...entry('openrouter').metadata,
+            hasKnownModels: false,
+            supportedInlineAuth: false,
+          },
+        }),
+      ],
+      loaded: true,
+      loading: false,
+      authoritativeLoaded: false,
+      authoritativePending: true,
+      error: null,
+      refresh: vi.fn(),
+    };
+
+    await renderQuickConnect();
+
+    const openRouterCard = host.querySelector('[data-testid="provider-quick-card-openrouter"]');
+    const vercelCard = host.querySelector('[data-testid="provider-quick-card-vercel"]');
+    expect(openRouterCard?.textContent).toContain('cliStatus.quickConnect.checkingPlan');
+    expect(vercelCard?.textContent).toContain('cliStatus.quickConnect.checkingPlan');
+    expect(openRouterCard?.textContent).not.toContain('cliStatus.quickConnect.notInCatalog');
+    expect(vercelCard?.textContent).not.toContain('cliStatus.quickConnect.notInCatalog');
+  });
+
   it('re-verifies a signed-in companion when its OpenCode bridge is not ready', async () => {
     const runConnect = vi.fn(async () => undefined);
     mocks.companions.set('cursor-agent', companion('cursor-agent', runConnect));
@@ -369,6 +410,8 @@ describe('RuntimeProviderQuickConnect', () => {
       ],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: null,
       refresh: vi.fn(),
     };
@@ -392,6 +435,8 @@ describe('RuntimeProviderQuickConnect', () => {
       ],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: null,
       refresh: vi.fn(),
     };
@@ -418,6 +463,8 @@ describe('RuntimeProviderQuickConnect', () => {
       entries: [entry('xiaomi-token-plan-sgp')],
       loaded: true,
       loading: false,
+      authoritativeLoaded: true,
+      authoritativePending: false,
       error: null,
       refresh: vi.fn(),
     };
@@ -470,6 +517,8 @@ describe('RuntimeProviderQuickConnect', () => {
       entries: [],
       loaded: false,
       loading: true,
+      authoritativeLoaded: false,
+      authoritativePending: true,
       error: null,
       refresh: vi.fn(),
     };
@@ -503,7 +552,7 @@ describe('RuntimeProviderQuickConnect', () => {
 function runtimeStatus(overrides: Partial<OpenCodeRuntimeStatus> = {}): OpenCodeRuntimeStatus {
   return {
     installed: true,
-    version: '1.15.7',
+    version: '1.16.0',
     source: 'app-managed',
     state: 'ready',
     ...overrides,

@@ -66,6 +66,7 @@ vi.mock('@renderer/api', () => ({
 import { api } from '@renderer/api';
 import { useStore } from '@renderer/store';
 import {
+  getCliProviderStatusScopeKey,
   getIncompleteMultimodelProviderIds,
   getModelOnlyFallbackProviderIds,
   mergeCliStatusPreservingHydratedProviders,
@@ -1575,6 +1576,54 @@ describe('cliInstallerSlice', () => {
       });
     });
 
+    it('reports a scoped OpenCode catalog loaded only after an authoritative ready response', async () => {
+      const summaryProvider = createMultimodelProvider({
+        providerId: 'opencode',
+        displayName: 'OpenCode',
+        authenticated: true,
+        authMethod: 'opencode_managed',
+        models: ['opencode/big-pickle'],
+        modelCatalog: null,
+        modelCatalogRefreshState: 'loading',
+      });
+      const readyProvider = createMultimodelProvider({
+        ...summaryProvider,
+        modelCatalogRefreshState: 'ready',
+        modelCatalog: {
+          schemaVersion: 1,
+          providerId: 'opencode',
+          source: 'app-server',
+          status: 'ready',
+          fetchedAt: '2026-07-20T00:00:00.000Z',
+          staleAt: '2026-07-20T00:10:00.000Z',
+          defaultModelId: 'opencode/big-pickle',
+          defaultLaunchModel: 'opencode/big-pickle',
+          models: [],
+          diagnostics: {
+            configReadState: 'ready',
+            appServerState: 'healthy',
+          },
+        },
+      });
+      useStore.setState({
+        cliStatus: createMultimodelStatus([summaryProvider]),
+      });
+      vi.mocked(api.cliInstaller.getProviderStatus)
+        .mockResolvedValueOnce(summaryProvider)
+        .mockResolvedValueOnce(readyProvider);
+
+      await expect(
+        useStore
+          .getState()
+          .fetchCliProviderStatus('opencode', { projectPath: '/tmp/local-model-project' })
+      ).resolves.toBe(false);
+      await expect(
+        useStore
+          .getState()
+          .fetchCliProviderStatus('opencode', { projectPath: '/tmp/local-model-project' })
+      ).resolves.toBe(true);
+    });
+
     it('records provider readiness without mislabeling a status check as a connection attempt', async () => {
       const loadingProvider = createMultimodelProvider({
         providerId: 'opencode',
@@ -2300,6 +2349,60 @@ describe('cliInstallerSlice', () => {
           .cliStatus?.providers.find((provider) => provider.providerId === 'opencode')
           ?.modelAvailability
       ).toEqual([]);
+    });
+
+    it('keeps project-scoped OpenCode catalogs isolated from global and sibling projects', async () => {
+      const globalProvider = createMultimodelProvider({
+        providerId: 'opencode',
+        displayName: 'OpenCode',
+        authenticated: true,
+        authMethod: 'opencode_managed',
+        models: ['opencode/big-pickle'],
+      });
+      useStore.setState({
+        cliStatus: createMultimodelStatus([globalProvider]),
+      });
+      vi.mocked(api.cliInstaller.getProviderStatus).mockImplementation(
+        async (_providerId, options) =>
+          createMultimodelProvider({
+            providerId: 'opencode',
+            displayName: 'OpenCode',
+            authenticated: true,
+            authMethod: 'opencode_managed',
+            models:
+              options?.projectPath === '/tmp/project-a'
+                ? ['ollama/qwen2.5:0.5b']
+                : ['openrouter/openai/gpt-5.4'],
+          })
+      );
+
+      await useStore
+        .getState()
+        .fetchCliProviderStatus('opencode', { projectPath: '/tmp/project-a' });
+      await useStore
+        .getState()
+        .fetchCliProviderStatus('opencode', { projectPath: '/tmp/project-b' });
+
+      const state = useStore.getState();
+      expect(
+        state.cliStatus?.providers.find((provider) => provider.providerId === 'opencode')?.models
+      ).toEqual(['opencode/big-pickle']);
+      expect(
+        state.cliProviderStatusByScope[
+          getCliProviderStatusScopeKey('opencode', '/tmp/project-a')
+        ]?.models
+      ).toEqual(['ollama/qwen2.5:0.5b']);
+      expect(
+        state.cliProviderStatusByScope[
+          getCliProviderStatusScopeKey('opencode', '/tmp/project-b')
+        ]?.models
+      ).toEqual(['openrouter/openai/gpt-5.4']);
+      expect(api.cliInstaller.getProviderStatus).toHaveBeenNthCalledWith(1, 'opencode', {
+        projectPath: '/tmp/project-a',
+      });
+      expect(api.cliInstaller.getProviderStatus).toHaveBeenNthCalledWith(2, 'opencode', {
+        projectPath: '/tmp/project-b',
+      });
     });
   });
 

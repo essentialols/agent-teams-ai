@@ -96,6 +96,35 @@ describe('ensureOpenCodeBridgeRuntimeBinaryEnv', () => {
     expect(env.PATH?.split(path.delimiter)[0]).toBe(path.dirname(binaryPath));
   });
 
+  it('replaces an existing but unsupported OpenCode override with the verified runtime', async () => {
+    const unsupportedBinaryPath = await writeExecutable('old-opencode');
+    const verifiedBinaryPath = await writeExecutable('managed-opencode');
+    const env: NodeJS.ProcessEnv = {
+      OPENCODE_BIN_PATH: unsupportedBinaryPath,
+      PATH: '/usr/bin',
+    };
+    const resolver = vi
+      .fn<() => Promise<string | null>>()
+      .mockResolvedValue(verifiedBinaryPath);
+    const validator = vi.fn<(binaryPath: string) => Promise<boolean>>().mockResolvedValue(false);
+    const onWarning = vi.fn();
+
+    await ensureOpenCodeBridgeRuntimeBinaryEnv({
+      targetEnv: env,
+      resolveVerifiedOpenCodeRuntimeBinaryPath: resolver,
+      isSupportedOpenCodeRuntimeBinaryPath: validator,
+      onWarning,
+    });
+
+    expect(validator).toHaveBeenCalledWith(unsupportedBinaryPath);
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(env.CLAUDE_MULTIMODEL_OPENCODE_BIN_PATH).toBe(verifiedBinaryPath);
+    expect(env.OPENCODE_BIN_PATH).toBe(verifiedBinaryPath);
+    expect(onWarning).toHaveBeenCalledWith(
+      `[OpenCode] Ignoring unsupported runtime binary override: ${unsupportedBinaryPath}`
+    );
+  });
+
   it('normalizes a relative OpenCode binary override before exposing it to the bridge', async () => {
     const binaryPath = await writeExecutable('relative-opencode');
     const relativeBinaryPath = path.relative(process.cwd(), binaryPath);

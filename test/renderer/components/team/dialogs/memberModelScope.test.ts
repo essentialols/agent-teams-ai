@@ -38,6 +38,20 @@ describe('memberModelScope', () => {
     });
   });
 
+  it('preserves a saved teammate model until cold-start provider status arrives', () => {
+    const scoped = resolveProviderScopedMemberModel({
+      memberProviderId: 'opencode',
+      memberModel: 'ollama/qwen2.5-coder:0.5b',
+      selectedProviderId: 'opencode',
+      runtimeProviderStatusById: providerStatuses([]),
+    });
+
+    expect(scoped).toEqual({
+      providerId: 'opencode',
+      model: 'ollama/qwen2.5-coder:0.5b',
+    });
+  });
+
   it('clears only inherited stale models after the selected non-Anthropic provider status is loaded', () => {
     const inheritedStale = draft({ id: 'inherited', model: 'gemini-3-pro-preview' });
     const explicitGemini = draft({

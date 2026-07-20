@@ -58,6 +58,7 @@ const storeState = {
   cliStatus: null as unknown,
   cliStatusLoading: false,
   cliProviderStatusLoading: {} as Record<string, boolean>,
+  cliProviderStatusByScope: {} as Record<string, unknown>,
   appConfig: { general: { multimodelEnabled: true } },
   fetchCliProviderStatus: vi.fn().mockResolvedValue(undefined),
   codexRuntimeStatus: null as CodexRuntimeStatus | null,
@@ -126,6 +127,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     storeState.cliStatus = null;
     storeState.cliStatusLoading = false;
     storeState.cliProviderStatusLoading = {};
+    storeState.cliProviderStatusByScope = {};
     storeState.fetchCliProviderStatus.mockClear();
     storeState.codexRuntimeStatus = null;
     storeState.codexRuntimeStatusLoading = false;
@@ -140,6 +142,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     codexAccountHookState.cancelChatgptLogin.mockClear();
     codexAccountHookState.logout.mockClear();
     useVirtualizerMock.mockClear();
+    vi.useRealTimers();
   });
 
   it('shows only Default while Codex runtime models are still loading', async () => {
@@ -3256,10 +3259,14 @@ describe('TeamModelSelector disabled Codex models', () => {
     const restoredOpenRouterTab = host.querySelector<HTMLButtonElement>(
       '[data-testid="team-model-selector-provider-nav-openrouter"]'
     );
-    expect(restoredOpenRouterTab?.getAttribute('data-state')).toBe('active');
+    const restoredOpenCodeTab = host.querySelector<HTMLButtonElement>(
+      '[data-testid="team-model-selector-provider-nav-opencode"]'
+    );
+    expect(restoredOpenRouterTab?.getAttribute('data-state')).toBe('inactive');
+    expect(restoredOpenCodeTab?.getAttribute('data-state')).toBe('active');
     expect(host.textContent).toContain('moonshotai/kimi-k2');
-    expect(host.textContent).not.toContain('GPT-4.1');
-    expect(host.textContent).not.toContain('auto');
+    expect(host.textContent).toContain('gpt-4.1');
+    expect(host.textContent).toContain('auto');
 
     await act(async () => {
       remountedRoot.render(
@@ -3279,11 +3286,10 @@ describe('TeamModelSelector disabled Codex models', () => {
     const openCodeTab = Array.from(host.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'OpenCode'
     );
-    expect(cursorTab?.getAttribute('data-state')).toBe('active');
-    expect(cursorTab?.className).toContain('data-[state=active]:before:bg-emerald-300');
-    expect(openCodeTab?.getAttribute('data-state')).toBe('inactive');
+    expect(cursorTab?.getAttribute('data-state')).toBe('inactive');
+    expect(openCodeTab?.getAttribute('data-state')).toBe('active');
     expect(host.textContent).toContain('auto');
-    expect(host.textContent).not.toContain('GPT-4.1');
+    expect(host.textContent).toContain('gpt-4.1');
     expect(
       Array.from(
         host.querySelectorAll<HTMLElement>('[data-testid="team-model-selector-opencode-group"] h4')
@@ -3296,7 +3302,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     });
   });
 
-  it('keeps the restored OpenCode source tab through deferred catalog hydration and model sync', async () => {
+  it('keeps all OpenCode sources visible through deferred catalog hydration and model sync', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const cursorModel = {
       id: 'cursor-acp/auto',
@@ -3431,7 +3437,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     };
 
     await renderSelector('cursor-acp/auto');
-    expect(host.querySelector('[data-tabs-value="opencode-source:cursor-acp"]')).not.toBeNull();
+    expect(host.querySelector('[data-tabs-value="opencode"]')).not.toBeNull();
 
     const tabsList = host.querySelector<HTMLElement>(
       '[data-testid="team-model-selector-provider-tabs"]'
@@ -3455,7 +3461,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     ).toBeNull();
 
     await renderSelector('kiro/auto');
-    expect(host.querySelector('[data-tabs-value="opencode-source:kiro"]')).not.toBeNull();
+    expect(host.querySelector('[data-tabs-value="opencode"]')).not.toBeNull();
     const kiroGroup = Array.from(
       host.querySelectorAll<HTMLElement>('[data-testid="team-model-selector-opencode-group"]')
     ).find((group) => group.querySelector('h4')?.textContent === 'Kiro');
@@ -3474,7 +3480,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     ).toBeNull();
 
     await renderSelector('');
-    expect(host.querySelector('[data-tabs-value="opencode-source:kiro"]')).not.toBeNull();
+    expect(host.querySelector('[data-tabs-value="opencode"]')).not.toBeNull();
 
     const freeOnlyToggle = host.querySelector<HTMLElement>('#opencode-team-model-free-only');
     expect(freeOnlyToggle).not.toBeNull();
@@ -3482,7 +3488,7 @@ describe('TeamModelSelector disabled Codex models', () => {
       freeOnlyToggle?.click();
       await Promise.resolve();
     });
-    expect(host.querySelector('[data-tabs-value="opencode-source:kiro"]')).not.toBeNull();
+    expect(host.querySelector('[data-tabs-value="opencode"]')).not.toBeNull();
 
     await act(async () => {
       root.unmount();
@@ -4297,7 +4303,9 @@ describe('TeamModelSelector disabled Codex models', () => {
     const selectedModelButton = restoredOpenRouterGroup?.querySelector<HTMLButtonElement>(
       '[data-testid="team-model-selector-model-option"]'
     );
-    expect(getSourceGroupLabels()).toEqual(['OpenRouter']);
+    expect(getSourceGroupLabels()).toEqual(
+      expect.arrayContaining(['llama.cpp', 'OpenCode Zen', 'OpenRouter', 'DeepSeek'])
+    );
     expect(selectedModelButton?.getAttribute('aria-pressed')).toBe('true');
     expect(selectedModelButton?.className).toContain('ring-1');
     expect(selectedModelButton?.className).toContain('ring-inset');
@@ -4372,6 +4380,66 @@ describe('TeamModelSelector disabled Codex models', () => {
     });
   });
 
+  it('retries a project catalog until an authoritative load succeeds', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.useFakeTimers();
+    storeState.cliStatus = {
+      flavor: 'agent_teams_orchestrator',
+      providers: [
+        {
+          providerId: 'opencode',
+          supported: true,
+          authenticated: true,
+          detailMessage: null,
+          statusMessage: null,
+          capabilities: { teamLaunch: true, oneShot: false },
+          models: [],
+        },
+      ],
+    };
+    storeState.fetchCliProviderStatus
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(TeamModelSelector, {
+          providerId: 'opencode',
+          onProviderChange: () => undefined,
+          value: '',
+          onValueChange: () => undefined,
+          projectPath: '/tmp/retry-project',
+        })
+      );
+      await Promise.resolve();
+    });
+
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_999);
+    });
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
   it('keeps app-managed local models scoped to the selected project', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const listLocalProviders = vi.fn(
@@ -4393,7 +4461,11 @@ describe('TeamModelSelector disabled Codex models', () => {
                   },
                   providerId: 'lmstudio',
                   baseUrl: 'http://127.0.0.1:1234/v1',
-                  configuredModelIds: ['qwen-test:0.5b'],
+                  configuredModelIds: [
+                    'qwen-test:0.5b',
+                    'nomic-embed-text:latest',
+                    'stale-chat:latest',
+                  ],
                   defaultModelId: 'qwen-test:0.5b',
                   isDefault: true,
                   state: 'available' as const,
@@ -4500,6 +4572,8 @@ describe('TeamModelSelector disabled Codex models', () => {
 
     await renderForProject('/tmp/local-model-project-a');
     expect(host.textContent).toContain('qwen-test:0.5b');
+    expect(host.textContent).not.toContain('nomic-embed-text:latest');
+    expect(host.textContent).not.toContain('stale-chat:latest');
     expect(host.textContent).not.toContain('Needs test');
     expect(onValueChange).not.toHaveBeenCalledWith('');
     expect(
@@ -4511,13 +4585,14 @@ describe('TeamModelSelector disabled Codex models', () => {
     const openCodeTab = host.querySelector<HTMLButtonElement>(
       '[data-testid="team-model-selector-provider-nav-opencode"]'
     );
-    expect(localModelsTab?.getAttribute('data-state')).toBe('active');
+    expect(localModelsTab?.getAttribute('data-state')).toBe('inactive');
+    expect(openCodeTab?.getAttribute('data-state')).toBe('active');
     expect(host.querySelector('[data-testid="team-model-selector-model-search"]')).not.toBeNull();
     expect(
       host
         .querySelector('[data-testid="team-model-selector-opencode-route-tag-local"]')
         ?.getAttribute('aria-pressed')
-    ).toBe('true');
+    ).toBe('false');
     expect(host.textContent).not.toContain('More');
 
     await act(async () => {

@@ -96,7 +96,13 @@ function presentSetupForm(
   form: RuntimeProviderSetupFormDto | null
 ): RuntimeProviderSetupFormDto | null {
   if (!form) return null;
-  const displayName = getOpenCodeSourceDisplayName(form.providerId, form.displayName);
+  // xAI is the catalog source, while SuperGrok is the user-facing subscription
+  // being connected. Keep the curated plan name in setup and error messages.
+  const displayName =
+    form.providerId.trim().toLowerCase() === 'xai' &&
+    form.displayName.trim().toLowerCase() === 'supergrok'
+      ? form.displayName
+      : getOpenCodeSourceDisplayName(form.providerId, form.displayName);
   if (displayName === form.displayName) return form;
   return {
     ...form,

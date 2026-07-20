@@ -361,17 +361,48 @@ export const RuntimeProviderQuickConnect = ({
         };
       }
 
-      const state = resolveOpenCodeQuickPlanState({
-        entry: findDirectoryEntry(directory.entries, gateway.providerId),
-      });
+      const entry = findDirectoryEntry(directory.entries, gateway.providerId);
+      if (!entry && directory.authoritativePending) {
+        return {
+          id: gateway.id,
+          providerId: gateway.providerId,
+          displayName: gateway.displayName,
+          description,
+          state: 'checking',
+          stateLabel: t('cliStatus.quickConnect.checkingPlan'),
+          actionLabel: null,
+          onAction: null,
+        };
+      }
+      if (!entry && !directory.authoritativeLoaded) {
+        return {
+          id: gateway.id,
+          providerId: gateway.providerId,
+          displayName: gateway.displayName,
+          description,
+          state: 'unavailable',
+          stateLabel: t('cliStatus.quickConnect.statusUnavailable'),
+          actionLabel: null,
+          onAction: null,
+        };
+      }
+
+      const resolvedState = resolveOpenCodeQuickPlanState({ entry });
+      const state =
+        directory.authoritativePending &&
+        (resolvedState === 'manual' || resolvedState === 'unavailable')
+          ? 'checking'
+          : resolvedState;
       const stateLabel =
-        state === 'connected'
-          ? t('cliStatus.quickConnect.connected')
-          : state === 'connectable'
-            ? t('cliStatus.quickConnect.readyToConnect')
-            : state === 'manual'
-              ? t('cliStatus.quickConnect.manualSetup')
-              : t('cliStatus.quickConnect.notInCatalog');
+        state === 'checking'
+          ? t('cliStatus.quickConnect.checkingPlan')
+          : state === 'connected'
+            ? t('cliStatus.quickConnect.connected')
+            : state === 'connectable'
+              ? t('cliStatus.quickConnect.readyToConnect')
+              : state === 'manual'
+                ? t('cliStatus.quickConnect.manualSetup')
+                : t('cliStatus.quickConnect.notInCatalog');
       const actionLabel =
         state === 'connected' || state === 'manual'
           ? t('cliStatus.actions.manage')
@@ -439,7 +470,7 @@ export const RuntimeProviderQuickConnect = ({
         if (status.phase === 'connected') {
           const bridgeEntry = findDirectoryEntry(directory.entries, plan.providerId);
           if (
-            directory.loaded &&
+            directory.authoritativeLoaded &&
             !isRuntimeProviderOnboardingPlanRoutable(
               getRuntimeProviderOnboardingPlan(plan.id),
               bridgeEntry
@@ -524,28 +555,59 @@ export const RuntimeProviderQuickConnect = ({
       }
 
       const entry = findDirectoryEntry(directory.entries, plan.providerId);
-      const state = resolveOpenCodeQuickPlanState({
+      if (!entry && directory.authoritativePending) {
+        return {
+          id: plan.id,
+          providerId: plan.providerId,
+          displayName: plan.displayName,
+          description: t(`cliStatus.quickConnect.${plan.descriptionKey}`),
+          state: 'checking',
+          stateLabel: t('cliStatus.quickConnect.checkingPlan'),
+          actionLabel: null,
+          onAction: null,
+        };
+      }
+      if (!entry && !directory.authoritativeLoaded) {
+        return {
+          id: plan.id,
+          providerId: plan.providerId,
+          displayName: plan.displayName,
+          description: t(`cliStatus.quickConnect.${plan.descriptionKey}`),
+          state: 'unavailable',
+          stateLabel: t('cliStatus.quickConnect.statusUnavailable'),
+          actionLabel: null,
+          onAction: null,
+        };
+      }
+      const resolvedState = resolveOpenCodeQuickPlanState({
         entry,
         requiresOAuthCredential: plan.requiresOAuthCredential,
         oauthBridgeOutdated: Boolean(plan.requiresOAuthCredential && oauthBridgeOutdated),
       });
+      const state =
+        directory.authoritativePending &&
+        (resolvedState === 'manual' || resolvedState === 'unavailable')
+          ? 'checking'
+          : resolvedState;
       const isSuperGrok = plan.id === 'supergrok';
       const stateLabel =
-        state === 'connected'
-          ? isSuperGrok
-            ? t('cliStatus.quickConnect.superGrokConnected')
-            : t('cliStatus.quickConnect.planConnected')
-          : state === 'connectable'
-            ? t('cliStatus.quickConnect.readyToConnect')
-            : state === 'different-credential'
-              ? isSuperGrok
-                ? t('cliStatus.quickConnect.xaiApiConnected')
-                : t('cliStatus.quickConnect.planCredentialUnverified')
-              : state === 'update-required'
-                ? t('cliStatus.quickConnect.updateForSuperGrok')
-                : state === 'manual'
-                  ? t('cliStatus.quickConnect.manualSetup')
-                  : t('cliStatus.quickConnect.notInCatalog');
+        state === 'checking'
+          ? t('cliStatus.quickConnect.checkingPlan')
+          : state === 'connected'
+            ? isSuperGrok
+              ? t('cliStatus.quickConnect.superGrokConnected')
+              : t('cliStatus.quickConnect.planConnected')
+            : state === 'connectable'
+              ? t('cliStatus.quickConnect.readyToConnect')
+              : state === 'different-credential'
+                ? isSuperGrok
+                  ? t('cliStatus.quickConnect.xaiApiConnected')
+                  : t('cliStatus.quickConnect.planCredentialUnverified')
+                : state === 'update-required'
+                  ? t('cliStatus.quickConnect.updateForSuperGrok')
+                  : state === 'manual'
+                    ? t('cliStatus.quickConnect.manualSetup')
+                    : t('cliStatus.quickConnect.notInCatalog');
 
       const actionLabel =
         state === 'connected'
@@ -584,9 +646,15 @@ export const RuntimeProviderQuickConnect = ({
     });
     const xiaomiConnected = connectedXiaomiEntry !== null;
     const xiaomiLoading =
-      gate === 'checking' || gate === 'installing' || (directory.loading && !directory.loaded);
+      gate === 'checking' ||
+      gate === 'installing' ||
+      (directory.loading && !directory.loaded) ||
+      (xiaomiEntries.length === 0 && directory.authoritativePending);
     const xiaomiAvailable = xiaomiEntries.length > 0;
-    const xiaomiDirectoryUnavailable = Boolean(directory.error && xiaomiEntries.length === 0);
+    const xiaomiDirectoryUnavailable = Boolean(
+      xiaomiEntries.length === 0 &&
+      (directory.error || (!directory.authoritativeLoaded && !directory.authoritativePending))
+    );
     planCards.push({
       id: 'xiaomi-mimo-token-plan',
       providerId: 'xiaomi',
@@ -625,6 +693,8 @@ export const RuntimeProviderQuickConnect = ({
   }, [
     directory.entries,
     directory.error,
+    directory.authoritativeLoaded,
+    directory.authoritativePending,
     directory.loaded,
     directory.loading,
     connectedXiaomiEntry,

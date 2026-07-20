@@ -212,6 +212,42 @@ describe('cliInstaller IPC handlers', () => {
     expect(cached.data?.authMethod).toBeNull();
   });
 
+  it('does not patch the global status cache with a project-scoped OpenCode catalog', async () => {
+    service.getStatus.mockResolvedValue(
+      status([
+        provider({
+          providerId: 'opencode',
+          authenticated: true,
+          authMethod: 'opencode_managed',
+          models: ['opencode/big-pickle'],
+        }),
+      ])
+    );
+    service.getProviderStatus.mockResolvedValue(
+      provider({
+        providerId: 'opencode',
+        authenticated: true,
+        authMethod: 'opencode_managed',
+        models: ['ollama/qwen2.5:0.5b'],
+      })
+    );
+
+    await ipcMain.invoke(CLI_INSTALLER_GET_STATUS);
+    const scoped = (await ipcMain.invoke(CLI_INSTALLER_GET_PROVIDER_STATUS, 'opencode', {
+      projectPath: '/tmp/project-a',
+    })) as IpcResult<CliProviderStatus | null>;
+    const cached = (await ipcMain.invoke(
+      CLI_INSTALLER_GET_STATUS
+    )) as IpcResult<CliInstallationStatus>;
+
+    expect(scoped.data?.models).toEqual(['ollama/qwen2.5:0.5b']);
+    expect(service.getProviderStatus).toHaveBeenCalledWith('opencode', {
+      projectPath: '/tmp/project-a',
+    });
+    expect(cached.data?.providers[0]?.models).toEqual(['opencode/big-pickle']);
+    expect(service.getStatus).toHaveBeenCalledTimes(1);
+  });
+
   it('clears Claude and Codex binary resolver caches when status is invalidated', async () => {
     const result = (await ipcMain.invoke(CLI_INSTALLER_INVALIDATE_STATUS)) as IpcResult<void>;
 

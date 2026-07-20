@@ -3,6 +3,7 @@ import {
   buildCodexNativeAttachmentDeliveryParts,
 } from '@features/agent-attachments/main';
 import { type RuntimeTurnSettledProvider } from '@features/member-work-sync/main';
+import { inspectOpenCodeLocalModelRuntimeReadiness } from '@features/runtime-provider-management/main';
 import {
   buildOpenCodeSecondaryLaneId,
   buildPlannedMemberLaneIdentity,
@@ -473,6 +474,7 @@ import {
   OPENCODE_APP_MANAGED_BOOTSTRAP_STALLED_DIAGNOSTIC,
   promoteCommittedOpenCodeAppManagedBootstrapEvidence,
   selectOpenCodeSecondaryBootstrapStallDiagnostic,
+  selectOpenCodeSharedRuntimePreflightFailureDiagnostic,
   shouldMarkPersistedOpenCodeBootstrapStalled,
   shouldRetainOpenCodeRuntimeLaunch,
   summarizeRuntimeLaunchResultMembers,
@@ -1161,6 +1163,12 @@ interface ProvisioningRun {
   effectiveMembers: TeamCreateRequest['members'];
   launchIdentity: ProviderModelLaunchIdentity | null;
   mixedSecondaryLanes: MixedSecondaryRuntimeLaneState[];
+  /**
+   * A project-scoped OpenCode inventory/config failure is shared by every
+   * secondary lane in that project. Remember it so the serialized queue does
+   * not repeat the same minute-long preflight for every teammate.
+   */
+  mixedSecondarySharedRuntimeFailuresByProject?: Map<string, string>;
   /**
    * OpenCode secondary lanes share bridge state files. Launch them sequentially
    * per team run to avoid file-lock contention while keeping launch non-blocking.
@@ -5178,6 +5186,29 @@ export class TeamProvisioningService {
       );
     };
     const currentPrimaryRun = this.runtimeAdapterRunByTeam.get(teamName);
+    const localModelPreflight = await adapter.preflightLocalModels?.({
+      targets: [
+        {
+          projectPath: run.request.cwd,
+          modelRoute: run.request.model?.trim() ?? '',
+        },
+        ...run.effectiveMembers.map((member) => ({
+          projectPath: member.cwd?.trim() || run.request.cwd,
+          modelRoute: member.model?.trim() ?? '',
+        })),
+      ],
+    });
+    if (localModelPreflight && !localModelPreflight.ok) {
+      throw new Error(
+        localModelPreflight.diagnostics[0] ??
+          `Local model for teammate "${memberName}" is not ready for restart.`
+      );
+    }
+    if (localModelPreflight?.warnings.length) {
+      logger.warn(
+        `[${teamName}] Local model aggregate restart preflight warnings for ${memberName}: ${localModelPreflight.warnings.join(' ')}`
+      );
+    }
     if (currentPrimaryRun?.providerId === 'opencode' && currentPrimaryRun.runId === run.runId) {
       await this.stopOpenCodeRuntimeAdapterTeam(teamName, run.runId);
       assertRestartCurrent();
@@ -10082,6 +10113,7 @@ export class TeamProvisioningService {
           modelIds: providerSelectedModelIds,
           verificationMode: opts?.modelVerificationMode ?? 'deep',
           appendPreflightDebugLog,
+          inspectLocalModelRuntime: inspectOpenCodeLocalModelRuntimeReadiness,
         });
         details.push(...openCodeModelPrepare.details);
         warnings.push(...openCodeModelPrepare.warnings);
@@ -10187,6 +10219,10 @@ export class TeamProvisioningService {
             shouldRequireRuntimePingForAnthropicDirectCredential &&
             isAuthFailureWarning(diagnostic.warning, 'probe')
           ) {
+            blockingMessages.push(prefixedWarning);
+            return;
+          }
+          if (isQuotaRetryMessage(diagnostic.warning)) {
             blockingMessages.push(prefixedWarning);
             return;
           }
@@ -10575,11 +10611,6 @@ export class TeamProvisioningService {
           .filter((model): model is string => Boolean(model))
       ),
     ];
-    if (!explicitRootModel && memberModels.length > 1) {
-      throw new Error(
-        'OpenCode runtime adapter launch supports one selected model per lane. Select one team model or align OpenCode teammate models.'
-      );
-    }
     const inheritedRootModel = explicitRootModel ? undefined : memberModels[0];
     const rootModel = explicitRootModel ?? inheritedRootModel;
     const needsMemberModel = effectiveMembers.some((member) => {
@@ -12670,6 +12701,41 @@ export class TeamProvisioningService {
     return 'clean_success';
   }
 
+  private async markOpenCodeLaneBlockedBySharedRuntimeFailure(
+    run: ProvisioningRun,
+    lane: MixedSecondaryRuntimeLaneState,
+    rootCause: string
+  ): Promise<void> {
+    const now = Date.now();
+    lane.queuedAtMs = lane.queuedAtMs ?? now;
+    lane.launchFinishedAtMs = now;
+    lane.runId = lane.runId ?? randomUUID();
+    lane.state = 'finished';
+    const message =
+      `OpenCode runtime preflight failed before ${lane.member.name} could start. ` +
+      `This lane was not attempted because it uses the same project runtime. Root cause: ${rootCause}`;
+    const skippedResult = createUnexpectedMixedSecondaryLaneFailureResult({
+      runId: lane.runId,
+      teamName: run.teamName,
+      memberName: lane.member.name,
+      message,
+    });
+    lane.result = {
+      ...skippedResult,
+      diagnostics: [rootCause, message],
+      members: {
+        ...skippedResult.members,
+        [lane.member.name]: {
+          ...skippedResult.members[lane.member.name]!,
+          diagnostics: [rootCause, message],
+        },
+      },
+    };
+    lane.warnings = [];
+    lane.diagnostics = appendDiagnosticOnce([...lane.diagnostics, rootCause], message);
+    await this.publishMixedSecondaryLaneStatusChange(run, lane);
+  }
+
   private async runOpenCodeMemberLaneAggregateLaunch(input: {
     request: TeamCreateRequest | TeamLaunchRequest;
     members: TeamCreateRequest['members'];
@@ -12777,13 +12843,42 @@ export class TeamProvisioningService {
       if (aggregateLaunchNoLongerCurrent()) {
         return await finishCancelledAggregateLaunch();
       }
+      const sharedRuntimeFailuresByProject = new Map<string, string>();
+      if (primaryResult) {
+        const primarySharedFailure =
+          selectOpenCodeSharedRuntimePreflightFailureDiagnostic(primaryResult);
+        if (primarySharedFailure) {
+          const primaryCwd = this.getOpenCodeRuntimeLaunchCwd(
+            run.request.cwd,
+            run.effectiveMembers
+          );
+          sharedRuntimeFailuresByProject.set(path.resolve(primaryCwd), primarySharedFailure);
+        }
+      }
       for (const lane of run.mixedSecondaryLanes) {
         if (run.cancelRequested || run.processKilled) {
           break;
         }
+        const laneCwd = path.resolve(lane.member.cwd?.trim() || run.request.cwd);
+        const sharedRuntimeFailure = sharedRuntimeFailuresByProject.get(laneCwd);
+        if (sharedRuntimeFailure) {
+          await this.markOpenCodeLaneBlockedBySharedRuntimeFailure(run, lane, sharedRuntimeFailure);
+          if (aggregateLaunchNoLongerCurrent()) {
+            return await finishCancelledAggregateLaunch();
+          }
+          continue;
+        }
         await this.launchSingleMixedSecondaryLane(run, lane);
         if (aggregateLaunchNoLongerCurrent()) {
           return await finishCancelledAggregateLaunch();
+        }
+        if (lane.result) {
+          const laneSharedFailure = selectOpenCodeSharedRuntimePreflightFailureDiagnostic(
+            lane.result
+          );
+          if (laneSharedFailure) {
+            sharedRuntimeFailuresByProject.set(laneCwd, laneSharedFailure);
+          }
         }
       }
 
@@ -18492,8 +18587,23 @@ export class TeamProvisioningService {
           lane.state = 'finished';
           return;
         }
+        const laneCwd = path.resolve(lane.member.cwd?.trim() || run.request.cwd);
+        const sharedRuntimeFailure = run.mixedSecondarySharedRuntimeFailuresByProject?.get(laneCwd);
+        if (sharedRuntimeFailure) {
+          await this.markOpenCodeLaneBlockedBySharedRuntimeFailure(run, lane, sharedRuntimeFailure);
+          return;
+        }
         lane.state = 'launching';
         await this.launchSingleMixedSecondaryLane(run, lane);
+        if (lane.result) {
+          const nextSharedRuntimeFailure = selectOpenCodeSharedRuntimePreflightFailureDiagnostic(
+            lane.result
+          );
+          if (nextSharedRuntimeFailure) {
+            run.mixedSecondarySharedRuntimeFailuresByProject ??= new Map();
+            run.mixedSecondarySharedRuntimeFailuresByProject.set(laneCwd, nextSharedRuntimeFailure);
+          }
+        }
       } catch (error) {
         if (run.cancelRequested || run.processKilled) {
           await clearOpenCodeRuntimeLaneStorage({

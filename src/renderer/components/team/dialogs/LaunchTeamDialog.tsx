@@ -915,6 +915,22 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
   useEffect(() => {
     if (!open || !isLaunchMode) return;
 
+    const immediateEditableMembers = filterEditableMemberInputs(members);
+    if (immediateEditableMembers.length > 0) {
+      setMembersDrafts(
+        createMemberDraftsFromInputs(immediateEditableMembers).map((member) =>
+          normalizeMemberDraftForProviderMode(member, multimodelEnabled)
+        )
+      );
+      setWorktreePathByMemberName(buildWorktreePathByMemberName(immediateEditableMembers));
+      setTeammateWorktreeDefault(deriveTeammateWorktreeDefault(immediateEditableMembers));
+      setSyncModelsWithLead(
+        !immediateEditableMembers.some(
+          (member) => member.providerId || member.model || member.effort
+        )
+      );
+    }
+
     let cancelled = false;
     void (async () => {
       let savedRequest = null;

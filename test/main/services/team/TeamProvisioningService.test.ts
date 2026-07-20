@@ -7528,8 +7528,245 @@ describe('TeamProvisioningService', () => {
       );
     });
 
+    it('keeps an existing OpenCode lane running when local model restart preflight blocks', async () => {
+      const svc = new TeamProvisioningService();
+      const preflightLocalModels = vi.fn(async () => ({
+        ok: false,
+        warnings: [],
+        diagnostics: ['Custom local model is offline. Start the server, then retry.'],
+      }));
+      svc.setRuntimeAdapterRegistry(
+        new TeamRuntimeAdapterRegistry([
+          {
+            providerId: 'opencode',
+            prepare: vi.fn(),
+            preflightLocalModels,
+            launch: vi.fn(),
+            reconcile: vi.fn(),
+            stop: vi.fn(),
+          } as any,
+        ])
+      );
+      const run = createMemberSpawnRun({
+        teamName: 'mixed-local-team',
+        expectedMembers: ['alice'],
+        memberSpawnStatuses: new Map(),
+      });
+      run.child = { pid: 111 };
+      run.processKilled = false;
+      run.cancelRequested = false;
+      run.request = {
+        providerId: 'codex',
+        cwd: '/tmp/mixed-local-team',
+        members: [],
+      };
+      const existingLane = {
+        laneId: 'secondary:opencode:alice',
+        providerId: 'opencode' as const,
+        member: {
+          name: 'alice',
+          providerId: 'opencode' as const,
+          model: 'local-lab/team-model',
+          cwd: '/tmp/mixed-local-team',
+        },
+        runId: 'opencode-run-1',
+        state: 'finished' as const,
+        result: null,
+        warnings: [],
+        diagnostics: [],
+      };
+      run.mixedSecondaryLanes = [existingLane];
+      (svc as any).configReader = {
+        getConfig: vi.fn(async () => ({
+          name: 'Mixed Local Team',
+          projectPath: '/tmp/mixed-local-team',
+          members: [{ name: 'team-lead', agentType: 'team-lead' }],
+        })),
+      };
+      (svc as any).membersMetaStore = {
+        getMembers: vi.fn(async () => [
+          {
+            name: 'alice',
+            role: 'Developer',
+            providerId: 'opencode',
+            model: 'local-lab/team-model',
+            agentType: 'general-purpose',
+          },
+        ]),
+      };
+      (svc as any).resolveOpenCodeMemberWorkspacesForRuntime = vi.fn(async () => [
+        {
+          name: 'alice',
+          role: 'Developer',
+          providerId: 'opencode',
+          model: 'local-lab/team-model',
+          cwd: '/tmp/mixed-local-team',
+        },
+      ]);
+      const stopLane = vi.spyOn(svc as any, 'stopSingleMixedSecondaryRuntimeLane');
+      const launchLane = vi.spyOn(svc as any, 'launchSingleMixedSecondaryLane');
+      (svc as any).aliveRunByTeam.set('mixed-local-team', run.runId);
+      (svc as any).runs.set(run.runId, run);
+
+      await expect(svc.restartMember('mixed-local-team', 'alice')).rejects.toThrow(
+        'Custom local model is offline'
+      );
+
+      expect(preflightLocalModels).toHaveBeenCalledWith({
+        targets: [
+          {
+            projectPath: '/tmp/mixed-local-team',
+            modelRoute: 'local-lab/team-model',
+          },
+        ],
+      });
+      expect(stopLane).not.toHaveBeenCalled();
+      expect(launchLane).not.toHaveBeenCalled();
+      expect(run.mixedSecondaryLanes).toEqual([existingLane]);
+    });
+
+    it('keeps the aggregate primary lane running when a sibling local model restart preflight blocks', async () => {
+      const svc = new TeamProvisioningService();
+      const teamName = 'pure-opencode-local-sibling-preflight';
+      const preflightLocalModels = vi.fn(async () => ({
+        ok: false,
+        warnings: [],
+        diagnostics: ['Sibling local model is offline. Start the server, then retry.'],
+      }));
+      const adapterStop = vi.fn();
+      const adapterLaunch = vi.fn();
+      svc.setRuntimeAdapterRegistry(
+        new TeamRuntimeAdapterRegistry([
+          {
+            providerId: 'opencode',
+            prepare: vi.fn(),
+            preflightLocalModels,
+            launch: adapterLaunch,
+            reconcile: vi.fn(),
+            stop: adapterStop,
+          } as any,
+        ])
+      );
+
+      const run = createMemberSpawnRun({
+        teamName,
+        expectedMembers: ['alice', 'bob'],
+        memberSpawnStatuses: new Map(),
+      });
+      run.child = { pid: 111 };
+      run.processKilled = false;
+      run.cancelRequested = false;
+      run.request = {
+        providerId: 'opencode',
+        cwd: '/tmp/pure-opencode-local-sibling-preflight',
+        model: 'openai/gpt-5.4-mini',
+        members: [],
+      };
+      run.effectiveMembers = [
+        {
+          name: 'alice',
+          role: 'Reviewer',
+          providerId: 'opencode',
+          model: 'openai/gpt-5.4-mini',
+          cwd: '/tmp/pure-opencode-local-sibling-preflight',
+        },
+        {
+          name: 'bob',
+          role: 'Developer',
+          providerId: 'opencode',
+          model: 'local-lab/team-model',
+          cwd: '/tmp/pure-opencode-local-sibling-preflight',
+        },
+      ];
+      run.allEffectiveMembers = [...run.effectiveMembers];
+
+      (svc as any).runtimeAdapterRunByTeam.set(teamName, {
+        runId: run.runId,
+        providerId: 'opencode',
+        cwd: run.request.cwd,
+        members: {},
+      });
+      (svc as any).configReader = {
+        getConfig: vi.fn(async () => ({
+          name: 'Pure OpenCode Local Sibling Team',
+          projectPath: run.request.cwd,
+          members: [
+            { name: 'team-lead', agentType: 'team-lead', providerId: 'opencode' },
+            {
+              name: 'alice',
+              role: 'Reviewer',
+              providerId: 'opencode',
+              model: 'openai/gpt-5.4-mini',
+              agentType: 'general-purpose',
+            },
+            {
+              name: 'bob',
+              role: 'Developer',
+              providerId: 'opencode',
+              model: 'local-lab/team-model',
+              agentType: 'general-purpose',
+            },
+          ],
+        })),
+      };
+      (svc as any).membersMetaStore = {
+        getMembers: vi.fn(async () => [
+          {
+            name: 'alice',
+            role: 'Reviewer',
+            providerId: 'opencode',
+            model: 'openai/gpt-5.4-mini',
+            agentType: 'general-purpose',
+          },
+          {
+            name: 'bob',
+            role: 'Developer',
+            providerId: 'opencode',
+            model: 'local-lab/team-model',
+            agentType: 'general-purpose',
+          },
+        ]),
+      };
+      (svc as any).aliveRunByTeam.set(teamName, run.runId);
+      (svc as any).runs.set(run.runId, run);
+
+      await expect(svc.restartMember(teamName, 'alice')).rejects.toThrow(
+        'Sibling local model is offline'
+      );
+
+      expect(preflightLocalModels).toHaveBeenCalledWith({
+        targets: [
+          {
+            projectPath: '/tmp/pure-opencode-local-sibling-preflight',
+            modelRoute: 'openai/gpt-5.4-mini',
+          },
+          {
+            projectPath: '/tmp/pure-opencode-local-sibling-preflight',
+            modelRoute: 'openai/gpt-5.4-mini',
+          },
+          {
+            projectPath: '/tmp/pure-opencode-local-sibling-preflight',
+            modelRoute: 'local-lab/team-model',
+          },
+        ],
+      });
+      expect(adapterStop).not.toHaveBeenCalled();
+      expect(adapterLaunch).not.toHaveBeenCalled();
+      expect(run.effectiveMembers.map((member: { name: string }) => member.name)).toEqual([
+        'alice',
+        'bob',
+      ]);
+      expect(run.mixedSecondaryLanes).toEqual([]);
+      expect(svc.isTeamAlive(teamName)).toBe(true);
+    });
+
     it('restarts a pure OpenCode member through the app-owned runtime adapter without a tracked lead run', async () => {
       const svc = new TeamProvisioningService();
+      const adapterPreflight = vi.fn(async () => ({
+        ok: true,
+        warnings: [],
+        diagnostics: [],
+      }));
       const adapterLaunch = vi.fn(async (input: TeamRuntimeLaunchInput) => ({
         runId: input.runId,
         teamName: input.teamName,
@@ -7559,6 +7796,7 @@ describe('TeamProvisioningService', () => {
           {
             providerId: 'opencode',
             prepare: vi.fn(),
+            preflightLocalModels: adapterPreflight,
             launch: adapterLaunch,
             reconcile: vi.fn(),
             stop: vi.fn(),
@@ -7643,6 +7881,12 @@ describe('TeamProvisioningService', () => {
 
       await svc.restartMember('pure-opencode-team', 'alice');
 
+      expect(adapterPreflight).toHaveBeenCalledWith({
+        targets: [
+          { projectPath: '/repo', modelRoute: 'openai/gpt-5.4-mini' },
+          { projectPath: '/repo', modelRoute: 'openai/gpt-5.4-mini' },
+        ],
+      });
       expect(runtimeRelaunch).toHaveBeenCalledTimes(1);
       const relaunchInput = runtimeRelaunch.mock.calls[0]?.[0] as any;
       expect(relaunchInput.request).toMatchObject({
@@ -9020,15 +9264,23 @@ describe('TeamProvisioningService', () => {
         getConfig: vi.fn(async () => ({
           projectPath: '/repo',
           members: [
-            { name: 'team-lead', providerId: 'codex', model: 'gpt-5.4' },
-            { name: 'bob', providerId: 'opencode', model: 'minimax-m2.5-free' },
+            {
+              name: 'team-lead',
+              providerId: 'opencode',
+              model: 'minimax-coding-plan/MiniMax-M3',
+            },
+            { name: 'bob', providerId: 'opencode', model: 'zai-coding-plan/glm-5.2' },
           ],
         })),
       };
       (svc as any).teamMetaStore = {
         getMeta: vi.fn(async () => ({
-          launchIdentity: { providerId: 'codex' },
-          providerId: 'codex',
+          launchIdentity: {
+            providerId: 'opencode',
+            resolvedLaunchModel: 'minimax-coding-plan/MiniMax-M3',
+          },
+          providerId: 'opencode',
+          model: 'minimax-coding-plan/MiniMax-M3',
         })),
       };
       (svc as any).membersMetaStore = {
@@ -9036,7 +9288,7 @@ describe('TeamProvisioningService', () => {
           {
             name: 'bob',
             providerId: 'opencode',
-            model: 'opencode/minimax-m2.5-free',
+            model: 'zai-coding-plan/glm-5.2',
           },
         ]),
       };
@@ -20044,6 +20296,271 @@ describe('TeamProvisioningService', () => {
       });
       expect(publicStatuses.teamLaunchState).toBe('clean_success');
       expect(progress).toEqual(expect.arrayContaining(['validating', 'spawning', 'ready']));
+    });
+
+    it('materializes the first member model as the pure OpenCode lead model when routes differ', async () => {
+      const { svc } = createSafeLaunchService();
+      svc.setRuntimeAdapterRegistry(
+        new TeamRuntimeAdapterRegistry([
+          {
+            providerId: 'opencode',
+            prepare: vi.fn(),
+            launch: vi.fn(),
+            reconcile: vi.fn(),
+            stop: vi.fn(),
+          } as unknown as TeamLaunchRuntimeAdapter,
+        ])
+      );
+      const request = {
+        teamName: 'safe-opencode-inherited-lead-model',
+        cwd: tempClaudeRoot,
+        providerId: 'opencode' as const,
+        providerBackendId: 'adapter' as const,
+        members: [
+          {
+            name: 'alice',
+            providerId: 'opencode' as const,
+            model: 'minimax-coding-plan/MiniMax-M3',
+          },
+          {
+            name: 'bob',
+            providerId: 'opencode' as const,
+            model: 'zai-coding-plan/glm-5.2',
+          },
+        ],
+      };
+      const internals = svc as unknown as {
+        materializeOpenCodeRuntimeAdapterDefaults(input: {
+          request: typeof request;
+          members: typeof request.members;
+        }): Promise<{
+          request: typeof request & { model?: string };
+          members: typeof request.members;
+        }>;
+        planRuntimeLanesOrThrow(
+          providerId: 'opencode',
+          model: string | undefined,
+          members: typeof request.members,
+          cwd: string
+        ): unknown;
+      };
+
+      const materialized = await internals.materializeOpenCodeRuntimeAdapterDefaults({
+        request,
+        members: request.members,
+      });
+      const lanePlan = internals.planRuntimeLanesOrThrow(
+        materialized.request.providerId,
+        materialized.request.model,
+        materialized.members,
+        materialized.request.cwd
+      );
+
+      expect(materialized.request.model).toBe('minimax-coding-plan/MiniMax-M3');
+      expect(materialized.members).toEqual(request.members);
+      expect(lanePlan).toMatchObject({
+        mode: 'pure_opencode_member_lanes',
+        primaryMembers: [
+          expect.objectContaining({
+            name: 'alice',
+            model: 'minimax-coding-plan/MiniMax-M3',
+          }),
+        ],
+        sideLanes: [
+          expect.objectContaining({
+            laneId: 'secondary:opencode:bob',
+            member: expect.objectContaining({
+              name: 'bob',
+              model: 'zai-coding-plan/glm-5.2',
+            }),
+          }),
+        ],
+      });
+    });
+
+    it('does not repeat a shared OpenCode runtime timeout for every queued member lane', async () => {
+      allowConsoleLogs();
+      const teamName = 'safe-opencode-shared-runtime-timeout';
+      const rootCause =
+        'Failed to query OpenCode agents: OpenCode command timed out after 10000ms';
+      const adapterLaunch = vi.fn(async (input: Record<string, unknown>) => {
+        const expectedMembers = input.expectedMembers as Array<{ name: string }>;
+        const memberName = expectedMembers[0]!.name;
+        return {
+          runId: String(input.runId),
+          teamName,
+          launchPhase: 'finished' as const,
+          teamLaunchState: 'partial_failure' as const,
+          members: {
+            [memberName]: {
+              memberName,
+              providerId: 'opencode' as const,
+              launchState: 'failed_to_start' as const,
+              agentToolAccepted: false,
+              runtimeAlive: false,
+              bootstrapConfirmed: false,
+              hardFailure: true,
+              hardFailureReason: rootCause,
+              diagnostics: [
+                rootCause,
+                'Failed to query OpenCode models: OpenCode command timed out after 10000ms',
+                'OpenCode raw model id "zai-coding-plan/glm-5.1" was not found in the live provider catalog',
+                'OpenCode request timed out after 15000ms for /config',
+              ],
+            },
+          },
+          warnings: [],
+          diagnostics: [rootCause],
+        };
+      });
+      const adapterStop = vi.fn(async () => undefined);
+      const { svc } = createSafeLaunchService();
+      svc.setRuntimeAdapterRegistry(
+        new TeamRuntimeAdapterRegistry([
+          {
+            providerId: 'opencode',
+            prepare: vi.fn(),
+            launch: adapterLaunch,
+            reconcile: vi.fn(),
+            stop: adapterStop,
+          } as unknown as TeamLaunchRuntimeAdapter,
+        ])
+      );
+      const progress: Array<{ state: string; error?: string }> = [];
+
+      await svc.createTeam(
+        {
+          teamName,
+          cwd: tempClaudeRoot,
+          providerId: 'opencode',
+          providerBackendId: 'adapter',
+          model: 'opencode/big-pickle',
+          members: [
+            {
+              name: 'alice',
+              role: 'Developer',
+              providerId: 'opencode',
+              model: 'zai-coding-plan/glm-5.1',
+            },
+            {
+              name: 'tom',
+              role: 'Developer',
+              providerId: 'opencode',
+              model: 'xai/grok-4.5',
+            },
+          ],
+        },
+        (event) => progress.push(event)
+      );
+
+      expect(adapterLaunch).toHaveBeenCalledTimes(1);
+      expect(adapterStop).toHaveBeenCalledTimes(1);
+      expect(progress.at(-1)).toMatchObject({ state: 'failed', error: rootCause });
+      const statuses = await svc.getMemberSpawnStatuses(teamName);
+      expect(statuses.statuses.alice).toMatchObject({
+        status: 'error',
+        launchState: 'failed_to_start',
+      });
+      expect(statuses.statuses.tom).toMatchObject({
+        status: 'error',
+        launchState: 'failed_to_start',
+      });
+      expect(statuses.statuses.alice?.error).toContain('same project runtime');
+      expect(statuses.statuses.tom?.error).toContain('same project runtime');
+    });
+
+    it('does not repeat a shared OpenCode timeout across mixed Codex secondary lanes', async () => {
+      allowConsoleLogs();
+      vi.mocked(ClaudeBinaryResolver.resolve).mockResolvedValue('/mock/claude');
+      vi.mocked(spawnCli).mockReturnValue(createRunningChild() as any);
+      const teamName = 'safe-mixed-shared-opencode-timeout';
+      const rootCause =
+        'Failed to query OpenCode agents: OpenCode command timed out after 10000ms';
+      const adapterLaunch = vi.fn(async (input: Record<string, unknown>) => {
+        const memberName = (input.expectedMembers as Array<{ name: string }>)[0]!.name;
+        return {
+          runId: String(input.runId),
+          teamName,
+          launchPhase: 'finished' as const,
+          teamLaunchState: 'partial_failure' as const,
+          members: {
+            [memberName]: {
+              memberName,
+              providerId: 'opencode' as const,
+              launchState: 'failed_to_start' as const,
+              agentToolAccepted: false,
+              runtimeAlive: false,
+              bootstrapConfirmed: false,
+              hardFailure: true,
+              hardFailureReason: rootCause,
+              diagnostics: [
+                rootCause,
+                'Failed to query OpenCode models: OpenCode command timed out after 10000ms',
+                'OpenCode raw model id "zai-coding-plan/glm-5.1" was not found in the live provider catalog',
+                'OpenCode request timed out after 15000ms for /config',
+              ],
+            },
+          },
+          warnings: [],
+          diagnostics: [rootCause],
+        };
+      });
+      const { svc } = createSafeLaunchService();
+      svc.setRuntimeAdapterRegistry(
+        new TeamRuntimeAdapterRegistry([
+          {
+            providerId: 'opencode',
+            prepare: vi.fn(),
+            launch: adapterLaunch,
+            reconcile: vi.fn(),
+            stop: vi.fn(async () => undefined),
+          } as unknown as TeamLaunchRuntimeAdapter,
+        ])
+      );
+
+      const { runId } = await svc.createTeam(
+        {
+          teamName,
+          cwd: tempClaudeRoot,
+          providerId: 'codex',
+          providerBackendId: 'codex-native',
+          model: 'gpt-5.4',
+          members: ['alice', 'bob', 'tom', 'sam'].map((name, index) => ({
+            name,
+            role: 'Developer',
+            providerId: 'opencode' as const,
+            model: `openrouter/test-model-${index}`,
+          })),
+        },
+        () => undefined
+      );
+
+      const run = (svc as any).runs.get(runId);
+      await (svc as any).launchMixedSecondaryLaneIfNeeded(run);
+      await vi.waitFor(
+        () => {
+          expect(adapterLaunch).toHaveBeenCalledTimes(1);
+          expect(
+            run.mixedSecondaryLanes.every(
+              (lane: { state: string }) => lane.state === 'finished'
+            )
+          ).toBe(true);
+        },
+        { timeout: 5_000 }
+      );
+
+      const statuses = await svc.getMemberSpawnStatuses(teamName);
+      for (const memberName of ['alice', 'bob', 'tom', 'sam']) {
+        expect(statuses.statuses[memberName]).toMatchObject({
+          status: 'error',
+          launchState: 'failed_to_start',
+        });
+      }
+      expect(
+        ['alice', 'bob', 'tom', 'sam'].filter((memberName) =>
+          statuses.statuses[memberName]?.error?.includes('same project runtime')
+        )
+      ).toHaveLength(3);
     });
 
     it('keeps healthy OpenCode member lanes running when a Cursor member hits its usage limit', async () => {

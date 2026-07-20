@@ -2317,6 +2317,36 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
     );
   });
 
+  it('blocks Codex prepare when the one-shot diagnostic reports exhausted quota', async () => {
+    const svc = new TeamProvisioningService();
+    vi.spyOn(svc as any, 'getCachedOrProbeResult').mockResolvedValue({
+      claudePath: '/fake/claude',
+      authSource: 'codex_runtime',
+    });
+    vi.spyOn(svc as any, 'buildProvisioningEnv').mockResolvedValue({
+      env: {
+        PATH: '/usr/bin',
+        SHELL: '/bin/zsh',
+      },
+      authSource: 'codex_runtime',
+      geminiRuntimeAuth: null,
+    });
+    vi.spyOn(svc as any, 'runProviderOneShotDiagnostic').mockResolvedValue({
+      warning:
+        "One-shot diagnostic failed after runtime readiness passed. Details: Codex app-server turn failed: You've hit your usage limit. Try again later.",
+    });
+
+    const result = await svc.prepareForProvisioning(tempRoot, {
+      forceFresh: true,
+      providerId: 'codex',
+      modelVerificationMode: 'deep',
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.message).toContain("You've hit your usage limit");
+    expect(result.warnings?.join('\n')).toContain("You've hit your usage limit");
+  });
+
   it('surfaces preflight timeouts with the orchestrator-cli label', async () => {
     const svc = new TeamProvisioningService();
     vi.spyOn(svc as any, 'getCachedOrProbeResult').mockResolvedValue({
@@ -2610,7 +2640,7 @@ describe('TeamProvisioningService prepare/auth behavior', () => {
         '--output-format',
         'text',
         '--model',
-        'gpt-5.4-mini',
+        'gpt-5.6-sol',
         '--max-turns',
         '1',
         '--no-session-persistence',

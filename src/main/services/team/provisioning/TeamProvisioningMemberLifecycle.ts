@@ -17,6 +17,7 @@ import { isTeamEffortLevel } from '@shared/utils/effortLevels';
 import { isLeadMember } from '@shared/utils/leadDetection';
 import { createLogger } from '@shared/utils/logger';
 import { migrateProviderBackendId } from '@shared/utils/providerBackend';
+import { buildNativeAppManagedBootstrapCheckText } from '@shared/utils/teamInternalControlMessages';
 import {
   buildTeamMemberMcpSettingSources,
   normalizeTeamMemberMcpPolicy,
@@ -67,7 +68,11 @@ import {
 } from './TeamProvisioningPromptBuilders';
 
 import type { NativeAppManagedBootstrapSpec } from '../bootstrap/NativeAppManagedBootstrapContextBuilder';
-import type { TeamRuntimeLaunchResult, TeamRuntimeMemberLaunchEvidence } from '../runtime';
+import type {
+  TeamLaunchRuntimeAdapter,
+  TeamRuntimeLaunchResult,
+  TeamRuntimeMemberLaunchEvidence,
+} from '../runtime';
 import type { TeamMcpConfigBuilder } from '../TeamMcpConfigBuilder';
 import type { TeamMembersMetaStore } from '../TeamMembersMetaStore';
 import type { RuntimeTelemetryProcessTableRow } from '../TeamRuntimeTelemetry';
@@ -544,7 +549,7 @@ export interface TeamProvisioningMemberLifecycleHost {
     config: RuntimeBootstrapMemberMcpLaunchConfig | null
   ): Promise<void>;
   sendMessageToRun(run: ProvisioningRun, message: string): Promise<unknown>;
-  getOpenCodeRuntimeAdapter(): unknown | null;
+  getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null;
   resolveOpenCodeMemberWorkspacesForRuntime(input: {
     teamName: string;
     baseCwd: string;
@@ -784,7 +789,7 @@ export class TeamProvisioningMemberLifecycleController {
     return this.host.sendMessageToRun(run, message);
   }
 
-  private getOpenCodeRuntimeAdapter(): unknown | null {
+  private getOpenCodeRuntimeAdapter(): TeamLaunchRuntimeAdapter | null {
     return this.host.getOpenCodeRuntimeAdapter();
   }
 
@@ -1635,7 +1640,7 @@ export class TeamProvisioningMemberLifecycleController {
         memberName: input.configuredMember.name,
         leadName: input.leadName,
         leadSessionId: parentSessionId,
-        prompt,
+        prompt: nativeBootstrapSpec ? buildNativeAppManagedBootstrapCheckText() : prompt,
         operation,
       });
       await this.appendDirectProcessRuntimeEvent({
@@ -2808,6 +2813,24 @@ export class TeamProvisioningMemberLifecycleController {
       throw new Error(`Member "${memberName}" could not be resolved for OpenCode restart`);
     }
 
+    const localModelPreflight = await adapter.preflightLocalModels?.({
+      targets: effectiveMembers.map((member) => ({
+        projectPath: member.cwd?.trim() || projectPath,
+        modelRoute: member.model?.trim() ?? '',
+      })),
+    });
+    if (localModelPreflight && !localModelPreflight.ok) {
+      throw new Error(
+        localModelPreflight.diagnostics[0] ??
+          `Local model for teammate "${memberName}" is not ready for restart.`
+      );
+    }
+    if (localModelPreflight?.warnings.length) {
+      logger.warn(
+        `[${teamName}] Local model primary restart preflight warnings for ${memberName}: ${localModelPreflight.warnings.join(' ')}`
+      );
+    }
+
     this.invalidateRuntimeSnapshotCaches(teamName);
     this.persistOpenCodeMemberRestartSystemMessage({
       teamName,
@@ -3467,7 +3490,8 @@ export class TeamProvisioningMemberLifecycleController {
         'OpenCode secondary lane reattach requires an active OpenCode member lane run.'
       );
     }
-    if (!this.getOpenCodeRuntimeAdapter()) {
+    const adapter = this.getOpenCodeRuntimeAdapter();
+    if (!adapter) {
       throw new Error('OpenCode runtime adapter is not available for controlled lane reattach.');
     }
 
@@ -3511,6 +3535,25 @@ export class TeamProvisioningMemberLifecycleController {
     });
     if (!memberSpec) {
       throw new Error(`Member "${memberName}" could not be resolved for OpenCode lane reattach.`);
+    }
+    const localModelPreflight = await adapter.preflightLocalModels?.({
+      targets: [
+        {
+          projectPath: memberSpec.cwd?.trim() || run.request.cwd,
+          modelRoute: memberSpec.model?.trim() ?? '',
+        },
+      ],
+    });
+    if (localModelPreflight && !localModelPreflight.ok) {
+      throw new Error(
+        localModelPreflight.diagnostics[0] ??
+          `Local model for teammate "${memberName}" is not ready for restart.`
+      );
+    }
+    if (localModelPreflight?.warnings.length) {
+      logger.warn(
+        `[${teamName}] Local model restart preflight warnings for ${memberName}: ${localModelPreflight.warnings.join(' ')}`
+      );
     }
     const nextLane = this.createMixedSecondaryLaneStateForMember(run, memberSpec);
     const existingLaneIndex = run.mixedSecondaryLanes.findIndex(

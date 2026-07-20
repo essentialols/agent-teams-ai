@@ -401,6 +401,7 @@ vi.mock('@renderer/hooks/useDraftPersistence', () => ({
       value,
       setValue,
       isSaved: false,
+      clearDraft: vi.fn(),
     };
   },
 }));
@@ -658,6 +659,53 @@ describe('LaunchTeamDialog', () => {
       'draft-0':
         'This teammate will continue from its existing worktree: /tmp/project/.worktrees/jack',
     });
+
+    await act(async () => {
+      root.unmount();
+      await flush();
+    });
+  });
+
+  it('hydrates existing teammate models before a slow saved-request lookup completes', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.mocked(api.teams.getSavedRequest).mockReturnValueOnce(new Promise(() => {}));
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(LaunchTeamDialog, {
+          mode: 'launch',
+          open: true,
+          teamName: 'team-alpha',
+          members: [
+            {
+              name: 'alice',
+              role: 'reviewer',
+              providerId: 'opencode',
+              model: 'ollama/qwen2.5-coder:0.5b',
+            },
+          ] as any,
+          defaultProjectPath: '/tmp/project',
+          provisioningError: null,
+          clearProvisioningError: vi.fn(),
+          activeTeams: [],
+          onClose: vi.fn(),
+          onLaunch: vi.fn(async () => {}),
+        })
+      );
+      await flush();
+    });
+
+    expect(teamRosterEditorSectionMock.lastProps?.members).toEqual([
+      expect.objectContaining({
+        name: 'alice',
+        providerId: 'opencode',
+        model: 'ollama/qwen2.5-coder:0.5b',
+      }),
+    ]);
 
     await act(async () => {
       root.unmount();
@@ -2181,6 +2229,80 @@ describe('LaunchTeamDialog', () => {
       callsAfterSameSignatureRerender
     );
     expect(host.textContent).toContain('All selected providers are ready.');
+
+    await act(async () => {
+      root.unmount();
+      await flush();
+    });
+  });
+
+  it('does not report the submitted team name as a duplicate while creation is in flight', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+
+    let resolveCreate!: () => void;
+    const createPromise = new Promise<void>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const onCreate = vi.fn(() => createPromise);
+    const onClose = vi.fn();
+    const onOpenTeam = vi.fn();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    const renderDialog = async (
+      existingTeamNames: string[],
+      provisioningTeamNames: string[]
+    ): Promise<void> => {
+      root.render(
+        React.createElement(CreateTeamDialog, {
+          open: true,
+          canCreate: true,
+          provisioningErrorsByTeam: {},
+          clearProvisioningError: vi.fn(),
+          existingTeamNames,
+          provisioningTeamNames,
+          activeTeams: [],
+          defaultProjectPath: '/tmp/project',
+          onClose,
+          onCreate,
+          onOpenTeam,
+        })
+      );
+      await flush();
+    };
+
+    await act(async () => {
+      await renderDialog([], []);
+    });
+
+    const submitButton = Array.from(host.querySelectorAll('button')).find(
+      (button) =>
+        button.textContent === 'Create' || button.textContent === 'Skip preflight and create'
+    );
+    expect(submitButton?.disabled).toBe(false);
+
+    await act(async () => {
+      submitButton?.click();
+      await flush();
+    });
+    expect(onCreate).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await renderDialog(['team-alpha'], ['team-alpha']);
+    });
+
+    expect(host.textContent).toContain('Creating...');
+    expect(host.textContent).not.toContain('Team name already exists');
+    expect(host.textContent).not.toContain('A team with this name is currently launching');
+
+    await act(async () => {
+      resolveCreate();
+      await createPromise;
+      await flush();
+    });
+    expect(onOpenTeam).toHaveBeenCalledWith('team-alpha', '/tmp/project');
+    expect(onClose).toHaveBeenCalledOnce();
 
     await act(async () => {
       root.unmount();

@@ -70,6 +70,7 @@ import {
 } from '@features/recent-projects/main';
 import {
   createRuntimeProviderManagementFeature,
+  inspectOpenCodeLocalModelRuntimeReadiness,
   registerRuntimeProviderManagementIpc,
   removeRuntimeProviderManagementIpc,
   type RuntimeProviderManagementFeatureFacade,
@@ -271,6 +272,7 @@ import {
   LocalFileSystemProvider,
   MemberStatsComputer,
   NotificationManager,
+  isSupportedOpenCodeRuntimeBinaryPath,
   OpenCodeRuntimeInstallerService,
   OpenCodeReadinessBridge,
   OpenCodeTeamRuntimeAdapter,
@@ -639,6 +641,7 @@ async function createOpenCodeRuntimeAdapterRegistry(
       bridgeEnv,
       resolveVerifiedOpenCodeRuntimeBinaryPath: () =>
         resolveOpenCodeRuntimeBinaryForBridgeEnv({ includeShellEnv: options.includeShellEnv }),
+      isSupportedOpenCodeRuntimeBinaryPath,
       onWarning: (message) => logger.warn(message),
     });
   };
@@ -754,7 +757,11 @@ async function createOpenCodeRuntimeAdapterRegistry(
     appVersion: clientIdentity.appVersion,
   });
   openCodeLifecycleBridge = readinessBridge;
-  return new TeamRuntimeAdapterRegistry([new OpenCodeTeamRuntimeAdapter(readinessBridge)]);
+  return new TeamRuntimeAdapterRegistry([
+    new OpenCodeTeamRuntimeAdapter(readinessBridge, {
+      inspectLocalModelRuntime: inspectOpenCodeLocalModelRuntimeReadiness,
+    }),
+  ]);
 }
 
 async function cleanupOpenCodeHostsForLifecycle(reason: 'startup' | 'shutdown'): Promise<void> {

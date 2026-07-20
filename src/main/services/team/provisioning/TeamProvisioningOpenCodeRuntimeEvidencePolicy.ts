@@ -211,6 +211,35 @@ export function collectOpenCodeSecondaryLaneFailureDiagnostics(
   return diagnostics.length > 0 ? diagnostics : ['OpenCode bridge reported member launch failure'];
 }
 
+const OPEN_CODE_SHARED_RUNTIME_PREFLIGHT_FAILURE_PATTERNS = [
+  /failed to query opencode (?:agents|models):.*\b(?:timed out|timeout)\b/i,
+  /opencode request timed out.*\/config/i,
+  /\/config request failed:.*\b(?:timed out|timeout)\b/i,
+  /opencode host (?:is )?not healthy/i,
+  /opencode readiness bridge failed:.*\b(?:fetch failed|econnrefused)\b/i,
+] as const;
+
+export function selectOpenCodeSharedRuntimePreflightFailureDiagnostic(
+  result: TeamRuntimeLaunchResult
+): string | null {
+  for (const [memberName, member] of Object.entries(result.members)) {
+    if (!isDefinitiveOpenCodePreLaunchFailure(result, memberName)) {
+      continue;
+    }
+    const candidates = [member.hardFailureReason, member.runtimeDiagnostic]
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const sharedFailure = candidates.find((value) =>
+      OPEN_CODE_SHARED_RUNTIME_PREFLIGHT_FAILURE_PATTERNS.some((pattern) => pattern.test(value))
+    );
+    if (sharedFailure) {
+      return sharedFailure;
+    }
+  }
+  return null;
+}
+
 export function isReconciliableOpenCodeUnknownOutcome(diagnostics: readonly string[]): boolean {
   return diagnostics.some((diagnostic) =>
     /outcome must be reconciled before retry/i.test(diagnostic)

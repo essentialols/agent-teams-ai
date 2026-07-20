@@ -169,6 +169,9 @@ function createDeferredProvider(
 function createReadyOpenCodeCatalogProvider(
   model: string
 ): CliInstallationStatus['providers'][number] {
+  const fetchedAt = new Date();
+  const staleAt = new Date(fetchedAt.getTime() + 10 * 60_000);
+
   return createMultimodelProvider({
     providerId: 'opencode',
     displayName: 'OpenCode',
@@ -181,8 +184,8 @@ function createReadyOpenCodeCatalogProvider(
       providerId: 'opencode',
       source: 'app-server',
       status: 'ready',
-      fetchedAt: '2026-07-20T00:00:00.000Z',
-      staleAt: '2026-07-20T00:10:00.000Z',
+      fetchedAt: fetchedAt.toISOString(),
+      staleAt: staleAt.toISOString(),
       defaultModelId: model,
       defaultLaunchModel: model,
       models: [],
@@ -1618,6 +1621,8 @@ describe('cliInstallerSlice', () => {
     });
 
     it('reports a scoped OpenCode catalog loaded only after an authoritative ready response', async () => {
+      const fetchedAt = new Date();
+      const staleAt = new Date(fetchedAt.getTime() + 10 * 60_000);
       const summaryProvider = createMultimodelProvider({
         providerId: 'opencode',
         displayName: 'OpenCode',
@@ -1635,8 +1640,8 @@ describe('cliInstallerSlice', () => {
           providerId: 'opencode',
           source: 'app-server',
           status: 'ready',
-          fetchedAt: '2026-07-20T00:00:00.000Z',
-          staleAt: '2026-07-20T00:10:00.000Z',
+          fetchedAt: fetchedAt.toISOString(),
+          staleAt: staleAt.toISOString(),
           defaultModelId: 'opencode/big-pickle',
           defaultLaunchModel: 'opencode/big-pickle',
           models: [],

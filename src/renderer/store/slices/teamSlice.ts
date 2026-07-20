@@ -1336,6 +1336,10 @@ export interface TeamSlice {
   ) => void;
   selectedTeamName: string | null;
   selectedTeamData: TeamViewSnapshot | null;
+  teamsProjectNavigationIntent: {
+    projectId: string;
+    projectPath: string;
+  } | null;
   /** Team-scoped detailed cache used by multi-pane views like agent graph. */
   teamDataCacheByName: Record<string, TeamViewSnapshot>;
   slotLayoutVersion: string;
@@ -1394,7 +1398,7 @@ export interface TeamSlice {
   fetchBranches: (paths: string[]) => Promise<void>;
   fetchTeams: () => Promise<void>;
   fetchAllTasks: () => Promise<void>;
-  openTeamsTab: () => void;
+  openTeamsTab: (projectPath?: string) => void;
   openTeamTab: (teamName: string, projectPath?: string, taskId?: string) => void;
   clearKanbanFilter: () => void;
   ensureTeamGraphSlotAssignments: (
@@ -1724,6 +1728,7 @@ export const createTeamSlice: StateCreator<AppState, [], [], TeamSlice> = (set, 
   globalTasksError: null,
   selectedTeamName: null,
   selectedTeamData: null,
+  teamsProjectNavigationIntent: null,
   teamDataCacheByName: {},
   slotLayoutVersion: GRAPH_STABLE_SLOT_LAYOUT_VERSION,
   graphLayoutModeByTeam: {},
@@ -2128,8 +2133,18 @@ export const createTeamSlice: StateCreator<AppState, [], [], TeamSlice> = (set, 
     await request;
   },
 
-  openTeamsTab: () => {
+  openTeamsTab: (projectPath?: string) => {
     const state = get();
+    const normalizedProjectPath = projectPath?.trim() ?? '';
+    set({
+      teamsProjectNavigationIntent:
+        normalizedProjectPath && state.selectedProjectId
+          ? {
+              projectId: state.selectedProjectId,
+              projectPath: normalizedProjectPath,
+            }
+          : null,
+    });
     const focusedPane = state.paneLayout.panes.find((p) => p.id === state.paneLayout.focusedPaneId);
     const teamsTab = focusedPane?.tabs.find((tab) => tab.type === 'teams');
     if (teamsTab) {

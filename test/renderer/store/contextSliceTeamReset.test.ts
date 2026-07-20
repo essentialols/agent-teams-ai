@@ -300,6 +300,10 @@ describe('context slice team/task reset', () => {
       globalTasksInitialized: true,
       selectedTeamName: 'local-team',
       selectedTeamData: { teamName: 'local-team' },
+      teamsProjectNavigationIntent: {
+        projectId: 'local-project',
+        projectPath: '/local/project',
+      },
       teamDataCacheByName: { 'local-team': { teamName: 'local-team' } },
     } as never);
 
@@ -311,6 +315,7 @@ describe('context slice team/task reset', () => {
     expect(store.getState().globalTasks).toEqual([]);
     expect(store.getState().selectedTeamName).toBeNull();
     expect(store.getState().selectedTeamData).toBeNull();
+    expect(store.getState().teamsProjectNavigationIntent).toBeNull();
     expect(store.getState().teamDataCacheByName).toEqual({});
     expect(apiMock.teams.list).toHaveBeenCalledTimes(1);
     expect(apiMock.teams.getAllTasks).toHaveBeenCalledTimes(1);

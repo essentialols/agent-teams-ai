@@ -72,6 +72,7 @@ import {
   findTeamProjectSelectionTarget,
   resolveCreateTeamDefaultProjectPath,
   resolveTeamProjectSelection,
+  resolveTeamsProjectNavigationPath,
   teamMatchesProjectSelection,
 } from './teamProjectSelection';
 import { TeamTaskStatusSummary } from './TeamTaskStatusSummary';
@@ -547,6 +548,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
     selectedWorktreeId,
     selectedProjectId,
     activeProjectId,
+    teamsProjectNavigationIntent,
     branchByPath,
   } = useStore(
     useShallow((s) => ({
@@ -567,6 +569,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
       selectedWorktreeId: s.selectedWorktreeId,
       selectedProjectId: s.selectedProjectId,
       activeProjectId: s.activeProjectId,
+      teamsProjectNavigationIntent: s.teamsProjectNavigationIntent,
       branchByPath: s.branchByPath,
     }))
   );
@@ -697,10 +700,15 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
       activeProjectId,
     ]
   );
-  const currentProjectPath = teamPriorityProjectPath ?? currentProjectSelection.projectPath;
+  const navigationProjectPath = resolveTeamsProjectNavigationPath(
+    teamsProjectNavigationIntent,
+    selectedProjectId
+  );
+  const selectedProjectPath = navigationProjectPath ?? currentProjectSelection.projectPath;
+  const currentProjectPath = teamPriorityProjectPath ?? selectedProjectPath;
   const createTeamDefaultProjectPath = resolveCreateTeamDefaultProjectPath({
     initialProjectPath: copyData?.cwd,
-    selectedProjectPath: currentProjectSelection.projectPath,
+    selectedProjectPath,
     priorityProjectPath: teamPriorityProjectPath,
   });
 
@@ -782,6 +790,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
 
   const handleProjectSelectionChange = useCallback(
     (projectPath: string | null): void => {
+      useStore.setState({ teamsProjectNavigationIntent: null });
       if (!projectPath) {
         setTeamPriorityProjectPath(null);
         useStore.setState(getProjectSelectionResetState());
@@ -1136,6 +1145,7 @@ export const TeamListView = memo(function TeamListView(): React.JSX.Element {
         activeTeams={activeTeams}
         initialData={copyData ?? undefined}
         defaultProjectPath={createTeamDefaultProjectPath}
+        forceDefaultProjectSelection={copyData == null && navigationProjectPath != null}
         onClose={handleCreateDialogClose}
         onCreate={handleCreateSubmit}
         onOpenTeam={openTeamTab}

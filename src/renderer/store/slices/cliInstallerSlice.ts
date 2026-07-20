@@ -13,6 +13,7 @@ import {
 } from '@renderer/analytics/productAnalytics';
 import { api } from '@renderer/api';
 import { isGeminiUiFrozen } from '@renderer/utils/geminiUiFreeze';
+import { isTeamProviderModelCatalogFresh } from '@renderer/utils/teamModelAvailability';
 import {
   CLI_PROVIDER_STATUS_DEFERRED_MESSAGE,
   CLI_PROVIDER_STATUS_UNAVAILABLE_MESSAGE,
@@ -883,6 +884,7 @@ export interface CliInstallerSlice {
   cliStatusLoading: boolean;
   cliProviderStatusLoading: Partial<Record<CliProviderId, boolean>>;
   cliProviderStatusByScope: Readonly<Record<string, CliProviderStatus>>;
+  cliProviderStatusScopeRevision: number;
   cliStatusError: string | null;
   cliInstallerState:
     | 'idle'
@@ -1036,6 +1038,7 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
   cliStatusLoading: false,
   cliProviderStatusLoading: {},
   cliProviderStatusByScope: {},
+  cliProviderStatusScopeRevision: 0,
   cliStatusError: null,
   cliInstallerState: 'idle',
   cliDownloadProgress: 0,
@@ -1205,8 +1208,8 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
 
     const epoch = ++cliStatusEpoch;
     // Assigned before the first awaited continuation and referenced by its own cleanup.
-    // eslint-disable-next-line prefer-const
     let request!: Promise<void>;
+    // eslint-disable-next-line prefer-const
     request = (async () => {
       set({ cliStatusLoading: true, cliStatusError: null });
       try {
@@ -1281,8 +1284,8 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
     cliProviderStatusSeq.set(requestKey, requestSeq);
 
     // Assigned before the first awaited continuation and referenced by its own cleanup.
-    // eslint-disable-next-line prefer-const
     let request!: Promise<boolean>;
+    // eslint-disable-next-line prefer-const
     request = (async () => {
       if (!silent) {
         set((state) => {
@@ -1415,12 +1418,13 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
           };
         });
         scheduleCodexCatalogLoadingRefresh(get, providerId);
+        const settledProviderStatus = projectPath
+          ? get().cliProviderStatusByScope[scopeKey]
+          : providerStatus;
         return Boolean(
           requestIsCurrent &&
-          providerStatus &&
-          (!projectPath ||
-            (providerStatus.modelCatalog != null &&
-              providerStatus.modelCatalogRefreshState === 'ready'))
+          settledProviderStatus &&
+          (!projectPath || isTeamProviderModelCatalogFresh(providerId, settledProviderStatus))
         );
       } catch (error) {
         const message =
@@ -1468,7 +1472,6 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
           if (projectPath) {
             const currentScopedProvider = state.cliProviderStatusByScope[scopeKey];
             return {
-              cliStatusError: message,
               cliProviderStatusLoading: nextLoading,
               cliProviderStatusByScope: setBoundedScopedProviderStatus(
                 state.cliProviderStatusByScope,
@@ -1557,6 +1560,9 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
         if (cliProviderStatusInFlight.get(requestKey) === request) {
           cliProviderStatusInFlight.delete(requestKey);
         }
+        if (cliProviderStatusSeq.get(requestKey) === requestSeq) {
+          cliProviderStatusSeq.delete(requestKey);
+        }
       }
     })();
 
@@ -1570,11 +1576,12 @@ export const createCliInstallerSlice: StateCreator<AppState, [], [], CliInstalle
     cliStatusInFlight = null;
     cliProviderStatusInFlight.clear();
     cliProviderStatusSeq.clear();
-    set({
+    set((state) => ({
       cliProviderStatusByScope: {},
+      cliProviderStatusScopeRevision: state.cliProviderStatusScopeRevision + 1,
       cliStatusLoading: false,
       cliProviderStatusLoading: {},
-    });
+    }));
     await api.cliInstaller?.invalidateStatus();
   },
 

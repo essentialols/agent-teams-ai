@@ -1284,6 +1284,10 @@ describe('CliInstallerService', () => {
         ClaudeMultimodelBridgeService.prototype,
         'getProviderStatuses'
       ).mockReturnValue(providerStatuses);
+      const hydrationInvalidationSpy = vi.spyOn(
+        ClaudeMultimodelBridgeService.prototype,
+        'invalidateProviderStatusHydrations'
+      );
 
       const statusPromise = service.getStatus();
       await vi.advanceTimersByTimeAsync(1_600);
@@ -1291,6 +1295,7 @@ describe('CliInstallerService', () => {
 
       service.invalidateStatusCache();
       expect(service.getLatestStatusSnapshot()).toBeNull();
+      expect(hydrationInvalidationSpy).toHaveBeenCalledTimes(1);
 
       resolveProviders([
         createTestProviderStatus('anthropic', true, 'oauth_token'),
@@ -1303,6 +1308,7 @@ describe('CliInstallerService', () => {
       expect(service.getLatestStatusSnapshot()).toBeNull();
 
       providerStatusesSpy.mockRestore();
+      hydrationInvalidationSpy.mockRestore();
       vi.useRealTimers();
     });
 

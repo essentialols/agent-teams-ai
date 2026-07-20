@@ -179,6 +179,17 @@ export function isTeamProviderModelCatalogFresh(
   return Number.isFinite(staleAtMs) && staleAtMs > nowMs;
 }
 
+export function isTeamProviderModelCatalogSettled(
+  providerId: SupportedProviderId | undefined,
+  providerStatus?: TeamModelRuntimeProviderStatus | null
+): boolean {
+  return Boolean(
+    providerId &&
+    providerStatus?.modelCatalog?.providerId === providerId &&
+    providerStatus.modelCatalogRefreshState === 'ready'
+  );
+}
+
 export function isTeamProviderModelVerificationPending(
   providerId: SupportedProviderId | undefined,
   providerStatus?: TeamModelRuntimeProviderStatus | null
@@ -196,7 +207,6 @@ export function isTeamProviderModelVerificationPending(
     return false;
   }
 
-  const hasRuntimeModelTruth = hasTeamProviderRuntimeModelTruth(providerStatus);
   const statusMessage = providerStatus.statusMessage?.trim().toLowerCase() ?? '';
   const statusMessagePending =
     statusMessage === 'checking...' ||
@@ -205,6 +215,14 @@ export function isTeamProviderModelVerificationPending(
     return true;
   }
 
+  // A ready catalog is authoritative even when it is stale, degraded, or
+  // unavailable. Callers may retry it in the background, but must not present
+  // a terminal catalog result as an endless initial load.
+  if (isTeamProviderModelCatalogSettled(providerId, providerStatus)) {
+    return false;
+  }
+
+  const hasRuntimeModelTruth = hasTeamProviderRuntimeModelTruth(providerStatus);
   if (statusMessagePending || providerStatus.modelCatalogRefreshState === 'loading') {
     return !hasRuntimeModelTruth;
   }

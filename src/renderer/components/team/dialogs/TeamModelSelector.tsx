@@ -1437,6 +1437,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
   const autoFocusedOpenCodeSourceRef = useRef<string | null>(null);
   const catalogHydrationRequestedRef = useRef<Set<TeamProviderId>>(new Set());
   const openCodeCatalogRetryCountRef = useRef(new Map<string, number>());
+  const openCodeCatalogScopeRevisionRef = useRef<number | null>(null);
   const openCodeCatalogScopeKey = projectPath?.trim() || '';
   const [loadedOpenCodeCatalogScopeKey, setLoadedOpenCodeCatalogScopeKey] = useState<string | null>(
     null
@@ -1457,6 +1458,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
   });
   const cliStatusLoading = useStore((s) => s.cliStatusLoading);
   const cliProviderStatusLoading = useStore((s) => s.cliProviderStatusLoading ?? {});
+  const cliProviderStatusScopeRevision = useStore((s) => s.cliProviderStatusScopeRevision);
   const fetchCliProviderStatus = useStore((s) => s.fetchCliProviderStatus);
   const codexRuntimeStatus = useStore((s) => s.codexRuntimeStatus);
   const codexRuntimeStatusLoading = useStore((s) => s.codexRuntimeStatusLoading);
@@ -1743,6 +1745,22 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
         : runtimeNormalizedValue;
 
   useEffect(() => {
+    if (openCodeCatalogScopeRevisionRef.current === null) {
+      openCodeCatalogScopeRevisionRef.current = cliProviderStatusScopeRevision;
+      return;
+    }
+    if (openCodeCatalogScopeRevisionRef.current === cliProviderStatusScopeRevision) {
+      return;
+    }
+
+    openCodeCatalogScopeRevisionRef.current = cliProviderStatusScopeRevision;
+    openCodeCatalogRetryCountRef.current.clear();
+    setLoadedOpenCodeCatalogScopeKey(null);
+    setSettledOpenCodeCatalogScopeKey(null);
+    setOpenCodeCatalogRetrySequence((sequence) => sequence + 1);
+  }, [cliProviderStatusScopeRevision]);
+
+  useEffect(() => {
     if (
       effectiveProviderId !== 'opencode' ||
       !multimodelAvailable ||
@@ -1793,6 +1811,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
     effectiveProviderId,
     fetchCliProviderStatus,
     hasReadyOpenCodeCatalog,
+    cliProviderStatusScopeRevision,
     loadedOpenCodeCatalogScopeKey,
     multimodelAvailable,
     openCodeCatalogScopeKey,
@@ -2560,7 +2579,19 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
   const visibleDefaultModelOptions = visibleModelOptions.filter((option) => !option.value.trim());
   const visibleConcreteModelOptionCount =
     visibleModelOptions.length - visibleDefaultModelOptions.length;
-  const concreteModelOptionCount = modelOptions.filter((option) => option.value.trim()).length;
+  const openCodeCatalogHydrating = isOpenCodeCatalogHydrating(runtimeProviderStatus);
+  const concreteModelOptionCount = modelOptions.filter((option) => {
+    const model = option.value.trim();
+    if (!model) {
+      return false;
+    }
+
+    return !(
+      effectiveProviderId === 'opencode' &&
+      openCodeCatalogHydrating &&
+      model.toLowerCase() === 'opencode/big-pickle'
+    );
+  }).length;
   const selectedOpenCodeSourceTab =
     selectedOpenCodeSourceIds.size === 1
       ? (openCodeProviderTabs.find((tab) => selectedOpenCodeSourceIds.has(tab.sourceId)) ?? null)
@@ -2611,9 +2642,11 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
     effectiveProviderId === 'opencode' &&
     (openCodeProjectCatalogPending ||
       providerModelCatalogLoading ||
-      (!openCodeScopedCatalogRetryExhausted && isOpenCodeCatalogHydrating(runtimeProviderStatus)));
+      (!openCodeScopedCatalogRetryExhausted && openCodeCatalogHydrating));
   const shouldShowOpenCodeCatalogLoading =
-    openCodeCatalogLoading && openCodeLocalModelOverlay.options.length === 0;
+    openCodeCatalogLoading &&
+    openCodeLocalModelOverlay.options.length === 0 &&
+    concreteModelOptionCount === 0;
   const shouldShowOpenCodeSourceSkeleton =
     openCodeCatalogLoading && openCodeProviderTabs.length === 0;
   const shouldShowOpenCodeFilterSkeleton =

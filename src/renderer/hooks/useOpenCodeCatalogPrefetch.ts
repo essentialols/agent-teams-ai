@@ -65,13 +65,15 @@ export function useOpenCodeCatalogPrefetch({
   const mountedRef = useRef(true);
   const enabledRef = useRef(enabled);
   const activeScopeRef = useRef('');
+  const scopeRevisionRef = useRef(0);
   const previousScopeRef = useRef('');
-  const requestInFlightByScopeRef = useRef(new Set<string>());
+  const requestRevisionByScopeRef = useRef(new Map<string, number>());
   const retryCountByScopeRef = useRef(new Map<string, number>());
   const retryTimerByScopeRef = useRef(new Map<string, number>());
-  const retryExhaustedByScopeRef = useRef(new Set<string>());
+  const retryExhaustedRevisionByScopeRef = useRef(new Map<string, number>());
   const normalizedProjectPath = projectPath?.trim() || '';
   const cliStatus = useStore((state) => state.cliStatus);
+  const scopeRevision = useStore((state) => state.cliProviderStatusScopeRevision) ?? 0;
   const fetchCliProviderStatus = useStore((state) => state.fetchCliProviderStatus);
   const scopedProviderStatus = useStore((state) =>
     normalizedProjectPath
@@ -84,6 +86,7 @@ export function useOpenCodeCatalogPrefetch({
   const catalogStaleAtMs = getCatalogStaleAtMs(scopedProviderStatus);
 
   activeScopeRef.current = normalizedProjectPath;
+  scopeRevisionRef.current = scopeRevision;
   enabledRef.current = enabled;
 
   useEffect(() => {
@@ -99,11 +102,14 @@ export function useOpenCodeCatalogPrefetch({
       retryTimerByScopeRef.current.delete(previousScope);
     }
     retryCountByScopeRef.current.delete(previousScope);
-    retryExhaustedByScopeRef.current.delete(previousScope);
+    retryExhaustedRevisionByScopeRef.current.delete(previousScope);
   }, [normalizedProjectPath]);
 
   useEffect(() => {
     const retryTimers = retryTimerByScopeRef.current;
+    const requestRevisions = requestRevisionByScopeRef.current;
+    const retryCounts = retryCountByScopeRef.current;
+    const exhaustedRevisions = retryExhaustedRevisionByScopeRef.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -111,6 +117,9 @@ export function useOpenCodeCatalogPrefetch({
         window.clearTimeout(timeoutId);
       }
       retryTimers.clear();
+      requestRevisions.clear();
+      retryCounts.clear();
+      exhaustedRevisions.clear();
     };
   }, []);
 
@@ -132,7 +141,7 @@ export function useOpenCodeCatalogPrefetch({
       if (!enabled && normalizedProjectPath) {
         clearRetryTimer();
         retryCountByScopeRef.current.delete(normalizedProjectPath);
-        retryExhaustedByScopeRef.current.delete(normalizedProjectPath);
+        retryExhaustedRevisionByScopeRef.current.delete(normalizedProjectPath);
       }
       return;
     }
@@ -140,7 +149,7 @@ export function useOpenCodeCatalogPrefetch({
     if (catalogFresh) {
       clearRetryTimer();
       retryCountByScopeRef.current.delete(normalizedProjectPath);
-      retryExhaustedByScopeRef.current.delete(normalizedProjectPath);
+      retryExhaustedRevisionByScopeRef.current.delete(normalizedProjectPath);
       if (catalogStaleAtMs == null) {
         return;
       }
@@ -155,7 +164,7 @@ export function useOpenCodeCatalogPrefetch({
     if (priority === 'background' && deferBackground) {
       return;
     }
-    if (requestInFlightByScopeRef.current.has(normalizedProjectPath)) {
+    if (requestRevisionByScopeRef.current.get(normalizedProjectPath) === scopeRevision) {
       return;
     }
     if (retryTimerByScopeRef.current.has(normalizedProjectPath)) {
@@ -164,18 +173,24 @@ export function useOpenCodeCatalogPrefetch({
 
     return schedulePrefetch(() => {
       const requestScope = normalizedProjectPath;
+      const requestScopeRevision = scopeRevision;
       const scheduleRetry = (): void => {
-        if (!mountedRef.current || !enabledRef.current || activeScopeRef.current !== requestScope) {
+        if (
+          !mountedRef.current ||
+          !enabledRef.current ||
+          activeScopeRef.current !== requestScope ||
+          scopeRevisionRef.current !== requestScopeRevision
+        ) {
           return;
         }
         const retryCount = retryCountByScopeRef.current.get(requestScope) ?? 0;
         const retryDelay = OPENCODE_CATALOG_PREFETCH_RETRY_DELAYS_MS[retryCount];
         if (retryDelay === undefined) {
-          retryExhaustedByScopeRef.current.add(requestScope);
+          retryExhaustedRevisionByScopeRef.current.set(requestScope, requestScopeRevision);
           setRefreshSequence((sequence) => sequence + 1);
           return;
         }
-        retryExhaustedByScopeRef.current.delete(requestScope);
+        retryExhaustedRevisionByScopeRef.current.delete(requestScope);
         retryCountByScopeRef.current.set(requestScope, retryCount + 1);
         const existingRetryTimer = retryTimerByScopeRef.current.get(requestScope);
         if (existingRetryTimer !== undefined) {
@@ -190,15 +205,21 @@ export function useOpenCodeCatalogPrefetch({
         retryTimerByScopeRef.current.set(requestScope, retryTimer);
       };
 
-      requestInFlightByScopeRef.current.add(requestScope);
+      requestRevisionByScopeRef.current.set(requestScope, requestScopeRevision);
       void fetchCliProviderStatus('opencode', {
         silent: true,
         checkReason: 'launch_preflight',
         projectPath: requestScope,
       }).then(
         (loaded) => {
-          requestInFlightByScopeRef.current.delete(requestScope);
-          if (!mountedRef.current || activeScopeRef.current !== requestScope) {
+          if (requestRevisionByScopeRef.current.get(requestScope) === requestScopeRevision) {
+            requestRevisionByScopeRef.current.delete(requestScope);
+          }
+          if (
+            !mountedRef.current ||
+            activeScopeRef.current !== requestScope ||
+            scopeRevisionRef.current !== requestScopeRevision
+          ) {
             return;
           }
           if (loaded) {
@@ -212,7 +233,9 @@ export function useOpenCodeCatalogPrefetch({
           scheduleRetry();
         },
         () => {
-          requestInFlightByScopeRef.current.delete(requestScope);
+          if (requestRevisionByScopeRef.current.get(requestScope) === requestScopeRevision) {
+            requestRevisionByScopeRef.current.delete(requestScope);
+          }
           scheduleRetry();
         }
       );
@@ -227,6 +250,7 @@ export function useOpenCodeCatalogPrefetch({
     normalizedProjectPath,
     priority,
     refreshSequence,
+    scopeRevision,
   ]);
 
   return {
@@ -236,6 +260,6 @@ export function useOpenCodeCatalogPrefetch({
       Boolean(normalizedProjectPath) &&
       cliStatus?.flavor === 'agent_teams_orchestrator' &&
       !catalogFresh &&
-      !retryExhaustedByScopeRef.current.has(normalizedProjectPath),
+      retryExhaustedRevisionByScopeRef.current.get(normalizedProjectPath) !== scopeRevision,
   };
 }

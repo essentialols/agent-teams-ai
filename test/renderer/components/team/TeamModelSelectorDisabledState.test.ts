@@ -59,6 +59,7 @@ const storeState = {
   cliStatusLoading: false,
   cliProviderStatusLoading: {} as Record<string, boolean>,
   cliProviderStatusByScope: {} as Record<string, unknown>,
+  cliProviderStatusScopeRevision: 0,
   appConfig: { general: { multimodelEnabled: true } },
   fetchCliProviderStatus: vi.fn().mockResolvedValue(undefined),
   codexRuntimeStatus: null as CodexRuntimeStatus | null,
@@ -129,6 +130,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     storeState.cliStatusLoading = false;
     storeState.cliProviderStatusLoading = {};
     storeState.cliProviderStatusByScope = {};
+    storeState.cliProviderStatusScopeRevision = 0;
     storeState.fetchCliProviderStatus.mockClear();
     storeState.codexRuntimeStatus = null;
     storeState.codexRuntimeStatusLoading = false;
@@ -1024,7 +1026,7 @@ describe('TeamModelSelector disabled Codex models', () => {
     });
   });
 
-  it('refreshes a stale project-scoped OpenCode catalog instead of treating it as ready', async () => {
+  it('keeps stale project-scoped OpenCode models visible while refreshing them', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const staleModel = 'ollama/stale-local-model';
     const provider = {
@@ -1092,8 +1094,8 @@ describe('TeamModelSelector disabled Codex models', () => {
     });
     expect(
       host.querySelector('[data-testid="team-model-selector-opencode-loading-skeleton"]')
-    ).not.toBeNull();
-    expect(host.textContent).not.toContain(staleModel);
+    ).toBeNull();
+    expect(host.textContent).toContain('stale-local-model');
 
     await act(async () => {
       root.unmount();

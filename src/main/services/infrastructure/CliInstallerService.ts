@@ -611,6 +611,7 @@ export class CliInstallerService {
     this.latestStatusSnapshot = null;
     this.latestProviderSignatures.clear();
     this.modelAvailabilityService.invalidate();
+    this.multimodelBridgeService.invalidateProviderStatusHydrations();
   }
 
   /**

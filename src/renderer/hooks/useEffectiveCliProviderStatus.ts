@@ -9,7 +9,7 @@ import {
   createLoadingMultimodelCliStatus,
   getCliProviderStatusScopeKey,
 } from '@renderer/store/slices/cliInstallerSlice';
-import { isTeamProviderModelCatalogFresh } from '@renderer/utils/teamModelAvailability';
+import { isTeamProviderModelCatalogSettled } from '@renderer/utils/teamModelAvailability';
 
 import type { CliInstallationStatus, CliProviderId, CliProviderStatus } from '@shared/types';
 
@@ -69,12 +69,12 @@ export function useEffectiveCliProviderStatus(
     const scopedProviderFailed =
       scopedProviderStatus?.verificationState === 'error' ||
       scopedProviderStatus?.modelCatalogRefreshState === 'error';
-    const scopedProviderReady = Boolean(
-      scopedProviderStatus && isTeamProviderModelCatalogFresh(providerId, scopedProviderStatus)
+    const scopedProviderSettled = Boolean(
+      scopedProviderStatus && isTeamProviderModelCatalogSettled(providerId, scopedProviderStatus)
     );
     const projectProviderBase = scopedProviderStatus ?? globalProvider ?? null;
     const projectProvider: CliProviderStatus | null =
-      scopedProviderReady || scopedProviderFailed
+      scopedProviderSettled || scopedProviderFailed
         ? scopedProviderStatus
         : projectProviderBase
           ? {

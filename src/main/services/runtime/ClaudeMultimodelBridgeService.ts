@@ -810,6 +810,12 @@ export class ClaudeMultimodelBridgeService {
     { readonly generation: number; readonly promise: Promise<CliProviderStatus> }
   >();
 
+  invalidateProviderStatusHydrations(): void {
+    this.providerStatusHydrationGeneration += 1;
+    this.providerStatusHydrationGenerations.clear();
+    this.providerStatusHydrationInFlight.clear();
+  }
+
   private getProviderStatusHydrationKey(
     binaryPath: string,
     providerId: CliProviderId,
@@ -845,6 +851,21 @@ export class ClaudeMultimodelBridgeService {
         this.getProviderStatusHydrationKey(binaryPath, providerId, projectPath)
       ) === generation
     );
+  }
+
+  private clearProviderStatusHydrationGeneration(
+    binaryPath: string,
+    providerId: CliProviderId,
+    generation: number,
+    projectPath?: string | null
+  ): void {
+    const hydrationKey = this.getProviderStatusHydrationKey(binaryPath, providerId, projectPath);
+    if (
+      this.providerStatusHydrationGenerations.get(hydrationKey) === generation &&
+      !this.providerStatusHydrationInFlight.has(hydrationKey)
+    ) {
+      this.providerStatusHydrationGenerations.delete(hydrationKey);
+    }
   }
 
   private getProviderCatalogHydration(
@@ -1379,6 +1400,9 @@ export class ClaudeMultimodelBridgeService {
     onUpdate?: (providers: CliProviderStatus[]) => void
   ): void {
     if (!onUpdate) {
+      for (const providerId of DEFAULT_PROVIDER_STATUS_IDS) {
+        this.clearProviderStatusHydrationGeneration(binaryPath, providerId, generation);
+      }
       return;
     }
 
@@ -1386,9 +1410,21 @@ export class ClaudeMultimodelBridgeService {
       liveProviders.map((provider) => [provider.providerId, provider])
     );
     const providerIds = liveProviders.map((provider) => provider.providerId);
+    const liveProviderIds = new Set(providerIds);
+
+    for (const providerId of DEFAULT_PROVIDER_STATUS_IDS) {
+      if (!liveProviderIds.has(providerId)) {
+        this.clearProviderStatusHydrationGeneration(binaryPath, providerId, generation);
+      }
+    }
 
     for (const liveProvider of liveProviders) {
       if (liveProvider.runtimeCapabilities?.modelCatalog?.dynamic !== true) {
+        this.clearProviderStatusHydrationGeneration(
+          binaryPath,
+          liveProvider.providerId,
+          generation
+        );
         continue;
       }
 
@@ -1432,6 +1468,13 @@ export class ClaudeMultimodelBridgeService {
             }`
           );
           onUpdate(this.buildProviderStatusesSnapshot(providers, providerIds));
+        })
+        .finally(() => {
+          this.clearProviderStatusHydrationGeneration(
+            binaryPath,
+            liveProvider.providerId,
+            generation
+          );
         });
     }
   }
@@ -1537,12 +1580,13 @@ export class ClaudeMultimodelBridgeService {
       background: false,
     });
 
+    const generation = this.beginProviderStatusHydration(
+      binaryPath,
+      [providerId],
+      options.projectPath
+    );
+    let backgroundHydrationOwnsGenerationCleanup = false;
     try {
-      const generation = this.beginProviderStatusHydration(
-        binaryPath,
-        [providerId],
-        options.projectPath
-      );
       const provider = await this.getProviderStatusFromScopedRuntimeStatus(binaryPath, providerId, {
         summary: true,
         projectPath: options.projectPath,
@@ -1583,6 +1627,7 @@ export class ClaudeMultimodelBridgeService {
         }
       }
       if (provider.runtimeCapabilities?.modelCatalog?.dynamic === true && onCatalogUpdate) {
+        backgroundHydrationOwnsGenerationCleanup = true;
         void this.getProviderCatalogHydration(binaryPath, provider.providerId, generation, options)
           .then((hydratedProvider) => {
             if (!hydratedProvider) {
@@ -1620,6 +1665,14 @@ export class ClaudeMultimodelBridgeService {
               ...provider,
               modelCatalogRefreshState: 'error',
             });
+          })
+          .finally(() => {
+            this.clearProviderStatusHydrationGeneration(
+              binaryPath,
+              providerId,
+              generation,
+              options.projectPath
+            );
           });
       }
       return provider;
@@ -1688,6 +1741,15 @@ export class ClaudeMultimodelBridgeService {
         `Provider-scoped summary runtime status unavailable for ${providerId}: ${summaryStatusError}`
       );
       return createRuntimeStatusErrorProviderStatus(providerId, error);
+    } finally {
+      if (!backgroundHydrationOwnsGenerationCleanup) {
+        this.clearProviderStatusHydrationGeneration(
+          binaryPath,
+          providerId,
+          generation,
+          options.projectPath
+        );
+      }
     }
   }
 
@@ -1847,8 +1909,9 @@ export class ClaudeMultimodelBridgeService {
       background: false,
     });
 
+    const generation = this.beginProviderStatusHydration(binaryPath, DEFAULT_PROVIDER_STATUS_IDS);
+    let catalogHydrationOwnsGenerationCleanup = false;
     try {
-      const generation = this.beginProviderStatusHydration(binaryPath, DEFAULT_PROVIDER_STATUS_IDS);
       const providers = await this.getProviderStatusesFromScopedRuntimeStatus(
         binaryPath,
         onUpdate,
@@ -1859,6 +1922,7 @@ export class ClaudeMultimodelBridgeService {
         }
       );
       if (providers) {
+        catalogHydrationOwnsGenerationCleanup = true;
         this.hydrateProviderCatalogs(binaryPath, providers, generation, onUpdate);
         return providers;
       }
@@ -1868,6 +1932,12 @@ export class ClaudeMultimodelBridgeService {
           error instanceof Error ? error.message : String(error)
         }`
       );
+    } finally {
+      if (!catalogHydrationOwnsGenerationCleanup) {
+        for (const providerId of DEFAULT_PROVIDER_STATUS_IDS) {
+          this.clearProviderStatusHydrationGeneration(binaryPath, providerId, generation);
+        }
+      }
     }
 
     try {

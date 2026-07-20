@@ -10,6 +10,7 @@ const storeState = {
     flavor: 'agent_teams_orchestrator',
   } as unknown,
   cliProviderStatusByScope: {} as Record<string, unknown>,
+  cliProviderStatusScopeRevision: 0,
   fetchCliProviderStatus: vi.fn(),
 };
 
@@ -55,6 +56,7 @@ describe('useOpenCodeCatalogPrefetch', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     storeState.cliProviderStatusByScope = {};
+    storeState.cliProviderStatusScopeRevision = 0;
     storeState.fetchCliProviderStatus.mockClear();
     storeState.fetchCliProviderStatus.mockImplementation(resolveCatalogFetchSuccessfully);
     vi.useRealTimers();
@@ -248,6 +250,36 @@ describe('useOpenCodeCatalogPrefetch', () => {
     await act(async () => root.unmount());
   });
 
+  it('starts a fresh scoped request after invalidation without waiting for the old request', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.useFakeTimers();
+    storeState.fetchCliProviderStatus.mockImplementation(() => new Promise(() => {}));
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<PrefetchHarness />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(1);
+
+    storeState.cliProviderStatusScopeRevision += 1;
+    await act(async () => {
+      root.render(<PrefetchHarness />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(2);
+    await act(async () => root.unmount());
+  });
+
   it('keeps required preflight pending until catalog retries are exhausted', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.useFakeTimers();
@@ -276,6 +308,17 @@ describe('useOpenCodeCatalogPrefetch', () => {
 
     expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(4);
     expect(host.firstElementChild?.getAttribute('data-required-catalog-pending')).toBe('false');
+
+    storeState.cliProviderStatusScopeRevision += 1;
+    await act(async () => {
+      root.render(<PrefetchHarness />);
+      await Promise.resolve();
+    });
+    expect(host.firstElementChild?.getAttribute('data-required-catalog-pending')).toBe('true');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(storeState.fetchCliProviderStatus).toHaveBeenCalledTimes(5);
 
     await act(async () => root.unmount());
   });

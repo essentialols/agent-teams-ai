@@ -7,6 +7,7 @@ import {
   GPT_5_2_CODEX_UI_DISABLED_REASON,
   GPT_5_3_CODEX_SPARK_UI_DISABLED_REASON,
   isTeamProviderModelCatalogFresh,
+  isTeamProviderModelCatalogSettled,
   isTeamProviderModelVerificationPending,
   isTeamProviderRuntimeStatusLoading,
   normalizeTeamModelForUi,
@@ -88,6 +89,32 @@ function createAnthropicCompatibleProviderStatus(
 }
 
 describe('teamModelAvailability', () => {
+  it('keeps Codex pending while its runtime checks a settled cached catalog', () => {
+    const providerStatus = createCodexProviderStatus(['gpt-5.4'], {
+      modelCatalogRefreshState: 'ready',
+      statusMessage: 'Checking...',
+      modelCatalog: {
+        schemaVersion: 1,
+        providerId: 'codex',
+        source: 'app-server',
+        status: 'ready',
+        fetchedAt: '2026-07-20T12:00:00.000Z',
+        staleAt: '2026-07-20T12:10:00.000Z',
+        defaultModelId: 'gpt-5.4',
+        defaultLaunchModel: 'gpt-5.4',
+        diagnostics: {
+          configReadState: 'ready',
+          appServerState: 'healthy',
+        },
+        models: [],
+      },
+    });
+
+    expect(isTeamProviderModelCatalogSettled('codex', providerStatus)).toBe(true);
+    expect(isTeamProviderModelVerificationPending('codex', providerStatus)).toBe(true);
+    expect(isTeamProviderRuntimeStatusLoading('codex', providerStatus, false)).toBe(true);
+  });
+
   it('keeps a hydrated OpenCode runtime ready while its catalog refreshes in the background', () => {
     const providerStatus = createOpenCodeProviderStatus(['openrouter/openai/gpt-5.4'], {
       modelCatalogRefreshState: 'loading',
@@ -166,6 +193,34 @@ describe('teamModelAvailability', () => {
           : null,
       })
     ).toBe(false);
+  });
+
+  it('treats a terminal OpenCode catalog as settled without calling it fresh', () => {
+    const providerStatus = createOpenCodeProviderStatus([], {
+      modelCatalogRefreshState: 'ready',
+      statusMessage: 'Model catalog unavailable',
+      modelCatalog: {
+        schemaVersion: 1,
+        providerId: 'opencode',
+        source: 'app-server',
+        status: 'unavailable',
+        fetchedAt: '2026-07-20T12:00:00.000Z',
+        staleAt: '2026-07-20T12:00:00.000Z',
+        defaultModelId: null,
+        defaultLaunchModel: null,
+        diagnostics: {
+          configReadState: 'failed',
+          appServerState: 'degraded',
+          message: 'OpenCode app server did not return a catalog',
+        },
+        models: [],
+      },
+    });
+
+    expect(isTeamProviderModelCatalogFresh('opencode', providerStatus)).toBe(false);
+    expect(isTeamProviderModelCatalogSettled('opencode', providerStatus)).toBe(true);
+    expect(isTeamProviderModelVerificationPending('opencode', providerStatus)).toBe(false);
+    expect(isTeamProviderRuntimeStatusLoading('opencode', providerStatus, false)).toBe(false);
   });
 
   it('uses runtime-reported Codex models as the source of truth', () => {

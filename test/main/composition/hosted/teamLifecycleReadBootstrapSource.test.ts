@@ -1,8 +1,10 @@
 import {
-  PHASE2_READ_AUTHORIZED_SCOPE,
-  PHASE2_READ_BOOTSTRAP_FORMAT,
-  Phase2ReadBootstrapSource,
-} from '@main/composition/hosted/phase2ReadBootstrapSource';
+  readTeamLifecycleReadBootstrapEnvironment,
+  TEAM_LIFECYCLE_READ_AUTHORIZED_SCOPE,
+  TEAM_LIFECYCLE_READ_BOOTSTRAP_ENV,
+  TEAM_LIFECYCLE_READ_BOOTSTRAP_FORMAT,
+  TeamLifecycleReadBootstrapSource,
+} from '@main/composition/hosted/teamLifecycleReadBootstrapSource';
 import { describe, expect, it, vi } from 'vitest';
 
 const NOW_MS = Date.parse('2026-07-18T12:00:00.000Z');
@@ -12,8 +14,8 @@ const ROOT_HASH = '3'.repeat(64);
 
 function runtimeInstance(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    deploymentId: 'deployment_phase2-bootstrap',
-    bootId: 'boot_phase2-bootstrap',
+    deploymentId: 'deployment_team-lifecycle-read-bootstrap',
+    bootId: 'boot_team-lifecycle-read-bootstrap',
     claudeRoot: { kind: 'claude', reference: 'runtime://claude' },
     appDataRoot: { kind: 'app-data', reference: 'runtime://app-data' },
     workspaceRoots: [{ kind: 'workspace', reference: 'runtime://workspace' }],
@@ -33,7 +35,7 @@ function registration(overrides: Record<string, unknown> = {}): Record<string, u
     declaredRootHash: ROOT_HASH,
     enabled: true,
     mountBinding: {
-      bootId: 'boot_phase2-bootstrap',
+      bootId: 'boot_team-lifecycle-read-bootstrap',
       mountGeneration: 1,
       observedAt: NOW_MS - 1_000,
       health: 'healthy',
@@ -45,13 +47,13 @@ function registration(overrides: Record<string, unknown> = {}): Record<string, u
 
 function bootstrap(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    format: PHASE2_READ_BOOTSTRAP_FORMAT,
+    format: TEAM_LIFECYCLE_READ_BOOTSTRAP_FORMAT,
     issuedAtMs: NOW_MS - 2_000,
     expiresAtMs: NOW_MS + 2_000,
-    actorId: 'actor_phase2-bootstrap',
-    authorizedScope: PHASE2_READ_AUTHORIZED_SCOPE,
-    deploymentId: 'deployment_phase2-bootstrap',
-    bootId: 'boot_phase2-bootstrap',
+    actorId: 'actor_team-lifecycle-read-bootstrap',
+    authorizedScope: TEAM_LIFECYCLE_READ_AUTHORIZED_SCOPE,
+    deploymentId: 'deployment_team-lifecycle-read-bootstrap',
+    bootId: 'boot_team-lifecycle-read-bootstrap',
     workspaceId: WORKSPACE_ID,
     runtimeInstance: runtimeInstance(),
     workspaceManifest: { version: 1, registrations: [registration()] },
@@ -66,7 +68,7 @@ function serialized(value: Record<string, unknown> = bootstrap()): string {
 function source(...values: [] | [unknown]) {
   const readSerializedBootstrap = vi.fn(() => (values.length === 0 ? serialized() : values[0]));
   return {
-    adapter: new Phase2ReadBootstrapSource({
+    adapter: new TeamLifecycleReadBootstrapSource({
       input: { readSerializedBootstrap },
       nowMs: () => NOW_MS,
     }),
@@ -86,7 +88,30 @@ function mountBindingOf(value: Record<string, unknown>): Record<string, unknown>
   return registrationsOf(value)[0].mountBinding as Record<string, unknown>;
 }
 
-describe('Phase2ReadBootstrapSource', () => {
+describe('TeamLifecycleReadBootstrapSource', () => {
+  it('exports only stable bootstrap identifiers', () => {
+    expect(TEAM_LIFECYCLE_READ_BOOTSTRAP_ENV).toBe(
+      'AGENT_TEAMS_HOSTED_TEAM_LIFECYCLE_READ_BOOTSTRAP'
+    );
+    expect(TEAM_LIFECYCLE_READ_BOOTSTRAP_FORMAT).toBe(
+      'agent-teams.team-lifecycle-read-bootstrap/v1'
+    );
+  });
+
+  it('prefers the stable bootstrap env and uses the legacy env only as fallback', () => {
+    expect(
+      readTeamLifecycleReadBootstrapEnvironment({
+        AGENT_TEAMS_HOSTED_TEAM_LIFECYCLE_READ_BOOTSTRAP: 'stable-envelope',
+        AGENT_TEAMS_HOSTED_PHASE2_READ_BOOTSTRAP: 'legacy-envelope',
+      })
+    ).toBe('stable-envelope');
+    expect(
+      readTeamLifecycleReadBootstrapEnvironment({
+        AGENT_TEAMS_HOSTED_PHASE2_READ_BOOTSTRAP: 'legacy-envelope',
+      })
+    ).toBe('legacy-envelope');
+  });
+
   it('reads the injected launcher value once and creates one immutable admitted authority', async () => {
     const harness = source();
 
@@ -94,33 +119,49 @@ describe('Phase2ReadBootstrapSource', () => {
 
     expect(harness.readSerializedBootstrap).toHaveBeenCalledTimes(1);
     expect(admitted).toMatchObject({
-      actorId: 'actor_phase2-bootstrap',
-      authorizedScope: PHASE2_READ_AUTHORIZED_SCOPE,
-      deploymentId: 'deployment_phase2-bootstrap',
-      bootId: 'boot_phase2-bootstrap',
+      actorId: 'actor_team-lifecycle-read-bootstrap',
+      authorizedScope: TEAM_LIFECYCLE_READ_AUTHORIZED_SCOPE,
+      deploymentId: 'deployment_team-lifecycle-read-bootstrap',
+      bootId: 'boot_team-lifecycle-read-bootstrap',
       workspaceId: WORKSPACE_ID,
       mountBinding: {
         workspaceId: WORKSPACE_ID,
-        bootId: 'boot_phase2-bootstrap',
+        bootId: 'boot_team-lifecycle-read-bootstrap',
         mountGeneration: 1,
         health: 'healthy',
       },
       authority: {
-        actorId: 'actor_phase2-bootstrap',
-        authorizedScope: PHASE2_READ_AUTHORIZED_SCOPE,
+        actorId: 'actor_team-lifecycle-read-bootstrap',
+        authorizedScope: TEAM_LIFECYCLE_READ_AUTHORIZED_SCOPE,
         workspaceId: WORKSPACE_ID,
         workspaceGeneration: 1,
-        deploymentId: 'deployment_phase2-bootstrap',
-        bootId: 'boot_phase2-bootstrap',
+        deploymentId: 'deployment_team-lifecycle-read-bootstrap',
+        bootId: 'boot_team-lifecycle-read-bootstrap',
       },
     });
     expect(Object.isFrozen(admitted)).toBe(true);
     expect(Object.isFrozen(admitted.runtimeInstance)).toBe(true);
     await expect(harness.adapter.load()).rejects.toThrow(
-      'phase2-read-bootstrap-source-already-read'
+      'team-lifecycle-read-bootstrap-source-already-read'
     );
     expect(harness.readSerializedBootstrap).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ['stable', TEAM_LIFECYCLE_READ_BOOTSTRAP_FORMAT],
+    ['legacy read alias', 'agent-teams.phase2-read-bootstrap/v1'],
+  ])(
+    'reads the %s serialized format while builders write the stable format',
+    async (_name, format) => {
+      const harness = source(serialized(bootstrap({ format })));
+
+      await expect(harness.adapter.load()).resolves.toMatchObject({
+        actorId: 'actor_team-lifecycle-read-bootstrap',
+      });
+      expect(bootstrap().format).toBe('agent-teams.team-lifecycle-read-bootstrap/v1');
+      expect(bootstrap().format).not.toBe('agent-teams.phase2-read-bootstrap/v1');
+    }
+  );
 
   it('captures the injected launcher reader once before the one allowed read', async () => {
     const firstReader = vi.fn(() => serialized());
@@ -130,9 +171,11 @@ describe('Phase2ReadBootstrapSource', () => {
       enumerable: true,
       get: () => (++readerPropertyReads === 1 ? firstReader : secondReader),
     }) as { readSerializedBootstrap(): unknown };
-    const adapter = new Phase2ReadBootstrapSource({ input, nowMs: () => NOW_MS });
+    const adapter = new TeamLifecycleReadBootstrapSource({ input, nowMs: () => NOW_MS });
 
-    await expect(adapter.load()).resolves.toMatchObject({ actorId: 'actor_phase2-bootstrap' });
+    await expect(adapter.load()).resolves.toMatchObject({
+      actorId: 'actor_team-lifecycle-read-bootstrap',
+    });
     expect(readerPropertyReads).toBe(1);
     expect(firstReader).toHaveBeenCalledTimes(1);
     expect(secondReader).not.toHaveBeenCalled();
@@ -146,9 +189,9 @@ describe('Phase2ReadBootstrapSource', () => {
   ])('fails closed for %s without retrying the launcher read', async (_name, value) => {
     const harness = source(value);
 
-    await expect(harness.adapter.load()).rejects.toThrow('phase2-read-bootstrap-invalid');
+    await expect(harness.adapter.load()).rejects.toThrow('team-lifecycle-read-bootstrap-invalid');
     await expect(harness.adapter.load()).rejects.toThrow(
-      'phase2-read-bootstrap-source-already-read'
+      'team-lifecycle-read-bootstrap-source-already-read'
     );
     expect(harness.readSerializedBootstrap).toHaveBeenCalledTimes(1);
   });
@@ -163,7 +206,7 @@ describe('Phase2ReadBootstrapSource', () => {
     [
       'invalid actor',
       (value: Record<string, unknown>) => {
-        value.actorId = 'user_phase2-bootstrap';
+        value.actorId = 'user_team-lifecycle-read-bootstrap';
       },
     ],
     [
@@ -255,7 +298,7 @@ describe('Phase2ReadBootstrapSource', () => {
     mutate(value);
 
     await expect(source(serialized(value)).adapter.load()).rejects.toThrow(
-      'phase2-read-bootstrap-invalid'
+      'team-lifecycle-read-bootstrap-invalid'
     );
   });
 

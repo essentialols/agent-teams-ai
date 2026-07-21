@@ -104,7 +104,7 @@ interface ParsedAdoptionIntent {
   readonly committedIdentityChecksum: string | null;
 }
 
-export interface Phase2ReadOnlyIdentitySourceInput {
+export interface TeamLifecycleReadOnlyIdentitySourceInput {
   readonly appDataRoot: string;
 }
 
@@ -118,7 +118,7 @@ function sameEntry(stat: fs.Stats, expected: EntryIdentity): boolean {
 
 function noFollowReadFlags(): number {
   if (!Number.isSafeInteger(NO_FOLLOW) || NO_FOLLOW <= 0) {
-    throw new Error('phase2-read-no-follow-unavailable');
+    throw new Error('team-lifecycle-read-no-follow-unavailable');
   }
   return fs.constants.O_RDONLY | NO_FOLLOW;
 }
@@ -170,7 +170,7 @@ async function readDescriptorSnapshot(
     handle = await fs.promises.open(databasePath, noFollowReadFlags());
     const opened = await handle.stat();
     if (!opened.isFile() || !stableFile(expectedPathStat, opened)) {
-      throw new Error('phase2-read-identity-database-replaced');
+      throw new Error('team-lifecycle-read-identity-database-replaced');
     }
 
     const buffer = Buffer.allocUnsafe(expectedPathStat.size + 1);
@@ -182,7 +182,7 @@ async function readDescriptorSnapshot(
     }
     const after = await handle.stat();
     if (offset !== expectedPathStat.size || !stableFile(opened, after)) {
-      throw new Error('phase2-read-identity-database-changed');
+      throw new Error('team-lifecycle-read-identity-database-changed');
     }
     return buffer.subarray(0, offset);
   } finally {
@@ -196,7 +196,7 @@ async function readImmutableDatabaseSnapshot(appDataRoot: string): Promise<Buffe
     path.resolve(appDataRoot) !== appDataRoot ||
     appDataRoot === path.parse(appDataRoot).root
   ) {
-    throw new Error('phase2-read-app-data-root-invalid');
+    throw new Error('team-lifecycle-read-app-data-root-invalid');
   }
 
   const storagePath = path.join(appDataRoot, INTERNAL_STORAGE_DIRNAME);
@@ -227,7 +227,7 @@ async function readImmutableDatabaseSnapshot(appDataRoot: string): Promise<Buffe
     databaseStat.size > MAX_IDENTITY_DATABASE_BYTES ||
     !(await sidecarsAreAbsent(databasePath))
   ) {
-    throw new Error('phase2-read-identity-database-unavailable');
+    throw new Error('team-lifecycle-read-identity-database-unavailable');
   }
 
   const snapshot = await readDescriptorSnapshot(databasePath, databaseStat);
@@ -255,7 +255,7 @@ async function readImmutableDatabaseSnapshot(appDataRoot: string): Promise<Buffe
     databasePathAfter !== canonicalDatabase ||
     !(await sidecarsAreAbsent(databasePath))
   ) {
-    throw new Error('phase2-read-identity-database-changed');
+    throw new Error('team-lifecycle-read-identity-database-changed');
   }
   return snapshot;
 }
@@ -266,7 +266,7 @@ function timestamp(value: unknown): string {
     !Number.isFinite(Date.parse(value)) ||
     new Date(value).toISOString() !== value
   ) {
-    throw new TypeError('phase2-read-identity-timestamp-invalid');
+    throw new TypeError('team-lifecycle-read-identity-timestamp-invalid');
   }
   return value;
 }
@@ -281,7 +281,7 @@ function workspaceBinding(
 ): { readonly workspaceId: string; readonly generation: number } | null {
   if (workspaceId === null && generation === null) return null;
   if (!Number.isSafeInteger(generation) || (generation as number) < 1) {
-    throw new TypeError('phase2-read-identity-workspace-binding-invalid');
+    throw new TypeError('team-lifecycle-read-identity-workspace-binding-invalid');
   }
   return Object.freeze({
     workspaceId: parseWorkspaceId(workspaceId),
@@ -307,7 +307,7 @@ function parseIdentityRow(row: IdentityRow): TeamIdentityRecord {
 function parseReservationRow(row: ReservationRow): ParsedReservation {
   const state = row.state;
   if (state !== 'active' && state !== 'tombstoned') {
-    throw new TypeError('phase2-read-identity-reservation-state-invalid');
+    throw new TypeError('team-lifecycle-read-identity-reservation-state-invalid');
   }
   const tombstoneReason = row.tombstone_reason;
   if (
@@ -316,7 +316,7 @@ function parseReservationRow(row: ReservationRow): ParsedReservation {
     tombstoneReason !== 'team_deleted' &&
     tombstoneReason !== 'legacy_conflict'
   ) {
-    throw new TypeError('phase2-read-identity-reservation-reason-invalid');
+    throw new TypeError('team-lifecycle-read-identity-reservation-reason-invalid');
   }
   const parsed = Object.freeze({
     legacyKey: parseLegacyTeamKey(row.legacy_key) as string,
@@ -330,7 +330,7 @@ function parseReservationRow(row: ReservationRow): ParsedReservation {
     (state === 'active' && (parsed.tombstonedAt !== null || tombstoneReason !== null)) ||
     (state === 'tombstoned' && (parsed.tombstonedAt === null || tombstoneReason === null))
   ) {
-    throw new TypeError('phase2-read-identity-reservation-fields-invalid');
+    throw new TypeError('team-lifecycle-read-identity-reservation-fields-invalid');
   }
   return parsed;
 }
@@ -338,7 +338,7 @@ function parseReservationRow(row: ReservationRow): ParsedReservation {
 function parseIntentRow(row: AdoptionIntentRow): ParsedAdoptionIntent {
   const state = row.state;
   if (state !== 'prepared' && state !== 'file_published' && state !== 'committed') {
-    throw new TypeError('phase2-read-identity-intent-state-invalid');
+    throw new TypeError('team-lifecycle-read-identity-intent-state-invalid');
   }
   const parsed = Object.freeze({
     intentId: parseTeamAdoptionIntentId(row.intent_id) as string,
@@ -398,7 +398,7 @@ function parseIntentRow(row: AdoptionIntentRow): ParsedAdoptionIntent {
       parsed.filePublishedAt !== null &&
       Date.parse(parsed.committedAt) < Date.parse(parsed.filePublishedAt))
   ) {
-    throw new TypeError('phase2-read-identity-intent-fields-invalid');
+    throw new TypeError('team-lifecycle-read-identity-intent-fields-invalid');
   }
   return parsed;
 }
@@ -409,7 +409,7 @@ function validateGraph(
   intents: readonly ParsedAdoptionIntent[]
 ): void {
   if (reservations.length !== identities.length || intents.length > identities.length) {
-    throw new TypeError('phase2-read-identity-graph-invalid');
+    throw new TypeError('team-lifecycle-read-identity-graph-invalid');
   }
   const identityById = new Map(identities.map((identity) => [identity.teamId, identity]));
   const identityByLegacyKey = new Map(identities.map((identity) => [identity.legacyKey, identity]));
@@ -440,7 +440,7 @@ function validateGraph(
     expectedIdentityChecksums.size !== intents.length ||
     publishedIdentityChecksums.size !== publishedIdentityChecksumCount
   ) {
-    throw new TypeError('phase2-read-identity-graph-invalid');
+    throw new TypeError('team-lifecycle-read-identity-graph-invalid');
   }
 
   for (const identity of identities) {
@@ -453,7 +453,7 @@ function validateGraph(
       (identity.state === 'tombstoned') !== (reservation.state === 'tombstoned') ||
       (identity.state !== 'tombstoned' && reservation.state !== 'active')
     ) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
 
     const intent =
@@ -466,11 +466,11 @@ function validateGraph(
         identity.state !== 'reserved' &&
         identity.state !== 'tombstoned')
     ) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
     if (!intent) {
       if (identity.identityChecksum !== null || identity.activatedAt !== null) {
-        throw new TypeError('phase2-read-identity-graph-invalid');
+        throw new TypeError('team-lifecycle-read-identity-graph-invalid');
       }
       continue;
     }
@@ -482,17 +482,17 @@ function validateGraph(
       intent.workspaceBinding?.generation !== identity.workspaceBinding?.generation ||
       intent.preparedAt !== identity.createdAt
     ) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
     if (identity.state === 'adoption_prepared' && intent.state !== 'prepared') {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
     if (
       identity.state === 'file_published' &&
       (intent.state !== 'file_published' ||
         identity.identityChecksum !== intent.expectedIdentityChecksum)
     ) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
     if (
       identity.state === 'active' &&
@@ -500,7 +500,7 @@ function validateGraph(
         identity.identityChecksum !== intent.expectedIdentityChecksum ||
         identity.activatedAt !== intent.committedAt)
     ) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
     if (
       identity.state === 'tombstoned' &&
@@ -513,18 +513,18 @@ function validateGraph(
           (identity.identityChecksum !== intent.expectedIdentityChecksum ||
             identity.activatedAt !== intent.committedAt)))
     ) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
   }
 
   for (const reservation of reservations) {
     if (identityById.get(reservation.teamId)?.legacyKey !== reservation.legacyKey) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
   }
   for (const intent of intents) {
     if (identityById.get(intent.teamId)?.adoptionIntentId !== intent.intentId) {
-      throw new TypeError('phase2-read-identity-graph-invalid');
+      throw new TypeError('team-lifecycle-read-identity-graph-invalid');
     }
   }
 }
@@ -532,7 +532,7 @@ function validateGraph(
 function validateSchema(database: Database.Database): void {
   const integrity = database.pragma('quick_check') as Array<{ readonly quick_check?: unknown }>;
   if (integrity.length !== 1 || integrity[0]?.quick_check !== 'ok') {
-    throw new TypeError('phase2-read-identity-database-corrupt');
+    throw new TypeError('team-lifecycle-read-identity-database-corrupt');
   }
   const placeholders = COMPONENT_TABLE_NAMES.map(() => '?').join(', ');
   const schemaObjects = database
@@ -553,7 +553,7 @@ function validateSchema(database: Database.Database): void {
     schemaObjects.length !== EXPECTED_SCHEMA_OBJECT_COUNT ||
     schemaDigest !== EXPECTED_SCHEMA_DIGEST
   ) {
-    throw new TypeError('phase2-read-identity-schema-incompatible');
+    throw new TypeError('team-lifecycle-read-identity-schema-incompatible');
   }
 }
 
@@ -561,7 +561,7 @@ function readIdentitySnapshot(serializedDatabase: Buffer): readonly TeamIdentity
   const database = new Database(serializedDatabase, { readonly: true });
   try {
     if (!database.readonly || !database.memory) {
-      throw new TypeError('phase2-read-identity-database-not-immutable');
+      throw new TypeError('team-lifecycle-read-identity-database-not-immutable');
     }
     validateSchema(database);
     const metadata = database
@@ -572,7 +572,7 @@ function readIdentitySnapshot(serializedDatabase: Buffer): readonly TeamIdentity
       metadata[0]?.component !== EXPECTED_COMPONENT ||
       metadata[0]?.schema_version !== EXPECTED_COMPONENT_SCHEMA_VERSION
     ) {
-      throw new TypeError('phase2-read-identity-schema-incompatible');
+      throw new TypeError('team-lifecycle-read-identity-schema-incompatible');
     }
 
     const limit = MAX_TEAM_IDENTITY_READ_RECORDS + 1;
@@ -610,7 +610,7 @@ function readIdentitySnapshot(serializedDatabase: Buffer): readonly TeamIdentity
       reservationRows.length > MAX_TEAM_IDENTITY_READ_RECORDS ||
       intentRows.length > MAX_TEAM_IDENTITY_READ_RECORDS
     ) {
-      throw new TypeError('phase2-read-identity-record-limit-exceeded');
+      throw new TypeError('team-lifecycle-read-identity-record-limit-exceeded');
     }
 
     const identities = Object.freeze(identityRows.map(parseIdentityRow));
@@ -646,8 +646,8 @@ class ImmutableIdentitySnapshotGateway implements TeamIdentityReadGateway {
  * Missing, live-sidecar, replaced, corrupt, or schema-incompatible storage is unavailable; this
  * adapter has no database path handle, worker, migration, recovery, cleanup, or mutation surface.
  */
-export async function createPhase2ReadOnlyIdentitySource(
-  input: Phase2ReadOnlyIdentitySourceInput
+export async function createTeamLifecycleReadOnlyIdentitySource(
+  input: TeamLifecycleReadOnlyIdentitySourceInput
 ): Promise<TeamIdentityReadGateway | null> {
   try {
     const serializedDatabase = await readImmutableDatabaseSnapshot(input.appDataRoot);

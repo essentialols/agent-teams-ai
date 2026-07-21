@@ -112,9 +112,9 @@ import {
 } from '@features/token-usage/main';
 import { createWorkspaceTrustCoordinator } from '@features/workspace-trust/main';
 import {
-  createUnavailablePhase2ReadHost,
-  type Phase2ReadHost,
-} from '@main/composition/hosted/phase2ReadComposition';
+  createUnavailableTeamLifecycleReadHost,
+  type TeamLifecycleReadHost,
+} from '@main/composition/hosted/teamLifecycleReadComposition';
 import { ensureOpenCodeBridgeRuntimeBinaryEnv } from '@main/services/runtime/openCodeBridgeRuntimeEnv';
 import { ClaudeMultimodelBridgeService } from '@main/services/runtime/ClaudeMultimodelBridgeService';
 import { applyOpenCodeAutoUpdatePolicy } from '@main/services/runtime/openCodeAutoUpdatePolicy';
@@ -198,7 +198,7 @@ import { join } from 'path';
 
 import { cleanupEditorState, setEditorMainWindow } from './ipc/editor';
 import { initializeIpcHandlers, removeIpcHandlers } from './ipc/handlers';
-import { initializePhase2TeamReadHandler } from './ipc/teams';
+import { initializeTeamLifecycleReadHandler } from './ipc/teams';
 import { registerRendererLogHandlers } from './ipc/rendererLogs';
 import { setReviewMainWindow } from './ipc/review';
 import { setTmuxMainWindow } from './ipc/tmux';
@@ -1136,7 +1136,7 @@ let httpServer: HttpServer;
 let schedulerService: SchedulerService;
 let teamTaskStallMonitor: TeamTaskStallMonitor | null = null;
 let internalStorageFeature: InternalStorageFeature | null = null;
-let phase2ReadHost: Phase2ReadHost | null = null;
+let teamLifecycleReadHost: TeamLifecycleReadHost | null = null;
 let skillsWatcherService: SkillsWatcherService | null = null;
 let teamBackupService: TeamBackupService | null = null;
 let branchStatusService: BranchStatusService | null = null;
@@ -2280,8 +2280,8 @@ async function initializeServices(): Promise<void> {
   const teamRuntimeApi = teamIpcHandlerApis.runtime;
   // The desktop shell does not yet own a unique admitted WorkspaceMountBinding paired with its
   // RuntimeInstanceContext. Never infer that authority from localProjectsDir or global services.
-  phase2ReadHost = createUnavailablePhase2ReadHost();
-  initializePhase2TeamReadHandler(phase2ReadHost);
+  teamLifecycleReadHost = createUnavailableTeamLifecycleReadHost();
+  initializeTeamLifecycleReadHandler(teamLifecycleReadHost);
   teamProvisioningService.setWorkspaceTrustCoordinator(
     createWorkspaceTrustCoordinator({
       claudeConfigDir: () => getClaudeBasePath(),
@@ -3215,7 +3215,7 @@ async function startHttpServer(
         sshConnectionManager,
         teamDataApi: bindTeamHttpDataApi(teamDataService),
         teamApis: teamHttpHandlerApis,
-        phase2ReadHost: phase2ReadHost ?? undefined,
+        teamLifecycleReadHost: teamLifecycleReadHost ?? undefined,
       },
       modeSwitchHandler,
       config.httpServer?.port ?? 3456

@@ -23,18 +23,18 @@ import { createQueryContext } from '@shared/contracts/hosted';
 import { createLogger } from '@shared/utils/logger';
 
 import {
-  PHASE2_READ_BOOTSTRAP_ENV,
-  Phase2ReadBootstrapSource,
-} from './composition/hosted/phase2ReadBootstrapSource';
+  readTeamLifecycleReadBootstrapEnvironment,
+  TeamLifecycleReadBootstrapSource,
+} from './composition/hosted/teamLifecycleReadBootstrapSource';
 import {
-  createMountBindingScopedPhase2ReadPorts,
-  createPhase2ReadComposition,
-  createPhase2ReadHost,
-  createUnavailablePhase2ReadHost,
-  type Phase2ReadAuthority,
-  type Phase2ReadHost,
-} from './composition/hosted/phase2ReadComposition';
-import { createPhase2ReadOnlyIdentitySource } from './composition/hosted/phase2ReadOnlyIdentitySource';
+  createMountBindingScopedTeamLifecycleReadPorts,
+  createTeamLifecycleReadComposition,
+  createTeamLifecycleReadHost,
+  createUnavailableTeamLifecycleReadHost,
+  type TeamLifecycleReadAuthority,
+  type TeamLifecycleReadHost,
+} from './composition/hosted/teamLifecycleReadComposition';
+import { createTeamLifecycleReadOnlyIdentitySource } from './composition/hosted/teamLifecycleReadOnlyIdentitySource';
 import { LocalFileSystemProvider } from './services/infrastructure/LocalFileSystemProvider';
 import {
   getProjectsBasePath,
@@ -174,27 +174,30 @@ function admitHostedReadRoot(reference: string): string {
     resolve(reference) !== reference ||
     reference === resolve(reference, '/')
   ) {
-    throw new TypeError('phase2-read-runtime-root-invalid');
+    throw new TypeError('team-lifecycle-read-runtime-root-invalid');
   }
   return reference;
 }
 
-const phase2ReadNowMs = (): number => Date.now();
+const teamLifecycleReadNowMs = (): number => Date.now();
 
-function createPhase2ReadQueryContext(authority: Phase2ReadAuthority, requestSignal: AbortSignal) {
+function createTeamLifecycleReadQueryContext(
+  authority: TeamLifecycleReadAuthority,
+  requestSignal: AbortSignal
+) {
   return createQueryContext({
     actorId: authority.actorId,
-    sessionId: 'session_phase2-standalone',
+    sessionId: 'session_team-lifecycle-read-standalone',
     deploymentId: authority.deploymentId,
     bootId: authority.bootId,
-    requestId: `request_phase2-standalone-${++phase2ReadRequestSequence}`,
+    requestId: `request_team-lifecycle-read-standalone-${++teamLifecycleReadRequestSequence}`,
     authorizedScope: authority.authorizedScope,
-    deadlineAtMs: phase2ReadNowMs() + 10_000,
+    deadlineAtMs: teamLifecycleReadNowMs() + 10_000,
     signal: requestSignal,
   });
 }
 
-let phase2ReadRequestSequence = 0;
+let teamLifecycleReadRequestSequence = 0;
 
 // =============================================================================
 // Lifecycle
@@ -203,48 +206,53 @@ let phase2ReadRequestSequence = 0;
 async function start(): Promise<void> {
   logger.info('Starting standalone server...');
 
-  const serializedHostedBootstrap = process.env[PHASE2_READ_BOOTSTRAP_ENV];
+  const serializedHostedBootstrap = readTeamLifecycleReadBootstrapEnvironment(process.env);
   const hostedMode = serializedHostedBootstrap !== undefined;
-  let phase2ReadHost: Phase2ReadHost = createUnavailablePhase2ReadHost();
+  let teamLifecycleReadHost: TeamLifecycleReadHost = createUnavailableTeamLifecycleReadHost();
 
   if (hostedMode) {
     // Hosted admission is complete before any ServiceContext/FileWatcher or HTTP service exists.
     // An invalid launcher envelope aborts startup; unavailable identity storage leaves only the
     // canonical read facet unavailable and never falls back to ambient discovery.
-    const bootstrap = await new Phase2ReadBootstrapSource({
+    const bootstrap = await new TeamLifecycleReadBootstrapSource({
       input: {
         readSerializedBootstrap: () => serializedHostedBootstrap,
       },
-      nowMs: phase2ReadNowMs,
+      nowMs: teamLifecycleReadNowMs,
     }).load();
     const claudeRoot = admitHostedReadRoot(bootstrap.runtimeInstance.claudeRoot.reference);
     const appDataRoot = admitHostedReadRoot(bootstrap.runtimeInstance.appDataRoot.reference);
     setClaudeBasePathOverride(claudeRoot);
 
-    const teamIdentityGateway = await createPhase2ReadOnlyIdentitySource({ appDataRoot });
+    const teamIdentityGateway = await createTeamLifecycleReadOnlyIdentitySource({ appDataRoot });
     if (teamIdentityGateway) {
       try {
-        const readPorts = createMountBindingScopedPhase2ReadPorts({
+        const readPorts = createMountBindingScopedTeamLifecycleReadPorts({
           authority: bootstrap.authority,
           mountBinding: bootstrap.mountBinding,
           runtimeInstance: bootstrap.runtimeInstance,
           teamIdentities: teamIdentityGateway,
-          nowMs: phase2ReadNowMs,
+          nowMs: teamLifecycleReadNowMs,
         });
         await readPorts.teamIdentities.listTeamIdentities();
-        const composition = createPhase2ReadComposition({
+        const composition = createTeamLifecycleReadComposition({
           authority: bootstrap.authority,
           ...readPorts,
-          nowMs: phase2ReadNowMs,
+          nowMs: teamLifecycleReadNowMs,
         });
-        phase2ReadHost = createPhase2ReadHost(composition, createPhase2ReadQueryContext);
+        teamLifecycleReadHost = createTeamLifecycleReadHost(
+          composition,
+          createTeamLifecycleReadQueryContext
+        );
       } catch {
         logger.warn(
-          'Hosted Phase 2 identity admission unavailable; canonical reads remain disabled.'
+          'Hosted team lifecycle identity admission unavailable; canonical reads remain disabled.'
         );
       }
     } else {
-      logger.warn('Hosted Phase 2 identity storage unavailable; canonical reads remain disabled.');
+      logger.warn(
+        'Hosted team lifecycle identity storage unavailable; canonical reads remain disabled.'
+      );
     }
   } else if (CLAUDE_ROOT) {
     setClaudeBasePathOverride(CLAUDE_ROOT);
@@ -321,7 +329,7 @@ async function start(): Promise<void> {
     recentProjectsFeature,
     updaterService: updaterServiceStub,
     sshConnectionManager: sshConnectionManagerStub,
-    phase2ReadHost,
+    teamLifecycleReadHost,
   };
 
   // No-op mode switch handler (no SSH in standalone)

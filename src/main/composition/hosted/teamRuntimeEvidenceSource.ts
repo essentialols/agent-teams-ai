@@ -12,39 +12,39 @@ import { parseTeamId, type QueryContext, type TeamId } from '@shared/contracts/h
 
 const MAX_RUNTIME_EVIDENCE_TEAMS = 1_000;
 
-export class Phase2RuntimeEvidenceUnavailableError extends Error {
-  readonly name = 'Phase2RuntimeEvidenceUnavailableError';
-  readonly code = 'phase2_runtime_evidence_unavailable';
+export class TeamRuntimeEvidenceUnavailableError extends Error {
+  readonly name = 'TeamRuntimeEvidenceUnavailableError';
+  readonly code = 'team_runtime_evidence_unavailable';
 
   constructor() {
-    super('phase2-read-runtime-evidence-unavailable');
+    super('team-runtime-evidence-unavailable');
   }
 }
 
-export interface Phase2RuntimeEvidenceScope {
+export interface TeamRuntimeEvidenceScope {
   readonly workspaceId: string;
   readonly mountGeneration: number;
   readonly deploymentId: string;
   readonly bootId: string;
 }
 
-export interface Phase2RuntimeIdentityEvidence {
+export interface TeamRuntimeIdentityEvidence {
   readonly teamId: TeamId;
   readonly legacyTeamName: string;
   readonly directoryFingerprint: string;
 }
 
-export interface Phase2AuthoritativeRuntimeEvidenceSource {
+export interface AuthoritativeTeamRuntimeEvidenceSource {
   readRuntimeState(input: {
-    readonly scope: Phase2RuntimeEvidenceScope;
-    readonly identity: Phase2RuntimeIdentityEvidence;
+    readonly scope: TeamRuntimeEvidenceScope;
+    readonly identity: TeamRuntimeIdentityEvidence;
     readonly context: QueryContext;
   }):
     | { readonly teamId: TeamId; readonly isAlive: boolean }
     | Promise<{ readonly teamId: TeamId; readonly isAlive: boolean }>;
   listAliveTeamIds(input: {
-    readonly scope: Phase2RuntimeEvidenceScope;
-    readonly identities: readonly Phase2RuntimeIdentityEvidence[];
+    readonly scope: TeamRuntimeEvidenceScope;
+    readonly identities: readonly TeamRuntimeIdentityEvidence[];
     readonly context: QueryContext;
   }): readonly TeamId[] | Promise<readonly TeamId[]>;
 }
@@ -55,7 +55,7 @@ export interface MountBindingScopedRuntimeEvidencePortInput {
   readonly identitiesForCurrentSnapshot: () => readonly TeamIdentityRecord[];
   readonly nowMs: () => number;
   /** Omit unless a host-owned, mount-scoped authoritative runtime reader is available. */
-  readonly source?: Phase2AuthoritativeRuntimeEvidenceSource;
+  readonly source?: AuthoritativeTeamRuntimeEvidenceSource;
 }
 
 function exactKeys(value: object, keys: readonly string[]): boolean {
@@ -67,10 +67,10 @@ function exactKeys(value: object, keys: readonly string[]): boolean {
 }
 
 function assertActive(context: QueryContext, nowMs: () => number): void {
-  if (context.signal.aborted) throw new Error('phase2-read-request-cancelled');
+  if (context.signal.aborted) throw new Error('team-lifecycle-read-request-cancelled');
   const now = nowMs();
   if (!Number.isSafeInteger(now) || now < 0 || now >= context.deadlineAtMs) {
-    throw new Error('phase2-read-request-expired');
+    throw new Error('team-lifecycle-read-request-expired');
   }
 }
 
@@ -90,7 +90,7 @@ async function activePortIo<TResult>(
   }
 }
 
-function identityEvidence(identityValue: TeamIdentityRecord): Phase2RuntimeIdentityEvidence {
+function identityEvidence(identityValue: TeamIdentityRecord): TeamRuntimeIdentityEvidence {
   const identity = parseTeamIdentityRecord(identityValue);
   return Object.freeze({
     teamId: identity.teamId,
@@ -100,7 +100,7 @@ function identityEvidence(identityValue: TeamIdentityRecord): Phase2RuntimeIdent
 }
 
 class MountBindingScopedRuntimeEvidencePort implements LegacyTeamRuntimeReadPort {
-  readonly #scope: Phase2RuntimeEvidenceScope;
+  readonly #scope: TeamRuntimeEvidenceScope;
 
   constructor(private readonly input: MountBindingScopedRuntimeEvidencePortInput) {
     const runtimeInstance = createRuntimeInstanceContext(input.runtimeInstance);
@@ -111,7 +111,7 @@ class MountBindingScopedRuntimeEvidencePort implements LegacyTeamRuntimeReadPort
       typeof input.identitiesForCurrentSnapshot !== 'function' ||
       typeof input.nowMs !== 'function'
     ) {
-      throw new TypeError('phase2-read-runtime-scope-invalid');
+      throw new TypeError('team-runtime-scope-invalid');
     }
     this.#scope = Object.freeze({
       workspaceId: input.mountBinding.workspaceId,
@@ -125,11 +125,11 @@ class MountBindingScopedRuntimeEvidencePort implements LegacyTeamRuntimeReadPort
     const identity = this.currentIdentities().find(
       (candidate) => candidate.legacyTeamName === legacyTeamName
     );
-    if (!identity) throw new Error('phase2-read-team-outside-mount-binding');
+    if (!identity) throw new Error('team-lifecycle-read-team-outside-mount-binding');
     const source = this.input.source;
     if (!source) {
       assertActive(context, this.input.nowMs);
-      throw new Phase2RuntimeEvidenceUnavailableError();
+      throw new TeamRuntimeEvidenceUnavailableError();
     }
 
     const value = await activePortIo(context, this.input.nowMs, () =>
@@ -142,7 +142,7 @@ class MountBindingScopedRuntimeEvidencePort implements LegacyTeamRuntimeReadPort
       parseTeamId(value.teamId) !== identity.teamId ||
       typeof value.isAlive !== 'boolean'
     ) {
-      throw new TypeError('phase2-read-runtime-evidence-invalid');
+      throw new TypeError('team-runtime-evidence-invalid');
     }
     return Object.freeze({ teamName: legacyTeamName, isAlive: value.isAlive });
   }
@@ -152,26 +152,26 @@ class MountBindingScopedRuntimeEvidencePort implements LegacyTeamRuntimeReadPort
     const source = this.input.source;
     if (!source) {
       assertActive(context, this.input.nowMs);
-      throw new Phase2RuntimeEvidenceUnavailableError();
+      throw new TeamRuntimeEvidenceUnavailableError();
     }
 
     const values = await activePortIo(context, this.input.nowMs, () =>
       source.listAliveTeamIds({ scope: this.#scope, identities, context })
     );
     if (!Array.isArray(values) || values.length > MAX_RUNTIME_EVIDENCE_TEAMS) {
-      throw new TypeError('phase2-read-runtime-evidence-invalid');
+      throw new TypeError('team-runtime-evidence-invalid');
     }
     const namesByTeamId = new Map(identities.map((identity) => [identity.teamId, identity]));
     const seen = new Set<TeamId>();
     const names: string[] = [];
     for (let index = 0; index < values.length; index += 1) {
       if (!Object.hasOwn(values, index)) {
-        throw new TypeError('phase2-read-runtime-evidence-invalid');
+        throw new TypeError('team-runtime-evidence-invalid');
       }
       const teamId = parseTeamId(values[index]);
       const identity = namesByTeamId.get(teamId);
       if (!identity || seen.has(teamId)) {
-        throw new TypeError('phase2-read-runtime-evidence-invalid');
+        throw new TypeError('team-runtime-evidence-invalid');
       }
       seen.add(teamId);
       names.push(identity.legacyTeamName);
@@ -180,10 +180,10 @@ class MountBindingScopedRuntimeEvidencePort implements LegacyTeamRuntimeReadPort
     return Object.freeze(names);
   }
 
-  private currentIdentities(activeOnly = false): readonly Phase2RuntimeIdentityEvidence[] {
+  private currentIdentities(activeOnly = false): readonly TeamRuntimeIdentityEvidence[] {
     const identities = this.input.identitiesForCurrentSnapshot();
     if (!Array.isArray(identities) || identities.length > MAX_RUNTIME_EVIDENCE_TEAMS) {
-      throw new TypeError('phase2-read-runtime-identity-snapshot-invalid');
+      throw new TypeError('team-runtime-identity-snapshot-invalid');
     }
     const parsed = identities.map((identity) => parseTeamIdentityRecord(identity));
     return Object.freeze(

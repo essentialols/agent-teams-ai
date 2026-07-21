@@ -10,7 +10,7 @@ import { parseRevision, parseTeamId, parseWorkspaceId } from '@shared/contracts/
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Phase2ReadHost } from '@main/composition/hosted/phase2ReadComposition';
+import type { TeamLifecycleReadHost } from '@main/composition/hosted/teamLifecycleReadComposition';
 import type { HttpServices } from '@main/http';
 import type {
   OpenCodeRuntimeControlAck,
@@ -153,7 +153,7 @@ describe('HTTP team runtime routes', () => {
     return { app, ...mocks };
   }
 
-  it('returns the canonical Phase 2 read envelope and contains host failures', async () => {
+  it('returns the canonical team lifecycle read envelope and contains host failures', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
     const success = {
@@ -171,10 +171,10 @@ describe('HTTP team runtime routes', () => {
       ],
       nextCursor: null,
     } satisfies CanonicalListTeamLifecycleResult;
-    const phase2ReadHost = {
+    const teamLifecycleReadHost = {
       listTeamLifecycle: vi.fn(() => Promise.resolve(success)),
-    } satisfies Phase2ReadHost;
-    registerTeamRoutes(app, { ...mocks.services, phase2ReadHost });
+    } satisfies TeamLifecycleReadHost;
+    registerTeamRoutes(app, { ...mocks.services, teamLifecycleReadHost });
     await app.ready();
 
     try {
@@ -186,7 +186,7 @@ describe('HTTP team runtime routes', () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual(success);
 
-      phase2ReadHost.listTeamLifecycle.mockRejectedValueOnce(
+      teamLifecycleReadHost.listTeamLifecycle.mockRejectedValueOnce(
         new Error('private identity storage diagnostic')
       );
       const failure = await app.inject({
@@ -207,7 +207,7 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('aborts a disconnected Phase 2 read before subsequent filesystem or runtime work', async () => {
+  it('aborts a disconnected team lifecycle read before later filesystem or runtime work', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
     const success = {
@@ -228,7 +228,7 @@ describe('HTTP team runtime routes', () => {
     const finished = new Promise<void>((resolve) => {
       resolveFinished = resolve;
     });
-    const phase2ReadHost = {
+    const teamLifecycleReadHost = {
       listTeamLifecycle: vi.fn(async (_request: unknown, signal?: AbortSignal) => {
         receivedSignal = signal;
         resolveStarted();
@@ -250,8 +250,8 @@ describe('HTTP team runtime routes', () => {
           resolveFinished();
         }
       }),
-    } satisfies Phase2ReadHost;
-    registerTeamRoutes(app, { ...mocks.services, phase2ReadHost });
+    } satisfies TeamLifecycleReadHost;
+    registerTeamRoutes(app, { ...mocks.services, teamLifecycleReadHost });
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (!address || typeof address === 'string') {
@@ -286,7 +286,7 @@ describe('HTTP team runtime routes', () => {
     }
   });
 
-  it('detaches Phase 2 request listeners without aborting a normally completed read', async () => {
+  it('detaches team lifecycle read listeners without aborting a normal completion', async () => {
     const app = Fastify();
     const mocks = createServicesMock();
     const success = {
@@ -297,13 +297,13 @@ describe('HTTP team runtime routes', () => {
       nextCursor: null,
     } satisfies CanonicalListTeamLifecycleResult;
     let receivedSignal: AbortSignal | undefined;
-    const phase2ReadHost = {
+    const teamLifecycleReadHost = {
       listTeamLifecycle: vi.fn((_request: unknown, signal?: AbortSignal) => {
         receivedSignal = signal;
         return Promise.resolve(success);
       }),
-    } satisfies Phase2ReadHost;
-    registerTeamRoutes(app, { ...mocks.services, phase2ReadHost });
+    } satisfies TeamLifecycleReadHost;
+    registerTeamRoutes(app, { ...mocks.services, teamLifecycleReadHost });
     await app.ready();
 
     try {
@@ -314,7 +314,7 @@ describe('HTTP team runtime routes', () => {
         payload,
       });
       expect(response.statusCode).toBe(200);
-      expect(phase2ReadHost.listTeamLifecycle).toHaveBeenCalledWith(payload, receivedSignal);
+      expect(teamLifecycleReadHost.listTeamLifecycle).toHaveBeenCalledWith(payload, receivedSignal);
       expect(receivedSignal?.aborted).toBe(false);
     } finally {
       await app.close();

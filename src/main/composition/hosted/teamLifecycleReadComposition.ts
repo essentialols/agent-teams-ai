@@ -58,21 +58,31 @@ import {
 } from '@shared/contracts/hosted';
 
 import {
+  type AuthoritativeTeamRuntimeEvidenceSource,
   createMountBindingScopedRuntimeEvidencePort,
-  type Phase2AuthoritativeRuntimeEvidenceSource,
-  Phase2RuntimeEvidenceUnavailableError,
-} from './phase2RuntimeEvidenceSource';
+  TeamRuntimeEvidenceUnavailableError,
+} from './teamRuntimeEvidenceSource';
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1_000;
 const MAX_LEGACY_SUMMARIES = 2_000;
 const MAX_HOSTED_TEAM_CONFIG_BYTES = 2 * 1024 * 1024;
 const MAX_HOSTED_TEAM_IDENTITY_BYTES = 4 * 1024;
-const CURSOR_PATTERN = /^cursor_phase2_(\d+)_([0-9a-f]{64})$/;
+const TEAM_LIFECYCLE_READ_CURSOR_PREFIX = 'cursor_team_lifecycle_read';
+const TEAM_LIFECYCLE_READ_CURSOR_PATTERN = /^cursor_team_lifecycle_read_(\d+)_([0-9a-f]{64})$/;
+const LEGACY_PHASE2_CURSOR_READ_PATTERN = /^cursor_phase2_(\d+)_([0-9a-f]{64})$/;
+const TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS = Object.freeze({
+  identityCorrupt: 'team-lifecycle-read.identity-corrupt',
+  dataCorrupt: 'team-lifecycle-read.data-corrupt',
+  clockInvalid: 'team-lifecycle-read.clock-invalid',
+  projectionPurposeInvalid: 'team-lifecycle-read.projection-purpose-invalid',
+  hostUnexpected: 'team-lifecycle-read.host-unexpected',
+  requestErrorInvalid: 'team-lifecycle-read.request-error-invalid',
+});
 const NO_FOLLOW = fs.constants.O_NOFOLLOW;
-const phase2ReadAuthorities = new WeakSet<object>();
+const teamLifecycleReadAuthorities = new WeakSet<object>();
 
-export interface Phase2ReadAuthority {
+export interface TeamLifecycleReadAuthority {
   readonly actorId: ActorId;
   readonly authorizedScope: AuthorizedScope;
   readonly workspaceId: WorkspaceId;
@@ -81,16 +91,16 @@ export interface Phase2ReadAuthority {
   readonly bootId: BootId;
 }
 
-export interface Phase2ReadAuthorityInput {
+export interface TeamLifecycleReadAuthorityInput {
   readonly actorId: unknown;
   readonly authorizedScope: unknown;
   readonly mountBinding: WorkspaceMountBinding;
   readonly runtimeInstance: RuntimeInstanceContext;
 }
 
-export interface Phase2ReadCompositionDependencies {
+export interface TeamLifecycleReadCompositionDependencies {
   /** The host-created identity and authorization snapshot for every read in this composition. */
-  readonly authority: Phase2ReadAuthority;
+  readonly authority: TeamLifecycleReadAuthority;
   /** Null means the durable component is unavailable; discovery fallback is forbidden. */
   readonly teamIdentities: TeamIdentityReadGateway | null;
   readonly legacyData: LegacyTeamDataReadPort;
@@ -99,12 +109,12 @@ export interface Phase2ReadCompositionDependencies {
   readonly pageSize?: number;
 }
 
-export interface Phase2ReadComposition {
-  readonly authority: Phase2ReadAuthority;
+export interface TeamLifecycleReadComposition {
+  readonly authority: TeamLifecycleReadAuthority;
   readonly teamLifecycle: TeamLifecycleReadApi;
 }
 
-export interface MountBindingScopedPhase2ReadPorts {
+export interface MountBindingScopedTeamLifecycleReadPorts {
   readonly teamIdentities: TeamIdentityReadGateway;
   readonly legacyData: LegacyTeamDataReadPort;
   readonly legacyRuntime: LegacyTeamRuntimeReadPort;
@@ -119,8 +129,8 @@ export interface HostedReadOnlyTeamSummarySource {
   }): Promise<Readonly<Record<PropertyKey, unknown>> | null>;
 }
 
-export interface MountBindingScopedPhase2ReadPortsInput {
-  readonly authority: Phase2ReadAuthority;
+export interface MountBindingScopedTeamLifecycleReadPortsInput {
+  readonly authority: TeamLifecycleReadAuthority;
   readonly mountBinding: WorkspaceMountBinding;
   readonly runtimeInstance: RuntimeInstanceContext;
   readonly teamIdentities: TeamIdentityReadGateway;
@@ -128,10 +138,10 @@ export interface MountBindingScopedPhase2ReadPortsInput {
   /** Test seam for the narrow read-only adapter; production uses explicit-root filesystem reads. */
   readonly teamSummarySource?: HostedReadOnlyTeamSummarySource;
   /** Omit unless the host owns authoritative evidence already scoped to this exact mount. */
-  readonly runtimeEvidenceSource?: Phase2AuthoritativeRuntimeEvidenceSource;
+  readonly runtimeEvidenceSource?: AuthoritativeTeamRuntimeEvidenceSource;
 }
 
-export interface Phase2ReadHost {
+export interface TeamLifecycleReadHost {
   listTeamLifecycle(
     request: unknown,
     requestSignal?: AbortSignal
@@ -142,7 +152,7 @@ interface FrozenLegacyLifecycleSummary extends Readonly<Record<PropertyKey, unkn
   readonly teamName: string;
 }
 
-interface Phase2ReadSnapshot {
+interface TeamLifecycleReadSnapshot {
   readonly identities: readonly TeamIdentityRecord[];
   readonly summaries: readonly FrozenLegacyLifecycleSummary[];
   readonly summariesByName: ReadonlyMap<string, FrozenLegacyLifecycleSummary>;
@@ -161,6 +171,13 @@ interface DirectoryEntryIdentity {
 
 type IdentityProjectionPurpose = 'lifecycle' | 'runtime';
 
+/** Reads stable cursors and the one legacy Phase 2 wire form; cursor writes stay stable-only. */
+function matchTeamLifecycleReadCursorForRead(value: string): RegExpExecArray | null {
+  return (
+    TEAM_LIFECYCLE_READ_CURSOR_PATTERN.exec(value) ?? LEGACY_PHASE2_CURSOR_READ_PATTERN.exec(value)
+  );
+}
+
 function failure(
   code: TeamLifecycleReadFailure['error']['code'],
   reason: string,
@@ -176,11 +193,11 @@ function failure(
 }
 
 function corruptIdentity(): TeamLifecycleReadFailure {
-  return failure('internal', 'corrupt_source', 'phase2-read.identity-corrupt');
+  return failure('internal', 'corrupt_source', TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS.identityCorrupt);
 }
 
 function corruptData(): TeamLifecycleReadFailure {
-  return failure('internal', 'corrupt_source', 'phase2-read.data-corrupt');
+  return failure('internal', 'corrupt_source', TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS.dataCorrupt);
 }
 
 function identityUnavailable(): TeamLifecycleReadFailure {
@@ -202,7 +219,7 @@ function cancelledContext(
 }
 
 function clockInvalid(): TeamLifecycleReadFailure {
-  return failure('internal', 'policy_failure', 'phase2-read.clock-invalid');
+  return failure('internal', 'policy_failure', TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS.clockInvalid);
 }
 
 function snapshotChanged(): TeamLifecycleReadFailure {
@@ -214,7 +231,11 @@ function invalidCursor(): TeamLifecycleReadFailure {
 }
 
 function projectionPurposeInvalid(): TeamLifecycleReadFailure {
-  return failure('internal', 'unexpected', 'phase2-read.projection-purpose-invalid');
+  return failure(
+    'internal',
+    'unexpected',
+    TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS.projectionPurposeInvalid
+  );
 }
 
 function digest(value: unknown): string {
@@ -265,7 +286,7 @@ function isFailure(
 }
 
 function isSnapshotFailure(
-  value: Phase2ReadSnapshot | TeamLifecycleReadFailure
+  value: TeamLifecycleReadSnapshot | TeamLifecycleReadFailure
 ): value is TeamLifecycleReadFailure {
   return 'kind' in value;
 }
@@ -283,7 +304,7 @@ function isAliveNamesFailure(
 }
 
 function authorityCursorDigest(
-  authority: Phase2ReadAuthority,
+  authority: TeamLifecycleReadAuthority,
   revision: Revision,
   offset: number
 ): string {
@@ -319,9 +340,9 @@ function assertCanonicalIdentityFile(
   try {
     value = JSON.parse(serialized);
   } catch {
-    throw new Error('phase2-read-canonical-identity-invalid');
+    throw new Error('team-lifecycle-read-canonical-identity-invalid');
   }
-  if (!isRecord(value)) throw new Error('phase2-read-canonical-identity-invalid');
+  if (!isRecord(value)) throw new Error('team-lifecycle-read-canonical-identity-invalid');
 
   const expectedKeys =
     value.originDeploymentId === undefined
@@ -334,7 +355,7 @@ function assertCanonicalIdentityFile(
     value.schemaVersion !== 1 ||
     !isCanonicalTimestamp(value.createdAt)
   ) {
-    throw new Error('phase2-read-canonical-identity-invalid');
+    throw new Error('team-lifecycle-read-canonical-identity-invalid');
   }
 
   const canonicalIdentity: Record<string, unknown> = {
@@ -354,7 +375,7 @@ function assertCanonicalIdentityFile(
     createHash('sha256').update(serialized, 'utf8').digest('hex') !==
       expectedIdentity.identityChecksum
   ) {
-    throw new Error('phase2-read-canonical-identity-mismatch');
+    throw new Error('team-lifecycle-read-canonical-identity-mismatch');
   }
 }
 
@@ -407,7 +428,7 @@ function canonicalDirectoryInstanceFingerprint(
 
 function noFollowReadFlags(): number {
   if (!Number.isSafeInteger(NO_FOLLOW) || NO_FOLLOW <= 0) {
-    throw new Error('phase2-read-no-follow-unavailable');
+    throw new Error('team-lifecycle-read-no-follow-unavailable');
   }
   return fs.constants.O_RDONLY | NO_FOLLOW;
 }
@@ -428,7 +449,7 @@ function assertDirectChild(root: string, candidate: string, expectedRelativePath
     actualRelativePath.startsWith('..') ||
     isAbsolute(actualRelativePath)
   ) {
-    throw new Error('phase2-read-root-containment-invalid');
+    throw new Error('team-lifecycle-read-root-containment-invalid');
   }
 }
 
@@ -469,7 +490,7 @@ async function closeActiveFileHandle(
   }
   if (firstError === undefined) return;
   if (firstError instanceof Error) throw firstError;
-  throw new Error('phase2-read-file-handle-close-failed', { cause: firstError });
+  throw new Error('team-lifecycle-read-file-handle-close-failed', { cause: firstError });
 }
 
 async function openActiveFileHandle(
@@ -517,7 +538,7 @@ async function readCanonicalDirectory(
   );
   const canonicalPath = await activeFileIo(assertActive, () => fs.promises.realpath(directoryPath));
   if (!stat.isDirectory() || stat.isSymbolicLink() || canonicalPath !== directoryPath) {
-    throw new Error('phase2-read-directory-binding-invalid');
+    throw new Error('team-lifecycle-read-directory-binding-invalid');
   }
   if (expectedParent !== null && expectedName !== null) {
     assertDirectChild(expectedParent, canonicalPath, expectedName);
@@ -534,7 +555,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
   }): Promise<Readonly<Record<PropertyKey, unknown>> | null> {
     const identity = parseTeamIdentityRecord(input.identity);
     if (identity.state !== 'active') {
-      throw new Error('phase2-read-canonical-identity-state-invalid');
+      throw new Error('team-lifecycle-read-canonical-identity-state-invalid');
     }
     const legacyTeamName = parseLegacyTeamKey(identity.legacyKey);
 
@@ -573,7 +594,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
         identityStat.size < 1 ||
         identityStat.size > MAX_HOSTED_TEAM_IDENTITY_BYTES
       ) {
-        throw new Error('phase2-read-canonical-identity-invalid');
+        throw new Error('team-lifecycle-read-canonical-identity-invalid');
       }
 
       const identityHandle = await openActiveFileHandle(identityPath, input.assertActive);
@@ -583,7 +604,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
           identityHandle.stat()
         );
         if (!openedIdentityStat.isFile() || !stableFile(identityStat, openedIdentityStat)) {
-          throw new Error('phase2-read-canonical-identity-replaced');
+          throw new Error('team-lifecycle-read-canonical-identity-replaced');
         }
         serializedIdentityBuffer = await readActiveAtMost(
           identityHandle,
@@ -598,7 +619,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
           !stableFile(openedIdentityStat, afterIdentityReadStat) ||
           afterIdentityReadStat.size !== serializedIdentityBuffer.length
         ) {
-          throw new Error('phase2-read-canonical-identity-changed');
+          throw new Error('team-lifecycle-read-canonical-identity-changed');
         }
       } finally {
         await closeActiveFileHandle(identityHandle, input.assertActive);
@@ -618,7 +639,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
           fingerprintedTeamRoot.stat
         ) !== identity.directoryFingerprint
       ) {
-        throw new Error('phase2-read-directory-fingerprint-mismatch');
+        throw new Error('team-lifecycle-read-directory-fingerprint-mismatch');
       }
 
       const configName = 'config.json';
@@ -646,7 +667,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
       try {
         const openedStat = await activeFileIo(input.assertActive, () => handle.stat());
         if (!openedStat.isFile() || !stableFile(configStat, openedStat)) {
-          throw new Error('phase2-read-config-replaced');
+          throw new Error('team-lifecycle-read-config-replaced');
         }
         serializedBuffer = await readActiveAtMost(
           handle,
@@ -659,7 +680,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
           !stableFile(openedStat, afterReadStat) ||
           afterReadStat.size !== serializedBuffer.length
         ) {
-          throw new Error('phase2-read-config-changed');
+          throw new Error('team-lifecycle-read-config-changed');
         }
       } finally {
         await closeActiveFileHandle(handle, input.assertActive);
@@ -709,7 +730,7 @@ class ExplicitRootReadOnlyTeamSummarySource implements HostedReadOnlyTeamSummary
         !stableFile(configStat, configAfter) ||
         configPathAfter !== canonicalConfigPath
       ) {
-        throw new Error('phase2-read-config-binding-changed');
+        throw new Error('team-lifecycle-read-config-binding-changed');
       }
 
       input.assertActive();
@@ -747,14 +768,18 @@ class MountBindingScopedIdentityGateway implements TeamIdentityReadGateway {
 
   async listTeamIdentities(): Promise<readonly TeamIdentityRecord[]> {
     const values = await this.source.listTeamIdentities();
-    if (!Array.isArray(values)) throw new TypeError('phase2-read-identity-source-invalid');
+    if (!Array.isArray(values)) {
+      throw new TypeError('team-lifecycle-read-identity-source-invalid');
+    }
     const identities = values.flatMap((value) => {
       const identity = parseTeamIdentityRecord(value);
       const workspaceBinding = identity.workspaceBinding;
-      if (workspaceBinding === null) throw new TypeError('phase2-read-identity-binding-invalid');
+      if (workspaceBinding === null) {
+        throw new TypeError('team-lifecycle-read-identity-binding-invalid');
+      }
       if (workspaceBinding.workspaceId !== this.mountBinding.workspaceId) return [];
       if (workspaceBinding.generation !== this.mountBinding.mountGeneration) {
-        throw new TypeError('phase2-read-identity-binding-generation-invalid');
+        throw new TypeError('team-lifecycle-read-identity-binding-generation-invalid');
       }
       return [identity];
     });
@@ -767,10 +792,12 @@ class MountBindingScopedIdentityGateway implements TeamIdentityReadGateway {
     if (value === null) return null;
     const identity = parseTeamIdentityRecord(value);
     const workspaceBinding = identity.workspaceBinding;
-    if (workspaceBinding === null) throw new TypeError('phase2-read-identity-binding-invalid');
+    if (workspaceBinding === null) {
+      throw new TypeError('team-lifecycle-read-identity-binding-invalid');
+    }
     if (workspaceBinding.workspaceId !== this.mountBinding.workspaceId) return null;
     if (workspaceBinding.generation !== this.mountBinding.mountGeneration) {
-      throw new TypeError('phase2-read-identity-binding-generation-invalid');
+      throw new TypeError('team-lifecycle-read-identity-binding-generation-invalid');
     }
     return identity;
   }
@@ -789,10 +816,10 @@ class MountBindingScopedLegacyDataPort implements LegacyTeamDataReadPort {
   ) {}
 
   private assertActive(context: QueryContext): void {
-    if (context.signal.aborted) throw new Error('phase2-read-request-cancelled');
+    if (context.signal.aborted) throw new Error('team-lifecycle-read-request-cancelled');
     const nowMs = this.nowMs();
     if (!Number.isSafeInteger(nowMs) || nowMs < 0 || nowMs >= context.deadlineAtMs) {
-      throw new Error('phase2-read-request-expired');
+      throw new Error('team-lifecycle-read-request-expired');
     }
   }
 
@@ -830,9 +857,9 @@ class MountBindingScopedLegacyDataPort implements LegacyTeamDataReadPort {
     const identity = this.identities
       .identitiesForCurrentSnapshot()
       .find((candidate) => candidate.legacyKey === legacyTeamName);
-    if (!identity) throw new Error('phase2-read-team-outside-mount-binding');
+    if (!identity) throw new Error('team-lifecycle-read-team-outside-mount-binding');
     const summary = await this.readSummary(identity, context);
-    if (!summary) throw new Error('phase2-read-team-data-unavailable');
+    if (!summary) throw new Error('team-lifecycle-read-team-data-unavailable');
     const config =
       typeof summary.deletedAt === 'string'
         ? Object.freeze({ deletedAt: summary.deletedAt })
@@ -861,20 +888,22 @@ function tombstoneSummary(identity: TeamIdentityRecord): FrozenLegacyLifecycleSu
   });
 }
 
-export function createPhase2ReadAuthority(value: Phase2ReadAuthorityInput): Phase2ReadAuthority {
+export function createTeamLifecycleReadAuthority(
+  value: TeamLifecycleReadAuthorityInput
+): TeamLifecycleReadAuthority {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new TypeError('phase2-read-authority-invalid');
+    throw new TypeError('team-lifecycle-read-authority-invalid');
   }
   try {
     if (!(value.mountBinding instanceof WorkspaceMountBinding)) {
-      throw new TypeError('phase2-read-mount-binding-not-admitted');
+      throw new TypeError('team-lifecycle-read-mount-binding-not-admitted');
     }
     if (value.mountBinding.health === 'unavailable') {
-      throw new TypeError('phase2-read-mount-binding-unavailable');
+      throw new TypeError('team-lifecycle-read-mount-binding-unavailable');
     }
     const runtimeInstance = createRuntimeInstanceContext(value.runtimeInstance);
     if (value.mountBinding.bootId !== runtimeInstance.bootId) {
-      throw new TypeError('phase2-read-runtime-binding-mismatch');
+      throw new TypeError('team-lifecycle-read-runtime-binding-mismatch');
     }
     const authority = Object.freeze({
       actorId: parseActorId(value.actorId),
@@ -884,10 +913,10 @@ export function createPhase2ReadAuthority(value: Phase2ReadAuthorityInput): Phas
       deploymentId: runtimeInstance.deploymentId,
       bootId: runtimeInstance.bootId,
     });
-    phase2ReadAuthorities.add(authority);
+    teamLifecycleReadAuthorities.add(authority);
     return authority;
   } catch {
-    throw new TypeError('phase2-read-authority-invalid');
+    throw new TypeError('team-lifecycle-read-authority-invalid');
   }
 }
 
@@ -896,14 +925,14 @@ export function createPhase2ReadAuthority(value: Phase2ReadAuthorityInput): Phas
  * The adapters never enumerate the ambient teams root and expose no write, process, provider, or
  * cleanup capability. Legacy config reads are limited to keys returned for this mount binding.
  */
-export function createMountBindingScopedPhase2ReadPorts(
-  input: MountBindingScopedPhase2ReadPortsInput
-): MountBindingScopedPhase2ReadPorts {
-  if (!phase2ReadAuthorities.has(input.authority)) {
-    throw new TypeError('phase2-read-authority-invalid');
+export function createMountBindingScopedTeamLifecycleReadPorts(
+  input: MountBindingScopedTeamLifecycleReadPortsInput
+): MountBindingScopedTeamLifecycleReadPorts {
+  if (!teamLifecycleReadAuthorities.has(input.authority)) {
+    throw new TypeError('team-lifecycle-read-authority-invalid');
   }
   if (!(input.mountBinding instanceof WorkspaceMountBinding)) {
-    throw new TypeError('phase2-read-mount-binding-invalid');
+    throw new TypeError('team-lifecycle-read-mount-binding-invalid');
   }
   const runtimeInstance = createRuntimeInstanceContext(input.runtimeInstance);
   if (
@@ -914,10 +943,10 @@ export function createMountBindingScopedPhase2ReadPorts(
     input.authority.deploymentId !== runtimeInstance.deploymentId ||
     input.authority.bootId !== runtimeInstance.bootId
   ) {
-    throw new TypeError('phase2-read-mount-binding-invalid');
+    throw new TypeError('team-lifecycle-read-mount-binding-invalid');
   }
   if (typeof input.nowMs !== 'function') {
-    throw new TypeError('phase2-read-clock-invalid');
+    throw new TypeError('team-lifecycle-read-clock-invalid');
   }
 
   const claudeRoot = runtimeInstance.claudeRoot.reference as string;
@@ -926,7 +955,7 @@ export function createMountBindingScopedPhase2ReadPorts(
     resolve(claudeRoot) !== claudeRoot ||
     claudeRoot === resolve(claudeRoot, '/')
   ) {
-    throw new TypeError('phase2-read-claude-root-invalid');
+    throw new TypeError('team-lifecycle-read-claude-root-invalid');
   }
 
   const identities = new MountBindingScopedIdentityGateway(
@@ -952,10 +981,10 @@ export function createMountBindingScopedPhase2ReadPorts(
 }
 
 /** Owns the one immutable identity/data snapshot used throughout a host request. */
-export class Phase2ReadSnapshotCoordinator {
+export class TeamLifecycleReadSnapshotCoordinator {
   private readonly snapshots = new WeakMap<
     QueryContext,
-    Promise<Phase2ReadSnapshot | TeamLifecycleReadFailure>
+    Promise<TeamLifecycleReadSnapshot | TeamLifecycleReadFailure>
   >();
   private readonly runtimeStates = new WeakMap<
     QueryContext,
@@ -967,7 +996,7 @@ export class Phase2ReadSnapshotCoordinator {
   >();
 
   constructor(
-    readonly authority: Phase2ReadAuthority,
+    readonly authority: TeamLifecycleReadAuthority,
     private readonly identityGateway: TeamIdentityReadGateway | null,
     private readonly legacyData: LegacyTeamDataReadPort,
     private readonly legacyRuntime: LegacyTeamRuntimeReadPort,
@@ -997,7 +1026,7 @@ export class Phase2ReadSnapshotCoordinator {
 
   async readSnapshot(
     context: QueryContext
-  ): Promise<Phase2ReadSnapshot | TeamLifecycleReadFailure> {
+  ): Promise<TeamLifecycleReadSnapshot | TeamLifecycleReadFailure> {
     const preflight = this.preflight(context);
     if (preflight) return preflight;
     const existing = this.snapshots.get(context);
@@ -1014,7 +1043,7 @@ export class Phase2ReadSnapshotCoordinator {
 
   private async loadSnapshot(
     context: QueryContext
-  ): Promise<Phase2ReadSnapshot | TeamLifecycleReadFailure> {
+  ): Promise<TeamLifecycleReadSnapshot | TeamLifecycleReadFailure> {
     if (!this.identityGateway) return identityUnavailable();
 
     let identityValues: readonly TeamIdentityRecord[];
@@ -1179,7 +1208,7 @@ export class Phase2ReadSnapshotCoordinator {
   }
 
   private async loadAliveNames(
-    snapshot: Phase2ReadSnapshot,
+    snapshot: TeamLifecycleReadSnapshot,
     context: QueryContext
   ): Promise<readonly string[] | TeamLifecycleReadFailure> {
     let value: unknown;
@@ -1217,7 +1246,7 @@ class IdentityProjectionPurposeContext {
     operation: () => Promise<TResult>
   ): Promise<TResult> {
     if (this.purposes.has(context)) {
-      throw new Error('phase2-read-projection-purpose-context-reused');
+      throw new Error('team-lifecycle-read-projection-purpose-context-reused');
     }
     this.purposes.set(context, purpose);
     try {
@@ -1234,7 +1263,7 @@ class IdentityProjectionPurposeContext {
 
 class CanonicalIdentityProjectionReadPort implements LegacyTeamIdentityReadPort {
   constructor(
-    private readonly coordinator: Phase2ReadSnapshotCoordinator,
+    private readonly coordinator: TeamLifecycleReadSnapshotCoordinator,
     private readonly pageSize: number,
     private readonly purposes: IdentityProjectionPurposeContext
   ) {}
@@ -1314,12 +1343,12 @@ class CanonicalIdentityProjectionReadPort implements LegacyTeamIdentityReadPort 
     identities: readonly TeamIdentityRecord[],
     revision: Revision,
     cursorValue: ListTeamLifecycleRequest['cursor'],
-    snapshot: Phase2ReadSnapshot,
+    snapshot: TeamLifecycleReadSnapshot,
     projection: (identity: TeamIdentityRecord) => unknown
   ): LegacyTeamBindingPage | TeamLifecycleReadFailure {
     let offset = 0;
     if (cursorValue !== null) {
-      const match = CURSOR_PATTERN.exec(cursorValue);
+      const match = matchTeamLifecycleReadCursorForRead(cursorValue);
       if (!match) return invalidCursor();
       offset = Number(match[1]);
       if (!Number.isSafeInteger(offset) || offset <= 0 || offset >= identities.length) {
@@ -1339,7 +1368,9 @@ class CanonicalIdentityProjectionReadPort implements LegacyTeamIdentityReadPort 
     const nextOffset = offset + pageIdentities.length;
     const nextCursor =
       nextOffset < identities.length
-        ? parseCursor(`cursor_phase2_${nextOffset}_${this.cursorDigest(revision, nextOffset)}`)
+        ? parseCursor(
+            `${TEAM_LIFECYCLE_READ_CURSOR_PREFIX}_${nextOffset}_${this.cursorDigest(revision, nextOffset)}`
+          )
         : null;
     return Object.freeze({
       snapshotRevision: revision,
@@ -1355,23 +1386,27 @@ class CanonicalIdentityProjectionReadPort implements LegacyTeamIdentityReadPort 
 
 /** Projects tombstones and lifecycle fields from the coordinator's frozen request snapshot. */
 class SnapshotLegacyDataPort implements LegacyTeamDataReadPort {
-  constructor(private readonly coordinator: Phase2ReadSnapshotCoordinator) {}
+  constructor(private readonly coordinator: TeamLifecycleReadSnapshotCoordinator) {}
 
   async listTeams(context: QueryContext): Promise<unknown> {
     const snapshot = await this.coordinator.readSnapshot(context);
-    if (isSnapshotFailure(snapshot)) throw new Error('phase2-read-snapshot-unavailable');
+    if (isSnapshotFailure(snapshot)) {
+      throw new Error('team-lifecycle-read-snapshot-unavailable');
+    }
     return snapshot.summaries;
   }
 
   async getTeamData(legacyTeamName: string, context: QueryContext): Promise<unknown> {
     const snapshot = await this.coordinator.readSnapshot(context);
-    if (isSnapshotFailure(snapshot)) throw new Error('phase2-read-snapshot-unavailable');
+    if (isSnapshotFailure(snapshot)) {
+      throw new Error('team-lifecycle-read-snapshot-unavailable');
+    }
     const identity = snapshot.identities.find(
       (candidate) => candidate.legacyKey === legacyTeamName
     );
-    if (!identity) throw new Error('phase2-read-team-outside-authority');
+    if (!identity) throw new Error('team-lifecycle-read-team-outside-authority');
     const summary = snapshot.summariesByName.get(legacyTeamName);
-    if (!summary) throw new Error('phase2-read-summary-missing');
+    if (!summary) throw new Error('team-lifecycle-read-summary-missing');
     const config =
       typeof summary.deletedAt === 'string'
         ? Object.freeze({ deletedAt: summary.deletedAt })
@@ -1379,44 +1414,44 @@ class SnapshotLegacyDataPort implements LegacyTeamDataReadPort {
     const warnings =
       summary.partialLaunchFailure === true ? Object.freeze(['degraded']) : Object.freeze([]);
     const runtime = await this.coordinator.readRuntimeState(legacyTeamName, context);
-    if (isRuntimeFailure(runtime)) throw new Error('phase2-read-runtime-unavailable');
+    if (isRuntimeFailure(runtime)) throw new Error('team-lifecycle-read-runtime-unavailable');
     return Object.freeze({ teamName: legacyTeamName, config, warnings, isAlive: runtime.isAlive });
   }
 }
 
 /** Returns only runtime values frozen by the coordinator for this host-owned request context. */
 class SnapshotRuntimeReadPort implements LegacyTeamRuntimeReadPort {
-  constructor(private readonly coordinator: Phase2ReadSnapshotCoordinator) {}
+  constructor(private readonly coordinator: TeamLifecycleReadSnapshotCoordinator) {}
 
   async getRuntimeState(legacyTeamName: string, context: QueryContext): Promise<unknown> {
     const runtime = await this.coordinator.readRuntimeState(legacyTeamName, context);
-    if (isRuntimeFailure(runtime)) throw new Error('phase2-read-runtime-unavailable');
+    if (isRuntimeFailure(runtime)) throw new Error('team-lifecycle-read-runtime-unavailable');
     return runtime;
   }
 
   async getAliveTeams(context: QueryContext): Promise<unknown> {
     const names = await this.coordinator.readAliveNames(context);
-    if (isAliveNamesFailure(names)) throw new Phase2RuntimeEvidenceUnavailableError();
+    if (isAliveNamesFailure(names)) throw new TeamRuntimeEvidenceUnavailableError();
     return names;
   }
 }
 
-export function createPhase2ReadComposition(
-  dependencies: Phase2ReadCompositionDependencies
-): Phase2ReadComposition {
+export function createTeamLifecycleReadComposition(
+  dependencies: TeamLifecycleReadCompositionDependencies
+): TeamLifecycleReadComposition {
   const pageSize = dependencies.pageSize ?? DEFAULT_PAGE_SIZE;
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
-    throw new TypeError('phase2-read-page-size-invalid');
+    throw new TypeError('team-lifecycle-read-page-size-invalid');
   }
   if (typeof dependencies.nowMs !== 'function') {
-    throw new TypeError('phase2-read-clock-invalid');
+    throw new TypeError('team-lifecycle-read-clock-invalid');
   }
 
-  if (!phase2ReadAuthorities.has(dependencies.authority)) {
-    throw new TypeError('phase2-read-authority-invalid');
+  if (!teamLifecycleReadAuthorities.has(dependencies.authority)) {
+    throw new TypeError('team-lifecycle-read-authority-invalid');
   }
   const authority = dependencies.authority;
-  const coordinator = new Phase2ReadSnapshotCoordinator(
+  const coordinator = new TeamLifecycleReadSnapshotCoordinator(
     authority,
     dependencies.teamIdentities,
     dependencies.legacyData,
@@ -1468,10 +1503,10 @@ export function createPhase2ReadComposition(
   });
 }
 
-export function createPhase2ReadHost(
-  composition: Phase2ReadComposition,
-  createContext: (authority: Phase2ReadAuthority, requestSignal: AbortSignal) => QueryContext
-): Phase2ReadHost {
+export function createTeamLifecycleReadHost(
+  composition: TeamLifecycleReadComposition,
+  createContext: (authority: TeamLifecycleReadAuthority, requestSignal: AbortSignal) => QueryContext
+): TeamLifecycleReadHost {
   return Object.freeze({
     async listTeamLifecycle(
       request: unknown,
@@ -1489,21 +1524,25 @@ export function createPhase2ReadHost(
           context
         );
       } catch {
-        return failure('internal', 'unexpected', 'phase2-read.host-unexpected');
+        return failure('internal', 'unexpected', TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS.hostUnexpected);
       }
     },
   });
 }
 
 /** Production-safe placeholder until the app shell owns one unique admitted workspace binding. */
-export function createUnavailablePhase2ReadHost(): Phase2ReadHost {
+export function createUnavailableTeamLifecycleReadHost(): TeamLifecycleReadHost {
   return Object.freeze({
     async listTeamLifecycle(request: unknown): Promise<CanonicalListTeamLifecycleResult> {
       const parsed = parseListTeamLifecycleRequest(request);
       if (!parsed.ok) {
         const code = parsed.error.code;
         if (code === 'not_found' || code === 'unauthenticated') {
-          return failure('internal', 'unexpected', 'phase2-read.request-error-invalid');
+          return failure(
+            'internal',
+            'unexpected',
+            TEAM_LIFECYCLE_READ_DIAGNOSTIC_IDS.requestErrorInvalid
+          );
         }
         return failure(code, parsed.error.reason, parsed.error.diagnosticId);
       }

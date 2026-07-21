@@ -9,10 +9,10 @@ import {
 import { createRuntimeInstanceContext } from '@features/runtime-instance-context';
 import { WorkspaceMountBinding, WorkspaceRegistration } from '@features/workspace-registry';
 import {
-  createPhase2ReadAuthority,
-  createPhase2ReadComposition,
-  createPhase2ReadHost,
-} from '@main/composition/hosted/phase2ReadComposition';
+  createTeamLifecycleReadAuthority,
+  createTeamLifecycleReadComposition,
+  createTeamLifecycleReadHost,
+} from '@main/composition/hosted/teamLifecycleReadComposition';
 import { registerTeamRoutes } from '@main/http/teams';
 import { HttpAPIClient } from '@renderer/api/httpClient';
 import { TeamListView } from '@renderer/components/team/TeamListView';
@@ -84,7 +84,7 @@ function createSandboxHost() {
     health: 'healthy',
     allowedOperations: [],
   });
-  const authority = createPhase2ReadAuthority({
+  const authority = createTeamLifecycleReadAuthority({
     actorId: 'actor_browser-list',
     authorizedScope: 'scope_team-lifecycle.read',
     mountBinding,
@@ -97,7 +97,7 @@ function createSandboxHost() {
   };
   let failReads = false;
   let contextSequence = 0;
-  const composition = createPhase2ReadComposition({
+  const composition = createTeamLifecycleReadComposition({
     authority,
     teamIdentities: gateway,
     legacyData: {
@@ -117,7 +117,7 @@ function createSandboxHost() {
     nowMs: () => NOW_MS,
     pageSize: 1,
   });
-  const host = createPhase2ReadHost(composition, (hostAuthority, signal) =>
+  const host = createTeamLifecycleReadHost(composition, (hostAuthority, signal) =>
     createQueryContext({
       actorId: hostAuthority.actorId,
       sessionId: 'session_browser-list',
@@ -160,7 +160,7 @@ describe('hosted browser team lifecycle list vertical slice', () => {
   it('renders two real Fastify/HttpAPIClient pages and shows a later typed failure', async () => {
     const sandbox = createSandboxHost();
     const app = Fastify();
-    registerTeamRoutes(app, { phase2ReadHost: sandbox.host } as HttpServices);
+    registerTeamRoutes(app, { teamLifecycleReadHost: sandbox.host } as HttpServices);
     await app.ready();
     const routeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);

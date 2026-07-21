@@ -516,7 +516,9 @@ async function invokeIpcWithResult<T>(channel: string, ...args: unknown[]): Prom
   return result.data as T;
 }
 
-function phase2ReadFailure(error: TeamLifecycleReadFailure['error']): TeamLifecycleReadFailure {
+function teamLifecycleReadFailure(
+  error: TeamLifecycleReadFailure['error']
+): TeamLifecycleReadFailure {
   return Object.freeze({
     schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
     kind: 'failure',
@@ -529,16 +531,18 @@ async function invokeListTeamLifecycle(
   requestValue: ListTeamLifecycleRequest
 ): Promise<CanonicalListTeamLifecycleResult> {
   const request = parseListTeamLifecycleRequest(requestValue);
-  if (!request.ok) return phase2ReadFailure(request.error as TeamLifecycleReadFailure['error']);
+  if (!request.ok) {
+    return teamLifecycleReadFailure(request.error as TeamLifecycleReadFailure['error']);
+  }
 
   try {
     const response = await invokeIpcWithResult<unknown>(TEAM_LIST, request.value);
     const parsed = parseCanonicalListTeamLifecycleResult(response);
     return parsed.ok
       ? parsed.value
-      : phase2ReadFailure(parsed.error as TeamLifecycleReadFailure['error']);
+      : teamLifecycleReadFailure(parsed.error as TeamLifecycleReadFailure['error']);
   } catch {
-    return phase2ReadFailure(
+    return teamLifecycleReadFailure(
       createSafeAppError({
         code: 'unavailable',
         reason: 'transport_unavailable',

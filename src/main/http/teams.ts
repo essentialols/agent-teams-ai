@@ -41,7 +41,7 @@ type CreateTeamBody = TeamCreateConfigRequest;
 
 class HttpFeatureUnavailableError extends Error {}
 
-function phase2TransportUnavailable(): TeamLifecycleReadFailure {
+function teamLifecycleReadTransportUnavailable(): TeamLifecycleReadFailure {
   const error = createSafeAppError({ code: 'unavailable', reason: 'transport_unavailable' });
   return Object.freeze({
     schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
@@ -241,8 +241,8 @@ async function getTeamDataWithRuntimeOverlay(
 }
 
 export function registerTeamRoutes(app: FastifyInstance, services: HttpServices): void {
-  const phase2ReadHost = services.phase2ReadHost;
-  if (phase2ReadHost) {
+  const teamLifecycleReadHost = services.teamLifecycleReadHost;
+  if (teamLifecycleReadHost) {
     app.post<{ Body: unknown }>(TEAM_LIFECYCLE_LIST_ROUTE, async (request, reply) => {
       const requestController = new AbortController();
       const abortRequest = () => requestController.abort();
@@ -257,10 +257,10 @@ export function registerTeamRoutes(app: FastifyInstance, services: HttpServices)
       }
       try {
         return reply.send(
-          await phase2ReadHost.listTeamLifecycle(request.body, requestController.signal)
+          await teamLifecycleReadHost.listTeamLifecycle(request.body, requestController.signal)
         );
       } catch {
-        return reply.send(phase2TransportUnavailable());
+        return reply.send(teamLifecycleReadTransportUnavailable());
       } finally {
         rawRequest.removeListener('aborted', abortRequest);
         requestSocket.removeListener('close', abortRequest);

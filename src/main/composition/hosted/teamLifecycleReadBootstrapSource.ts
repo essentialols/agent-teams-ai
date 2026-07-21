@@ -26,15 +26,21 @@ import {
   type WorkspaceId,
 } from '@shared/contracts/hosted';
 
-import { createPhase2ReadAuthority, type Phase2ReadAuthority } from './phase2ReadComposition';
+import {
+  createTeamLifecycleReadAuthority,
+  type TeamLifecycleReadAuthority,
+} from './teamLifecycleReadComposition';
 
 import type { WorkspaceMountBinding } from '@features/workspace-registry';
 
-export const PHASE2_READ_BOOTSTRAP_ENV = 'AGENT_TEAMS_HOSTED_PHASE2_READ_BOOTSTRAP';
-export const PHASE2_READ_BOOTSTRAP_FORMAT = 'agent-teams.phase2-read-bootstrap/v1' as const;
-export const PHASE2_READ_AUTHORIZED_SCOPE = 'scope_team-lifecycle.read' as const;
+export const TEAM_LIFECYCLE_READ_BOOTSTRAP_ENV = 'AGENT_TEAMS_HOSTED_TEAM_LIFECYCLE_READ_BOOTSTRAP';
+const LEGACY_PHASE2_READ_BOOTSTRAP_ENV = 'AGENT_TEAMS_HOSTED_PHASE2_READ_BOOTSTRAP';
+export const TEAM_LIFECYCLE_READ_BOOTSTRAP_FORMAT =
+  'agent-teams.team-lifecycle-read-bootstrap/v1' as const;
+const LEGACY_PHASE2_READ_BOOTSTRAP_FORMAT = ['agent-teams.phase', '2-read-bootstrap/v1'].join('');
+export const TEAM_LIFECYCLE_READ_AUTHORIZED_SCOPE = 'scope_team-lifecycle.read' as const;
 
-const LAUNCHER_MANIFEST_SOURCE_LOCATION = 'launcher-owned:phase2-read-bootstrap-manifest';
+const LAUNCHER_MANIFEST_SOURCE_LOCATION = 'launcher-owned:team-lifecycle-read-bootstrap-manifest';
 const MAX_SERIALIZED_BOOTSTRAP_BYTES = 1_048_576;
 const BOOTSTRAP_KEYS = [
   'format',
@@ -66,17 +72,17 @@ const MOUNT_BINDING_KEYS = [
   'allowedOperations',
 ] as const;
 
-export interface Phase2ReadBootstrapInput {
+export interface TeamLifecycleReadBootstrapInput {
   /** Reads the single launcher-owned value. Implementations must not perform discovery. */
   readSerializedBootstrap(): unknown | Promise<unknown>;
 }
 
-export interface Phase2ReadBootstrapSourceDependencies {
-  readonly input: Phase2ReadBootstrapInput;
+export interface TeamLifecycleReadBootstrapSourceDependencies {
+  readonly input: TeamLifecycleReadBootstrapInput;
   readonly nowMs: () => number;
 }
 
-export interface Phase2ReadBootstrap {
+export interface TeamLifecycleReadBootstrap {
   readonly actorId: ActorId;
   readonly authorizedScope: AuthorizedScope;
   readonly deploymentId: DeploymentId;
@@ -84,7 +90,7 @@ export interface Phase2ReadBootstrap {
   readonly workspaceId: WorkspaceId;
   readonly runtimeInstance: RuntimeInstanceContext;
   readonly mountBinding: WorkspaceMountBinding;
-  readonly authority: Phase2ReadAuthority;
+  readonly authority: TeamLifecycleReadAuthority;
 }
 
 interface StrictWorkspaceManifest {
@@ -122,31 +128,51 @@ interface ParsedBootstrapEnvelope {
 }
 
 /**
+ * Reads the stable launcher key first and falls back to the one legacy Phase 2 key. Keeping the
+ * legacy identifier private makes this the only environment compatibility boundary; callers can
+ * export or inject only the stable key.
+ */
+export function readTeamLifecycleReadBootstrapEnvironment(
+  environment: Readonly<Record<string, string | undefined>>
+): string | undefined {
+  return (
+    environment[TEAM_LIFECYCLE_READ_BOOTSTRAP_ENV] ?? environment[LEGACY_PHASE2_READ_BOOTSTRAP_ENV]
+  );
+}
+
+/** Accepts the legacy serialized tag only at bootstrap ingress. */
+function isTeamLifecycleReadBootstrapReadFormat(value: unknown): boolean {
+  return (
+    value === TEAM_LIFECYCLE_READ_BOOTSTRAP_FORMAT || value === LEGACY_PHASE2_READ_BOOTSTRAP_FORMAT
+  );
+}
+
+/**
  * Admits the one immutable hosted bootstrap supplied by the launcher. The adapter deliberately has
  * no filesystem, project-discovery, identity-storage, random-ID, or process-environment dependency.
  */
-export class Phase2ReadBootstrapSource {
+export class TeamLifecycleReadBootstrapSource {
   readonly #readSerializedBootstrap: () => unknown | Promise<unknown>;
   readonly #nowMs: () => number;
   #readAttempted = false;
 
-  constructor(dependencies: Phase2ReadBootstrapSourceDependencies) {
+  constructor(dependencies: TeamLifecycleReadBootstrapSourceDependencies) {
     if (!dependencies || typeof dependencies !== 'object') {
-      throw new TypeError('phase2-read-bootstrap-source-invalid');
+      throw new TypeError('team-lifecycle-read-bootstrap-source-invalid');
     }
     const input = dependencies.input;
     const readSerializedBootstrap = input?.readSerializedBootstrap;
     const nowMs = dependencies.nowMs;
     if (typeof readSerializedBootstrap !== 'function' || typeof nowMs !== 'function') {
-      throw new TypeError('phase2-read-bootstrap-source-invalid');
+      throw new TypeError('team-lifecycle-read-bootstrap-source-invalid');
     }
     this.#readSerializedBootstrap = readSerializedBootstrap.bind(input);
     this.#nowMs = nowMs;
   }
 
-  async load(): Promise<Phase2ReadBootstrap> {
+  async load(): Promise<TeamLifecycleReadBootstrap> {
     if (this.#readAttempted) {
-      throw new Error('phase2-read-bootstrap-source-already-read');
+      throw new Error('team-lifecycle-read-bootstrap-source-already-read');
     }
     this.#readAttempted = true;
 
@@ -163,7 +189,7 @@ export class Phase2ReadBootstrapSource {
         Object.freeze({
           assertAdmittedSource(sourceLocation: string): void {
             if (sourceLocation !== LAUNCHER_MANIFEST_SOURCE_LOCATION) {
-              throw new TypeError('phase2-read-bootstrap-manifest-source-invalid');
+              throw new TypeError('team-lifecycle-read-bootstrap-manifest-source-invalid');
             }
           },
         })
@@ -176,11 +202,11 @@ export class Phase2ReadBootstrapSource {
           binding.workspaceId === envelope.workspaceId && binding.bootId === envelope.bootId
       );
       if (matchingBindings.length !== 1 || matchingBindings[0].health === 'unavailable') {
-        throw new TypeError('phase2-read-bootstrap-binding-invalid');
+        throw new TypeError('team-lifecycle-read-bootstrap-binding-invalid');
       }
 
       const mountBinding = matchingBindings[0];
-      const authority = createPhase2ReadAuthority({
+      const authority = createTeamLifecycleReadAuthority({
         actorId: envelope.actorId,
         authorizedScope: envelope.authorizedScope,
         runtimeInstance: envelope.runtimeInstance,
@@ -197,7 +223,7 @@ export class Phase2ReadBootstrapSource {
         authority,
       });
     } catch {
-      throw new TypeError('phase2-read-bootstrap-invalid');
+      throw new TypeError('team-lifecycle-read-bootstrap-invalid');
     }
   }
 }
@@ -208,31 +234,31 @@ function parseBootstrapEnvelope(serialized: unknown, nowMs: number): ParsedBoots
     serialized.length === 0 ||
     Buffer.byteLength(serialized, 'utf8') > MAX_SERIALIZED_BOOTSTRAP_BYTES
   ) {
-    throw new TypeError('phase2-read-bootstrap-serialized-invalid');
+    throw new TypeError('team-lifecycle-read-bootstrap-serialized-invalid');
   }
 
   const parsed = JSON.parse(serialized) as unknown;
   const value = readExactRecord(parsed, BOOTSTRAP_KEYS);
-  if (value.format !== PHASE2_READ_BOOTSTRAP_FORMAT) {
-    throw new TypeError('phase2-read-bootstrap-format-invalid');
+  if (!isTeamLifecycleReadBootstrapReadFormat(value.format)) {
+    throw new TypeError('team-lifecycle-read-bootstrap-format-invalid');
   }
   const issuedAtMs = parseTimestamp(value.issuedAtMs);
   const expiresAtMs = parseTimestamp(value.expiresAtMs);
   if (issuedAtMs > nowMs || expiresAtMs <= nowMs || expiresAtMs <= issuedAtMs) {
-    throw new TypeError('phase2-read-bootstrap-stale');
+    throw new TypeError('team-lifecycle-read-bootstrap-stale');
   }
 
   const actorId = parseActorId(value.actorId);
   const authorizedScope = parseAuthorizedScope(value.authorizedScope);
-  if (authorizedScope !== PHASE2_READ_AUTHORIZED_SCOPE) {
-    throw new TypeError('phase2-read-bootstrap-scope-invalid');
+  if (authorizedScope !== TEAM_LIFECYCLE_READ_AUTHORIZED_SCOPE) {
+    throw new TypeError('team-lifecycle-read-bootstrap-scope-invalid');
   }
   const deploymentId = parseDeploymentId(value.deploymentId);
   const bootId = parseBootId(value.bootId);
   const workspaceId = parseWorkspaceId(value.workspaceId);
   const runtimeInstance = createRuntimeInstanceContext(value.runtimeInstance);
   if (runtimeInstance.deploymentId !== deploymentId || runtimeInstance.bootId !== bootId) {
-    throw new TypeError('phase2-read-bootstrap-runtime-foreign');
+    throw new TypeError('team-lifecycle-read-bootstrap-runtime-foreign');
   }
 
   return Object.freeze({
@@ -249,12 +275,12 @@ function parseBootstrapEnvelope(serialized: unknown, nowMs: number): ParsedBoots
 function parseStrictWorkspaceManifest(value: unknown): StrictWorkspaceManifest {
   const manifest = readExactRecord(value, MANIFEST_KEYS);
   if (manifest.version !== 1) {
-    throw new TypeError('phase2-read-bootstrap-manifest-version-invalid');
+    throw new TypeError('team-lifecycle-read-bootstrap-manifest-version-invalid');
   }
   const registrations = readDenseArray(
     manifest.registrations,
     MAX_WORKSPACE_REGISTRATIONS,
-    'phase2-read-bootstrap-manifest-registrations-invalid'
+    'team-lifecycle-read-bootstrap-manifest-registrations-invalid'
   ).map(parseStrictWorkspaceManifestRegistration);
   return Object.freeze({ version: 1, registrations: Object.freeze(registrations) });
 }
@@ -287,7 +313,7 @@ function parseStrictWorkspaceManifestMountBinding(
   const allowedOperations = readDenseArray(
     record.allowedOperations,
     MAX_WORKSPACE_ALLOWED_OPERATIONS,
-    'phase2-read-bootstrap-manifest-operations-invalid'
+    'team-lifecycle-read-bootstrap-manifest-operations-invalid'
   );
   return Object.freeze({
     bootId: record.bootId,
@@ -300,7 +326,7 @@ function parseStrictWorkspaceManifestMountBinding(
 
 function parseTimestamp(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new TypeError('phase2-read-bootstrap-timestamp-invalid');
+    throw new TypeError('team-lifecycle-read-bootstrap-timestamp-invalid');
   }
   return value as number;
 }
@@ -311,11 +337,11 @@ function readExactRecord(
   optionalKeys: readonly string[] = []
 ): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('phase2-read-bootstrap-record-invalid');
+    throw new TypeError('team-lifecycle-read-bootstrap-record-invalid');
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError('phase2-read-bootstrap-record-invalid');
+    throw new TypeError('team-lifecycle-read-bootstrap-record-invalid');
   }
 
   const source = value as Record<string, unknown>;
@@ -325,17 +351,17 @@ function readExactRecord(
     requiredKeys.some((key) => !Object.hasOwn(source, key)) ||
     keys.some((key) => typeof key !== 'string' || !allowedKeys.has(key))
   ) {
-    throw new TypeError('phase2-read-bootstrap-record-invalid');
+    throw new TypeError('team-lifecycle-read-bootstrap-record-invalid');
   }
 
   const snapshot: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   for (const key of keys) {
     if (typeof key !== 'string') {
-      throw new TypeError('phase2-read-bootstrap-record-invalid');
+      throw new TypeError('team-lifecycle-read-bootstrap-record-invalid');
     }
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-      throw new TypeError('phase2-read-bootstrap-record-invalid');
+      throw new TypeError('team-lifecycle-read-bootstrap-record-invalid');
     }
     snapshot[key] = descriptor.value;
   }

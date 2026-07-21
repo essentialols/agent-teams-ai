@@ -12,13 +12,13 @@ import {
 } from '@features/team-lifecycle/contracts';
 import { WorkspaceMountBinding, WorkspaceRegistration } from '@features/workspace-registry';
 import {
-  createPhase2ReadAuthority,
-  createPhase2ReadComposition,
-  createPhase2ReadHost,
-  type Phase2ReadAuthority,
-} from '@main/composition/hosted/phase2ReadComposition';
+  createTeamLifecycleReadAuthority,
+  createTeamLifecycleReadComposition,
+  createTeamLifecycleReadHost,
+  type TeamLifecycleReadAuthority,
+} from '@main/composition/hosted/teamLifecycleReadComposition';
 import { registerTeamRoutes } from '@main/http/teams';
-import { handlePhase2ListTeamLifecycle, initializePhase2TeamReadHandler } from '@main/ipc/teams';
+import { handleListTeamLifecycle, initializeTeamLifecycleReadHandler } from '@main/ipc/teams';
 import { HttpAPIClient } from '@renderer/api/httpClient';
 import {
   createQueryContext,
@@ -55,15 +55,15 @@ interface ReadAuthorityOverrides {
   readonly bootId?: string;
 }
 
-function readAuthority(overrides: ReadAuthorityOverrides = {}): Phase2ReadAuthority {
+function readAuthority(overrides: ReadAuthorityOverrides = {}): TeamLifecycleReadAuthority {
   const workspaceId = overrides.workspaceId ?? WORKSPACE_ID;
   const workspaceGeneration = overrides.workspaceGeneration ?? 1;
-  const bootId = overrides.bootId ?? 'boot_phase2-host';
+  const bootId = overrides.bootId ?? 'boot_team-lifecycle-read-host';
   const registration = new WorkspaceRegistration({
     schemaVersion: 1,
     registrationKey: `registration-${workspaceId}`,
     workspaceId,
-    displayName: 'Phase 2 test workspace',
+    displayName: 'Team lifecycle read test workspace',
     registrationRevision: 1,
     declaredRootHash: '9'.repeat(64),
     enabled: true,
@@ -79,7 +79,7 @@ function readAuthority(overrides: ReadAuthorityOverrides = {}): Phase2ReadAuthor
     allowedOperations: [],
   });
   const runtimeInstance = createRuntimeInstanceContext({
-    deploymentId: overrides.deploymentId ?? 'deployment_phase2-host',
+    deploymentId: overrides.deploymentId ?? 'deployment_team-lifecycle-read-host',
     bootId,
     claudeRoot: { kind: 'claude', reference: 'runtime://claude' },
     appDataRoot: { kind: 'app-data', reference: 'runtime://app-data' },
@@ -87,8 +87,8 @@ function readAuthority(overrides: ReadAuthorityOverrides = {}): Phase2ReadAuthor
     tempRoot: { kind: 'temp', reference: 'runtime://temp' },
     logsRoot: { kind: 'logs', reference: 'runtime://logs' },
   });
-  return createPhase2ReadAuthority({
-    actorId: overrides.actorId ?? 'actor_phase2-host',
+  return createTeamLifecycleReadAuthority({
+    actorId: overrides.actorId ?? 'actor_team-lifecycle-read-host',
     authorizedScope: overrides.authorizedScope ?? 'scope_team-lifecycle.read',
     mountBinding,
     runtimeInstance,
@@ -121,16 +121,16 @@ function identity(
 }
 
 function context(
-  authority: Phase2ReadAuthority,
+  authority: TeamLifecycleReadAuthority,
   sequence: number,
   overrides: Partial<Parameters<typeof createQueryContext>[0] & Record<string, unknown>> = {}
 ): QueryContext {
   return createQueryContext({
     actorId: authority.actorId,
-    sessionId: 'session_phase2-host',
+    sessionId: 'session_team-lifecycle-read-host',
     deploymentId: authority.deploymentId,
     bootId: authority.bootId,
-    requestId: `request_phase2-${sequence}`,
+    requestId: `request_team-lifecycle-read-${sequence}`,
     authorizedScope: authority.authorizedScope,
     deadlineAtMs: NOW_MS + 10_000,
     signal: new AbortController().signal,
@@ -141,7 +141,7 @@ function context(
 interface HarnessOptions {
   readonly identities: readonly TeamIdentityRecord[] | null;
   readonly summaries?: readonly Record<string, unknown>[];
-  readonly authority?: Phase2ReadAuthority;
+  readonly authority?: TeamLifecycleReadAuthority;
   readonly contextOverrides?: Readonly<Record<string, unknown>>;
   readonly pageSize?: number;
   readonly beforeSummaryRead?: () => void;
@@ -169,7 +169,7 @@ function createHarness(options: HarnessOptions) {
   const gateway: TeamIdentityReadGateway | null = identities
     ? { listTeamIdentities, getTeamIdentity }
     : null;
-  const composition = createPhase2ReadComposition({
+  const composition = createTeamLifecycleReadComposition({
     authority,
     teamIdentities: gateway,
     legacyData: {
@@ -190,7 +190,7 @@ function createHarness(options: HarnessOptions) {
     nowMs: () => NOW_MS,
     pageSize: options.pageSize,
   });
-  const host = createPhase2ReadHost(composition, (hostAuthority) =>
+  const host = createTeamLifecycleReadHost(composition, (hostAuthority) =>
     context(hostAuthority, ++contextSequence, options.contextOverrides)
   );
   return {
@@ -214,7 +214,7 @@ async function readOverHttp(
   payload: unknown
 ): Promise<CanonicalListTeamLifecycleResult> {
   const app = Fastify();
-  registerTeamRoutes(app, { phase2ReadHost: host } as HttpServices);
+  registerTeamRoutes(app, { teamLifecycleReadHost: host } as HttpServices);
   await app.ready();
   try {
     const response = await app.inject({
@@ -229,12 +229,12 @@ async function readOverHttp(
   }
 }
 
-describe('Phase 2 IPC/HTTP team lifecycle read conformance', () => {
+describe('IPC/HTTP team lifecycle read conformance', () => {
   it('returns deeply equal canonical envelopes over IPC and HTTP with host-owned contexts', async () => {
     const harness = createHarness({ identities: [identity('active')] });
-    initializePhase2TeamReadHandler(harness.host);
+    initializeTeamLifecycleReadHandler(harness.host);
 
-    const ipc = await handlePhase2ListTeamLifecycle(request());
+    const ipc = await handleListTeamLifecycle(request());
     const http = await readOverHttp(harness.host, request());
 
     expect(ipc).toEqual(http);
@@ -293,11 +293,11 @@ describe('Phase 2 IPC/HTTP team lifecycle read conformance', () => {
     );
 
     try {
-      const client = new HttpAPIClient('http://phase2.test');
+      const client = new HttpAPIClient('http://team-lifecycle-read.test');
       await expect(client.listTeamLifecycle(request())).resolves.toEqual(canonical);
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
-        `http://phase2.test${TEAM_LIFECYCLE_LIST_ROUTE}`,
+        `http://team-lifecycle-read.test${TEAM_LIFECYCLE_LIST_ROUTE}`,
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify(request()),
@@ -319,10 +319,10 @@ describe('Phase 2 IPC/HTTP team lifecycle read conformance', () => {
 
   it('rejects wire-supplied context identically without exposing it to legacy reads', async () => {
     const harness = createHarness({ identities: [identity('active')] });
-    initializePhase2TeamReadHandler(harness.host);
+    initializeTeamLifecycleReadHandler(harness.host);
     const tamperedRequest = { ...request(), actorId: 'actor_attacker' };
 
-    const ipc = await handlePhase2ListTeamLifecycle(tamperedRequest);
+    const ipc = await handleListTeamLifecycle(tamperedRequest);
     const http = await readOverHttp(harness.host, tamperedRequest);
 
     expect(ipc).toEqual(http);

@@ -140,11 +140,11 @@ import {
   type CanonicalListTeamLifecycleResult,
   TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
 } from '../../../src/features/team-lifecycle';
-import { createUnavailablePhase2ReadHost } from '../../../src/main/composition/hosted/phase2ReadComposition';
+import { createUnavailableTeamLifecycleReadHost } from '../../../src/main/composition/hosted/teamLifecycleReadComposition';
 import {
-  handlePhase2ListTeamLifecycle,
-  initializePhase2TeamReadHandler,
+  handleListTeamLifecycle,
   initializeTeamHandlers,
+  initializeTeamLifecycleReadHandler,
   registerTeamHandlers,
   removeTeamHandlers,
 } from '../../../src/main/ipc/teams';
@@ -667,7 +667,7 @@ describe('ipc teams handlers', () => {
     service.getAllTasks.mockReset();
     service.restoreMember.mockReset();
     service.listTeams.mockResolvedValue([{ teamName: 'my-team', displayName: 'My Team' }]);
-    initializePhase2TeamReadHandler({
+    initializeTeamLifecycleReadHandler({
       listTeamLifecycle: vi.fn(() =>
         Promise.resolve({
           schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
@@ -764,7 +764,7 @@ describe('ipc teams handlers', () => {
     expect(new Set(handlers.keys())).toEqual(new Set(TEAM_HANDLER_KEYS));
   });
 
-  it('preserves legacy TEAM_LIST and returns contained canonical Phase 2 envelopes', async () => {
+  it('preserves legacy TEAM_LIST and returns contained canonical read envelopes', async () => {
     const success = {
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       kind: 'success',
@@ -781,21 +781,21 @@ describe('ipc teams handlers', () => {
       nextCursor: null,
     } satisfies CanonicalListTeamLifecycleResult;
     const listTeamLifecycle = vi.fn(() => Promise.resolve(success));
-    initializePhase2TeamReadHandler({ listTeamLifecycle });
+    initializeTeamLifecycleReadHandler({ listTeamLifecycle });
 
     const legacy = await handlers.get(TEAM_LIST)!({} as never);
     expect(legacy).toMatchObject({ success: true, data: [{ teamName: 'my-team' }] });
 
-    const phase2 = await handlers.get(TEAM_LIST)!({} as never, {
+    const teamLifecycleRead = await handlers.get(TEAM_LIST)!({} as never, {
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       cursor: null,
       expectedRevision: null,
     });
-    expect(phase2).toEqual(success);
+    expect(teamLifecycleRead).toEqual(success);
     expect(listTeamLifecycle).toHaveBeenCalledTimes(1);
 
     listTeamLifecycle.mockRejectedValueOnce(new Error('private sqlite diagnostic'));
-    const failure = await handlePhase2ListTeamLifecycle({
+    const failure = await handleListTeamLifecycle({
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       cursor: null,
       expectedRevision: null,
@@ -810,12 +810,12 @@ describe('ipc teams handlers', () => {
   });
 
   it('keeps production legacy TEAM_LIST functional when canonical workspace authority is unavailable', async () => {
-    initializePhase2TeamReadHandler(createUnavailablePhase2ReadHost());
+    initializeTeamLifecycleReadHandler(createUnavailableTeamLifecycleReadHost());
 
     const legacy = await handlers.get(TEAM_LIST)!({} as never);
     expect(legacy).toMatchObject({ success: true, data: [{ teamName: 'my-team' }] });
 
-    const canonical = await handlePhase2ListTeamLifecycle({
+    const canonical = await handleListTeamLifecycle({
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       cursor: null,
       expectedRevision: null,

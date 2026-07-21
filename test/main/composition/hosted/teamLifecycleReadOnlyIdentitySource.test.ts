@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { TEAM_IDENTITY_STORAGE_MIGRATION_STATEMENTS } from '@features/internal-storage/main/infrastructure/worker/teamIdentityStorageSchema';
-import { createPhase2ReadOnlyIdentitySource } from '@main/composition/hosted/phase2ReadOnlyIdentitySource';
+import { createTeamLifecycleReadOnlyIdentitySource } from '@main/composition/hosted/teamLifecycleReadOnlyIdentitySource';
 import { parseTeamId } from '@shared/contracts/hosted';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -44,7 +44,7 @@ async function fixture(
   readonly appDataRoot: string;
   readonly databasePath: string;
 }> {
-  const appDataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'phase2-read-identity-'));
+  const appDataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-lifecycle-read-identity-'));
   roots.push(appDataRoot);
   const storagePath = path.join(appDataRoot, 'storage');
   await fs.mkdir(storagePath);
@@ -112,10 +112,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
-describe('Phase 2 read-only identity source', () => {
+describe('team lifecycle read-only identity source', () => {
   it('has no worker, database-creation, migration, recovery, cleanup, or mutation gateway', async () => {
     const source = await fs.readFile(
-      'src/main/composition/hosted/phase2ReadOnlyIdentitySource.ts',
+      'src/main/composition/hosted/teamLifecycleReadOnlyIdentitySource.ts',
       'utf8'
     );
 
@@ -134,7 +134,7 @@ describe('Phase 2 read-only identity source', () => {
     const beforeEntries = await fs.readdir(path.dirname(databasePath));
     const beforeStat = await fs.stat(databasePath);
 
-    const source = await createPhase2ReadOnlyIdentitySource({ appDataRoot });
+    const source = await createTeamLifecycleReadOnlyIdentitySource({ appDataRoot });
 
     expect(source).not.toBeNull();
     await expect(source!.listTeamIdentities()).resolves.toMatchObject([
@@ -155,14 +155,18 @@ describe('Phase 2 read-only identity source', () => {
   it('accepts the complete canonical tables, indexes, constraints, and triggers', async () => {
     const { appDataRoot } = await fixture();
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.not.toBeNull();
+    await expect(
+      createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })
+    ).resolves.not.toBeNull();
   });
 
   it('returns unavailable for missing storage without creating the storage directory', async () => {
-    const appDataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'phase2-read-identity-missing-'));
+    const appDataRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'team-lifecycle-read-identity-missing-')
+    );
     roots.push(appDataRoot);
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
     await expect(fs.lstat(path.join(appDataRoot, 'storage'))).rejects.toMatchObject({
       code: 'ENOENT',
     });
@@ -172,7 +176,7 @@ describe('Phase 2 read-only identity source', () => {
     const { appDataRoot, databasePath } = await fixture({ incompatibleVersion: true });
     const before = await fs.readFile(databasePath);
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
     expect(await fs.readFile(databasePath)).toEqual(before);
   });
 
@@ -181,7 +185,7 @@ describe('Phase 2 read-only identity source', () => {
     const sidecarPath = `${databasePath}-wal`;
     await fs.writeFile(sidecarPath, 'uncheckpointed');
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
     await expect(fs.readFile(sidecarPath, 'utf8')).resolves.toBe('uncheckpointed');
   });
 
@@ -193,7 +197,7 @@ describe('Phase 2 read-only identity source', () => {
     database.exec(TEAM_IDENTITY_STORAGE_MIGRATION_STATEMENTS[11]);
     database.close();
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 
   it('returns unavailable when an adoption intent checksum is tampered', async () => {
@@ -204,7 +208,7 @@ describe('Phase 2 read-only identity source', () => {
     database.exec(TEAM_IDENTITY_STORAGE_MIGRATION_STATEMENTS[14]);
     database.close();
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 
   it.each([
@@ -216,13 +220,13 @@ describe('Phase 2 read-only identity source', () => {
     database.exec(mutation);
     database.close();
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 
   it('returns unavailable when a canonical table constraint changes', async () => {
     const { appDataRoot } = await fixture({ alteredConstraint: true });
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 
   it('returns unavailable when expected identity checksums are reused across intents', async () => {
@@ -280,7 +284,7 @@ describe('Phase 2 read-only identity source', () => {
       );
     database.close();
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 
   it('returns unavailable for an unrecognized identity schema shape', async () => {
@@ -289,7 +293,7 @@ describe('Phase 2 read-only identity source', () => {
     database.exec('ALTER TABLE team_identity_records ADD COLUMN unrecognized TEXT');
     database.close();
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 
   it.runIf(process.platform !== 'win32')('rejects a symlinked database path', async () => {
@@ -298,6 +302,6 @@ describe('Phase 2 read-only identity source', () => {
     await fs.rename(databasePath, targetPath);
     await fs.symlink(targetPath, databasePath);
 
-    await expect(createPhase2ReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
+    await expect(createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })).resolves.toBeNull();
   });
 });

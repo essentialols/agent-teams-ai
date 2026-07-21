@@ -15,14 +15,14 @@ import {
 } from '@features/team-lifecycle/contracts';
 import { WorkspaceMountBinding, WorkspaceRegistration } from '@features/workspace-registry';
 import {
-  createMountBindingScopedPhase2ReadPorts,
-  createPhase2ReadAuthority,
-  createPhase2ReadComposition,
-  createPhase2ReadHost,
-  createUnavailablePhase2ReadHost,
-  type Phase2ReadAuthority,
-  Phase2ReadSnapshotCoordinator,
-} from '@main/composition/hosted/phase2ReadComposition';
+  createMountBindingScopedTeamLifecycleReadPorts,
+  createTeamLifecycleReadAuthority,
+  createTeamLifecycleReadComposition,
+  createTeamLifecycleReadHost,
+  createUnavailableTeamLifecycleReadHost,
+  type TeamLifecycleReadAuthority,
+  TeamLifecycleReadSnapshotCoordinator,
+} from '@main/composition/hosted/teamLifecycleReadComposition';
 import {
   createQueryContext,
   parseBootId,
@@ -54,15 +54,15 @@ interface AuthorityOverrides {
   readonly bootId?: string;
 }
 
-function authority(overrides: AuthorityOverrides = {}): Phase2ReadAuthority {
+function authority(overrides: AuthorityOverrides = {}): TeamLifecycleReadAuthority {
   const workspaceId = overrides.workspaceId ?? WORKSPACE_ID;
   const workspaceGeneration = overrides.workspaceGeneration ?? 1;
-  const bootId = overrides.bootId ?? 'boot_phase2-composition';
+  const bootId = overrides.bootId ?? 'boot_team-lifecycle-read-composition';
   const registration = new WorkspaceRegistration({
     schemaVersion: 1,
     registrationKey: `registration-${workspaceId}`,
     workspaceId,
-    displayName: 'Phase 2 composition test',
+    displayName: 'Team lifecycle read composition test',
     registrationRevision: 1,
     declaredRootHash: '3'.repeat(64),
     enabled: true,
@@ -78,7 +78,7 @@ function authority(overrides: AuthorityOverrides = {}): Phase2ReadAuthority {
     allowedOperations: [],
   });
   const runtimeInstance = createRuntimeInstanceContext({
-    deploymentId: overrides.deploymentId ?? 'deployment_phase2-composition',
+    deploymentId: overrides.deploymentId ?? 'deployment_team-lifecycle-read-composition',
     bootId,
     claudeRoot: { kind: 'claude', reference: 'runtime://claude' },
     appDataRoot: { kind: 'app-data', reference: 'runtime://app-data' },
@@ -86,8 +86,8 @@ function authority(overrides: AuthorityOverrides = {}): Phase2ReadAuthority {
     tempRoot: { kind: 'temp', reference: 'runtime://temp' },
     logsRoot: { kind: 'logs', reference: 'runtime://logs' },
   });
-  return createPhase2ReadAuthority({
-    actorId: overrides.actorId ?? 'actor_phase2-composition',
+  return createTeamLifecycleReadAuthority({
+    actorId: overrides.actorId ?? 'actor_team-lifecycle-read-composition',
     authorizedScope: overrides.authorizedScope ?? 'scope_team-lifecycle.read',
     mountBinding,
     runtimeInstance,
@@ -129,16 +129,16 @@ function listRequest(overrides: Partial<ListTeamLifecycleRequest> = {}): ListTea
 }
 
 function boundaryContext(
-  readAuthority: Phase2ReadAuthority,
+  readAuthority: TeamLifecycleReadAuthority,
   signal: AbortSignal,
   deadlineAtMs = NOW_MS + 10_000
 ): QueryContext {
   return createQueryContext({
     actorId: readAuthority.actorId,
-    sessionId: 'session_phase2-boundary',
+    sessionId: 'session_team-lifecycle-read-boundary',
     deploymentId: readAuthority.deploymentId,
     bootId: readAuthority.bootId,
-    requestId: `request_phase2-boundary-${++boundaryRequestSequence}`,
+    requestId: `request_team-lifecycle-read-boundary-${++boundaryRequestSequence}`,
     authorizedScope: readAuthority.authorizedScope,
     deadlineAtMs,
     signal,
@@ -146,7 +146,7 @@ function boundaryContext(
 }
 
 interface HarnessOptions {
-  readonly authority?: Phase2ReadAuthority;
+  readonly authority?: TeamLifecycleReadAuthority;
   readonly identities: readonly TeamIdentityRecord[] | null;
   readonly summaries?: readonly Record<string, unknown>[];
   readonly pageSize?: number;
@@ -189,7 +189,7 @@ function createHarness(options: HarnessOptions) {
     options.beforeAliveRead?.();
     return Promise.resolve(runtimeAlive ? ['team-a'] : []);
   });
-  const composition = createPhase2ReadComposition({
+  const composition = createTeamLifecycleReadComposition({
     authority: readAuthority,
     teamIdentities: gateway,
     legacyData: {
@@ -204,20 +204,20 @@ function createHarness(options: HarnessOptions) {
     pageSize: options.pageSize,
   });
   const createContext = (
-    _authority: Phase2ReadAuthority = readAuthority,
+    _authority: TeamLifecycleReadAuthority = readAuthority,
     requestSignal: AbortSignal = new AbortController().signal
   ): QueryContext =>
     createQueryContext({
       actorId: readAuthority.actorId,
-      sessionId: 'session_phase2-composition',
+      sessionId: 'session_team-lifecycle-read-composition',
       deploymentId: readAuthority.deploymentId,
       bootId: readAuthority.bootId,
-      requestId: `request_phase2-composition-${++contextSequence}`,
+      requestId: `request_team-lifecycle-read-composition-${++contextSequence}`,
       authorizedScope: readAuthority.authorizedScope,
       deadlineAtMs: NOW_MS + 10_000,
       signal: requestSignal,
     });
-  const host = createPhase2ReadHost(composition, createContext);
+  const host = createTeamLifecycleReadHost(composition, createContext);
   return {
     authority: readAuthority,
     composition,
@@ -240,9 +240,9 @@ function createHarness(options: HarnessOptions) {
   };
 }
 
-describe('phase2ReadComposition semantic isolation', () => {
+describe('teamLifecycleReadComposition semantic isolation', () => {
   it('keeps the fail-closed production host strict before reporting authority unavailable', async () => {
-    const host = createUnavailablePhase2ReadHost();
+    const host = createUnavailableTeamLifecycleReadHost();
 
     await expect(
       host.listTeamLifecycle({ ...listRequest(), actorId: 'actor_wire' })
@@ -289,6 +289,7 @@ describe('phase2ReadComposition semantic isolation', () => {
     if (first.kind !== 'success' || first.nextCursor === null) {
       throw new Error('expected source cursor');
     }
+    expect(first.nextCursor).toMatch(/^cursor_team_lifecycle_read_/);
 
     const targetAuthority = authority(overrides);
     const targetBinding = {
@@ -504,11 +505,11 @@ describe('phase2ReadComposition semantic isolation', () => {
   });
 });
 
-describe('phase2ReadComposition coordinator cancellation boundaries', () => {
+describe('teamLifecycleReadComposition coordinator cancellation boundaries', () => {
   it('rechecks cancellation immediately after failed identity port I/O', async () => {
     const controller = new AbortController();
     const readAuthority = authority();
-    const coordinator = new Phase2ReadSnapshotCoordinator(
+    const coordinator = new TeamLifecycleReadSnapshotCoordinator(
       readAuthority,
       {
         listTeamIdentities: async () => {
@@ -658,7 +659,7 @@ describe('phase2ReadComposition coordinator cancellation boundaries', () => {
       Promise.resolve({ teamName: team.legacyKey, isAlive: false })
     );
     const getAliveTeams = vi.fn(() => Promise.resolve([]));
-    const coordinator = new Phase2ReadSnapshotCoordinator(
+    const coordinator = new TeamLifecycleReadSnapshotCoordinator(
       readAuthority,
       { listTeamIdentities, getTeamIdentity: vi.fn(() => Promise.resolve(null)) },
       { listTeams, getTeamData: vi.fn(() => Promise.resolve(null)) },
@@ -758,11 +759,14 @@ describe('mount-binding-scoped hosted read ports', () => {
     const runtimeInstance = createRuntimeInstanceContext({
       deploymentId: readAuthority.deploymentId,
       bootId: readAuthority.bootId,
-      claudeRoot: { kind: 'claude', reference: '/runtime/phase2/claude' },
-      appDataRoot: { kind: 'app-data', reference: '/runtime/phase2/app-data' },
-      workspaceRoots: [{ kind: 'workspace', reference: '/runtime/phase2/workspace' }],
-      tempRoot: { kind: 'temp', reference: '/runtime/phase2/temp' },
-      logsRoot: { kind: 'logs', reference: '/runtime/phase2/logs' },
+      claudeRoot: { kind: 'claude', reference: '/runtime/team-lifecycle-read/claude' },
+      appDataRoot: {
+        kind: 'app-data',
+        reference: '/runtime/team-lifecycle-read/app-data',
+      },
+      workspaceRoots: [{ kind: 'workspace', reference: '/runtime/team-lifecycle-read/workspace' }],
+      tempRoot: { kind: 'temp', reference: '/runtime/team-lifecycle-read/temp' },
+      logsRoot: { kind: 'logs', reference: '/runtime/team-lifecycle-read/logs' },
     });
     const local = identity('a');
     const foreign = identity('b', 'active', {
@@ -775,7 +779,7 @@ describe('mount-binding-scoped hosted read ports', () => {
       async (input: { readonly claudeRoot: string; readonly identity: TeamIdentityRecord }) =>
         Object.freeze({ teamName: input.identity.legacyKey })
     );
-    const readPorts = createMountBindingScopedPhase2ReadPorts({
+    const readPorts = createMountBindingScopedTeamLifecycleReadPorts({
       authority: readAuthority,
       mountBinding,
       runtimeInstance,
@@ -786,7 +790,7 @@ describe('mount-binding-scoped hosted read ports', () => {
       nowMs: () => NOW_MS,
       teamSummarySource: { readTeamSummary },
     });
-    const composition = createPhase2ReadComposition({
+    const composition = createTeamLifecycleReadComposition({
       authority: readAuthority,
       ...readPorts,
       nowMs: () => NOW_MS,
@@ -805,7 +809,7 @@ describe('mount-binding-scoped hosted read ports', () => {
     expect(readTeamSummary).toHaveBeenCalledTimes(1);
     expect(readTeamSummary).toHaveBeenCalledWith(
       expect.objectContaining({
-        claudeRoot: '/runtime/phase2/claude',
+        claudeRoot: '/runtime/team-lifecycle-read/claude',
         identity: local,
       })
     );
@@ -815,7 +819,7 @@ describe('mount-binding-scoped hosted read ports', () => {
 
     identityValues = [identity('c', 'active', { workspaceId: WORKSPACE_ID, generation: 2 })];
     await expect(readPorts.teamIdentities.listTeamIdentities()).rejects.toThrow(
-      'phase2-read-identity-binding-generation-invalid'
+      'team-lifecycle-read-identity-binding-generation-invalid'
     );
     expect(readTeamSummary).toHaveBeenCalledTimes(1);
   });
@@ -828,7 +832,9 @@ describe('mount-binding-scoped hosted read ports', () => {
       readonly nowMs?: () => number;
     } = {}
   ) {
-    const claudeRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'phase2-read-config-'));
+    const claudeRoot = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'team-lifecycle-read-config-')
+    );
     filesystemRoots.push(claudeRoot);
     const teamRoot = path.join(claudeRoot, 'teams', 'team-a');
     await fs.promises.mkdir(teamRoot, { recursive: true });
@@ -880,7 +886,7 @@ describe('mount-binding-scoped hosted read ports', () => {
       declaredRootHash: '5'.repeat(64),
       enabled: true,
     });
-    const bootId = parseBootId(`boot_phase2-config-${filesystemRoots.length}`);
+    const bootId = parseBootId(`boot_team-lifecycle-read-config-${filesystemRoots.length}`);
     const mountBinding = new WorkspaceMountBinding({
       registration,
       bootId,
@@ -891,7 +897,7 @@ describe('mount-binding-scoped hosted read ports', () => {
       allowedOperations: [],
     });
     const runtimeInstance = createRuntimeInstanceContext({
-      deploymentId: 'deployment_phase2-config',
+      deploymentId: 'deployment_team-lifecycle-read-config',
       bootId,
       claudeRoot: { kind: 'claude', reference: claudeRoot },
       appDataRoot: { kind: 'app-data', reference: path.join(claudeRoot, 'app-data') },
@@ -899,13 +905,13 @@ describe('mount-binding-scoped hosted read ports', () => {
       tempRoot: { kind: 'temp', reference: path.join(claudeRoot, 'temp') },
       logsRoot: { kind: 'logs', reference: path.join(claudeRoot, 'logs') },
     });
-    const readAuthority = createPhase2ReadAuthority({
-      actorId: 'actor_phase2-config',
+    const readAuthority = createTeamLifecycleReadAuthority({
+      actorId: 'actor_team-lifecycle-read-config',
       authorizedScope: 'scope_team-lifecycle.read',
       mountBinding,
       runtimeInstance,
     });
-    const readPorts = createMountBindingScopedPhase2ReadPorts({
+    const readPorts = createMountBindingScopedTeamLifecycleReadPorts({
       authority: readAuthority,
       mountBinding,
       runtimeInstance,
@@ -915,7 +921,7 @@ describe('mount-binding-scoped hosted read ports', () => {
       },
       nowMs: options.nowMs ?? (() => NOW_MS),
     });
-    const composition = createPhase2ReadComposition({
+    const composition = createTeamLifecycleReadComposition({
       authority: readAuthority,
       ...readPorts,
       nowMs: options.nowMs ?? (() => NOW_MS),
@@ -1004,7 +1010,7 @@ describe('mount-binding-scoped hosted read ports', () => {
     'rejects a symlinked config before descriptor I/O',
     async () => {
       const outsideRoot = await fs.promises.mkdtemp(
-        path.join(os.tmpdir(), 'phase2-read-config-outside-')
+        path.join(os.tmpdir(), 'team-lifecycle-read-config-outside-')
       );
       filesystemRoots.push(outsideRoot);
       const target = path.join(outsideRoot, 'config.json');

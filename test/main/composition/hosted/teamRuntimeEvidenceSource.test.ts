@@ -1,10 +1,10 @@
 import { createRuntimeInstanceContext } from '@features/runtime-instance-context';
 import { WorkspaceMountBinding, WorkspaceRegistration } from '@features/workspace-registry';
 import {
+  type AuthoritativeTeamRuntimeEvidenceSource,
   createMountBindingScopedRuntimeEvidencePort,
-  type Phase2AuthoritativeRuntimeEvidenceSource,
-  Phase2RuntimeEvidenceUnavailableError,
-} from '@main/composition/hosted/phase2RuntimeEvidenceSource';
+  TeamRuntimeEvidenceUnavailableError,
+} from '@main/composition/hosted/teamRuntimeEvidenceSource';
 import {
   createQueryContext,
   parseActorId,
@@ -63,11 +63,11 @@ function scope() {
   const runtimeInstance = createRuntimeInstanceContext({
     deploymentId: DEPLOYMENT_ID,
     bootId: BOOT_ID,
-    claudeRoot: { kind: 'claude', reference: '/runtime/phase2/claude' },
-    appDataRoot: { kind: 'app-data', reference: '/runtime/phase2/app-data' },
-    workspaceRoots: [{ kind: 'workspace', reference: '/runtime/phase2/workspace' }],
-    tempRoot: { kind: 'temp', reference: '/runtime/phase2/temp' },
-    logsRoot: { kind: 'logs', reference: '/runtime/phase2/logs' },
+    claudeRoot: { kind: 'claude', reference: '/runtime/team-lifecycle-read/claude' },
+    appDataRoot: { kind: 'app-data', reference: '/runtime/team-lifecycle-read/app-data' },
+    workspaceRoots: [{ kind: 'workspace', reference: '/runtime/team-lifecycle-read/workspace' }],
+    tempRoot: { kind: 'temp', reference: '/runtime/team-lifecycle-read/temp' },
+    logsRoot: { kind: 'logs', reference: '/runtime/team-lifecycle-read/logs' },
   });
   return { mountBinding, runtimeInstance };
 }
@@ -75,10 +75,10 @@ function scope() {
 function context(signal: AbortSignal = new AbortController().signal) {
   return createQueryContext({
     actorId: parseActorId(`actor_${'9'.repeat(32)}`),
-    sessionId: parseSessionId('session_phase2-runtime-evidence'),
+    sessionId: parseSessionId('session_team-runtime-evidence'),
     deploymentId: DEPLOYMENT_ID,
     bootId: BOOT_ID,
-    requestId: parseRequestId('request_phase2-runtime-evidence'),
+    requestId: parseRequestId('request_team-runtime-evidence'),
     authorizedScope: parseAuthorizedScope('scope_team-lifecycle.read'),
     deadlineAtMs: NOW_MS + 10_000,
     signal,
@@ -87,7 +87,7 @@ function context(signal: AbortSignal = new AbortController().signal) {
 
 function port(
   options: {
-    readonly source?: Phase2AuthoritativeRuntimeEvidenceSource;
+    readonly source?: AuthoritativeTeamRuntimeEvidenceSource;
     readonly nowMs?: () => number;
   } = {}
 ) {
@@ -99,15 +99,15 @@ function port(
   });
 }
 
-describe('Phase 2 mount-scoped runtime evidence', () => {
+describe('team mount-scoped runtime evidence', () => {
   it('returns typed unavailable when no authoritative source exists', async () => {
     const runtime = port();
 
     await expect(runtime.getRuntimeState('team-alpha', context())).rejects.toBeInstanceOf(
-      Phase2RuntimeEvidenceUnavailableError
+      TeamRuntimeEvidenceUnavailableError
     );
     await expect(runtime.getAliveTeams(context())).rejects.toBeInstanceOf(
-      Phase2RuntimeEvidenceUnavailableError
+      TeamRuntimeEvidenceUnavailableError
     );
   });
 
@@ -151,14 +151,12 @@ describe('Phase 2 mount-scoped runtime evidence', () => {
       },
     });
 
-    await expect(runtime.getAliveTeams(context())).rejects.toThrow(
-      'phase2-read-runtime-evidence-invalid'
-    );
+    await expect(runtime.getAliveTeams(context())).rejects.toThrow('team-runtime-evidence-invalid');
   });
 
   it('checks cancellation immediately after successful runtime evidence I/O', async () => {
     const controller = new AbortController();
-    const source: Phase2AuthoritativeRuntimeEvidenceSource = {
+    const source: AuthoritativeTeamRuntimeEvidenceSource = {
       readRuntimeState: async () => {
         controller.abort();
         return { teamId: TEAM_ID, isAlive: true };
@@ -168,12 +166,12 @@ describe('Phase 2 mount-scoped runtime evidence', () => {
 
     await expect(
       port({ source }).getRuntimeState('team-alpha', context(controller.signal))
-    ).rejects.toThrow('phase2-read-request-cancelled');
+    ).rejects.toThrow('team-lifecycle-read-request-cancelled');
   });
 
   it('checks cancellation immediately after failed runtime evidence I/O', async () => {
     const controller = new AbortController();
-    const source: Phase2AuthoritativeRuntimeEvidenceSource = {
+    const source: AuthoritativeTeamRuntimeEvidenceSource = {
       readRuntimeState: async () => {
         controller.abort();
         throw new Error('source-failed');
@@ -183,12 +181,12 @@ describe('Phase 2 mount-scoped runtime evidence', () => {
 
     await expect(
       port({ source }).getRuntimeState('team-alpha', context(controller.signal))
-    ).rejects.toThrow('phase2-read-request-cancelled');
+    ).rejects.toThrow('team-lifecycle-read-request-cancelled');
   });
 
   it('checks the deadline immediately after alive-team evidence I/O', async () => {
     let nowMs = NOW_MS;
-    const source: Phase2AuthoritativeRuntimeEvidenceSource = {
+    const source: AuthoritativeTeamRuntimeEvidenceSource = {
       readRuntimeState: () => Promise.resolve({ teamId: TEAM_ID, isAlive: true }),
       listAliveTeamIds: async () => {
         nowMs = NOW_MS + 10_000;
@@ -197,7 +195,7 @@ describe('Phase 2 mount-scoped runtime evidence', () => {
     };
 
     await expect(port({ source, nowMs: () => nowMs }).getAliveTeams(context())).rejects.toThrow(
-      'phase2-read-request-expired'
+      'team-lifecycle-read-request-expired'
     );
   });
 });

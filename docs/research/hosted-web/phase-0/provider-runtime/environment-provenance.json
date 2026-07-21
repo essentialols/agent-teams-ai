@@ -443,6 +443,7 @@
         "AGENT_TEAMS_ELECTRON_CLAUDE_ROOT",
         "AGENT_TEAMS_ELECTRON_USER_DATA_DIR",
         "AGENT_TEAMS_HOSTED_PHASE2_READ_BOOTSTRAP",
+        "AGENT_TEAMS_HOSTED_TEAM_LIFECYCLE_READ_BOOTSTRAP",
         "AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_ARGS",
         "AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_COMMAND",
         "AGENT_TEAMS_TOKEN_USAGE_CCUSAGE_JSON",
@@ -776,7 +777,7 @@
       },
       {
         "id": "sp-59",
-        "path": "src/main/composition/hosted/phase2ReadBootstrapSource.ts"
+        "path": "src/main/composition/hosted/teamLifecycleReadBootstrapSource.ts"
       }
     ],
     "rows": [
@@ -958,6 +959,12 @@
       ["AGENT_TEAMS_ELECTRON_USER_DATA_DIR", "host-only-and-injection-inputs", "kp-26", "sp-37"],
       [
         "AGENT_TEAMS_HOSTED_PHASE2_READ_BOOTSTRAP",
+        "host-only-and-injection-inputs",
+        "kp-26",
+        "sp-59"
+      ],
+      [
+        "AGENT_TEAMS_HOSTED_TEAM_LIFECYCLE_READ_BOOTSTRAP",
         "host-only-and-injection-inputs",
         "kp-26",
         "sp-59"

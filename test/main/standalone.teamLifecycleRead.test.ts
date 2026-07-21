@@ -6,36 +6,37 @@ import {
 } from '@main/standalone';
 import { describe, expect, it, vi } from 'vitest';
 
-describe('standalone Phase 2 read wiring', () => {
+describe('standalone team lifecycle read wiring', () => {
   it('admits hosted bootstrap and immutable identity before constructing ambient services', async () => {
     const [source, composition] = await Promise.all([
       readFile('src/main/standalone.ts', 'utf8'),
-      readFile('src/main/composition/hosted/phase2ReadComposition.ts', 'utf8'),
+      readFile('src/main/composition/hosted/teamLifecycleReadComposition.ts', 'utf8'),
     ]);
 
     expect(source).toContain(
       'const appDataRoot = admitHostedReadRoot(bootstrap.runtimeInstance.appDataRoot.reference)'
     );
     expect(source).toContain('admitHostedReadRoot(bootstrap.runtimeInstance.claudeRoot.reference)');
-    expect(source).toContain('createPhase2ReadOnlyIdentitySource({ appDataRoot })');
+    expect(source).toContain('createTeamLifecycleReadOnlyIdentitySource({ appDataRoot })');
     expect(source).toContain('await readPorts.teamIdentities.listTeamIdentities()');
-    expect(source).toContain('new Phase2ReadBootstrapSource({');
+    expect(source).toContain('new TeamLifecycleReadBootstrapSource({');
     expect(source).toContain('readSerializedBootstrap: () => serializedHostedBootstrap');
+    expect(source).toContain('readTeamLifecycleReadBootstrapEnvironment(process.env)');
     expect(source).toContain('authority: bootstrap.authority');
-    expect(source).toContain('createMountBindingScopedPhase2ReadPorts({');
+    expect(source).toContain('createMountBindingScopedTeamLifecycleReadPorts({');
     expect(source).toContain('mountBinding: bootstrap.mountBinding');
     expect(source).toContain('runtimeInstance: bootstrap.runtimeInstance');
     expect(source).toContain('teamIdentities: teamIdentityGateway');
     expect(source).toContain('...readPorts');
-    expect(source).toContain('phase2ReadHost = createPhase2ReadHost(composition');
+    expect(source).toContain('teamLifecycleReadHost = createTeamLifecycleReadHost(');
     expect(source).toContain('requestSignal: AbortSignal');
     expect(source).toContain('signal: requestSignal');
-    expect(source).toContain(
-      'phase2ReadHost = createPhase2ReadHost(composition, createPhase2ReadQueryContext)'
-    );
+    expect(source).toContain('createTeamLifecycleReadQueryContext');
     expect(source).not.toContain('signal: new AbortController().signal');
-    expect(source).toMatch(/const services: HttpServices = \{[\s\S]*phase2ReadHost,[\s\S]*\};/);
-    expect(source.indexOf('new Phase2ReadBootstrapSource')).toBeLessThan(
+    expect(source).toMatch(
+      /const services: HttpServices = \{[\s\S]*teamLifecycleReadHost,[\s\S]*\};/
+    );
+    expect(source.indexOf('new TeamLifecycleReadBootstrapSource')).toBeLessThan(
       source.indexOf("import('./services/infrastructure/ServiceContext')")
     );
     expect(source.indexOf('await readPorts.teamIdentities.listTeamIdentities()')).toBeLessThan(
@@ -67,18 +68,18 @@ describe('standalone Phase 2 read wiring', () => {
     ]);
 
     expect(standalone).toContain(
-      'let phase2ReadHost: Phase2ReadHost = createUnavailablePhase2ReadHost()'
+      'let teamLifecycleReadHost: TeamLifecycleReadHost = createUnavailableTeamLifecycleReadHost()'
     );
     expect(standalone).toMatch(
-      /if \(hostedMode\) \{[\s\S]*new Phase2ReadBootstrapSource\([\s\S]*\)\.load\(\)/
+      /if \(hostedMode\) \{[\s\S]*new TeamLifecycleReadBootstrapSource\([\s\S]*\)\.load\(\)/
     );
     expect(standalone).toContain(
-      'Hosted Phase 2 identity storage unavailable; canonical reads remain disabled.'
+      'Hosted team lifecycle identity admission unavailable; canonical reads remain disabled.'
     );
     expect(standalone).not.toContain('internalStorageFeature');
     expect(standalone).not.toContain('internalStorageFeature.dispose');
-    expect(desktop).toContain('phase2ReadHost = createUnavailablePhase2ReadHost()');
-    expect(desktop).not.toContain('new Phase2ReadBootstrapSource');
+    expect(desktop).toContain('teamLifecycleReadHost = createUnavailableTeamLifecycleReadHost()');
+    expect(desktop).not.toContain('new TeamLifecycleReadBootstrapSource');
   });
 
   it('obtains and flushes the shared ConfigManager singleton only after root admission', async () => {

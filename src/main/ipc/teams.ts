@@ -200,7 +200,7 @@ import type {
 } from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
 import type { TeamMembersMetaFile } from '../services/team/TeamMembersMetaStore';
-import type { Phase2ReadHost } from '@main/composition/hosted/phase2ReadComposition';
+import type { TeamLifecycleReadHost } from '@main/composition/hosted/teamLifecycleReadComposition';
 import type {
   AddTaskCommentRequest,
   AgentActionMode,
@@ -811,13 +811,13 @@ const activeTeamNotifications = new Set<Notification>();
 const MAX_ATTACHMENTS = 5;
 const MAX_TOTAL_ATTACHMENT_SIZE = 20 * 1024 * 1024; // 20MB total
 
-let phase2ReadHost: Phase2ReadHost | null = null;
+let teamLifecycleReadHost: TeamLifecycleReadHost | null = null;
 
-export function initializePhase2TeamReadHandler(host: Phase2ReadHost): void {
-  phase2ReadHost = host;
+export function initializeTeamLifecycleReadHandler(host: TeamLifecycleReadHost): void {
+  teamLifecycleReadHost = host;
 }
 
-function phase2ReadUnavailable(reason: string): TeamLifecycleReadFailure {
+function teamLifecycleReadUnavailable(reason: string): TeamLifecycleReadFailure {
   const error = createSafeAppError({ code: 'unavailable', reason });
   return Object.freeze({
     schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
@@ -827,16 +827,16 @@ function phase2ReadUnavailable(reason: string): TeamLifecycleReadFailure {
   });
 }
 
-export async function handlePhase2ListTeamLifecycle(
+export async function handleListTeamLifecycle(
   request: unknown
 ): Promise<CanonicalListTeamLifecycleResult> {
-  if (!phase2ReadHost) {
-    return phase2ReadUnavailable('identity_storage_unavailable');
+  if (!teamLifecycleReadHost) {
+    return teamLifecycleReadUnavailable('identity_storage_unavailable');
   }
   try {
-    return await phase2ReadHost.listTeamLifecycle(request);
+    return await teamLifecycleReadHost.listTeamLifecycle(request);
   } catch {
-    return phase2ReadUnavailable('transport_unavailable');
+    return teamLifecycleReadUnavailable('transport_unavailable');
   }
 }
 
@@ -1277,10 +1277,10 @@ async function handleCreateInitialGitCommit(
 
 async function handleListTeams(
   _event: IpcMainInvokeEvent,
-  phase2Request?: unknown
+  teamLifecycleReadRequest?: unknown
 ): Promise<IpcResult<TeamSummary[]> | CanonicalListTeamLifecycleResult> {
-  if (phase2Request !== undefined) {
-    return handlePhase2ListTeamLifecycle(phase2Request);
+  if (teamLifecycleReadRequest !== undefined) {
+    return handleListTeamLifecycle(teamLifecycleReadRequest);
   }
   setCurrentMainOp('team:list');
   const startedAt = Date.now();

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -108,7 +108,7 @@ describe('P2.E team-lifecycle read boundaries', () => {
   });
 
   it('routes production composition and renderer transport through public feature entrypoints', () => {
-    const composition = source('src/main/composition/hosted/phase2ReadComposition.ts');
+    const composition = source('src/main/composition/hosted/teamLifecycleReadComposition.ts');
     const rendererClient = source('src/renderer/api/httpClient.ts');
 
     expect(composition).toContain("from '@features/internal-storage/contracts'");
@@ -120,7 +120,7 @@ describe('P2.E team-lifecycle read boundaries', () => {
   });
 
   it('has one canonical identity port implementation and one legacy lifecycle source', () => {
-    const composition = source('src/main/composition/hosted/phase2ReadComposition.ts');
+    const composition = source('src/main/composition/hosted/teamLifecycleReadComposition.ts');
 
     expect(composition.match(/implements LegacyTeamIdentityReadPort/g)).toHaveLength(1);
     expect(composition.match(/new LegacyTeamLifecycleReadSource\(/g)).toHaveLength(1);
@@ -128,5 +128,25 @@ describe('P2.E team-lifecycle read boundaries', () => {
     expect(composition).toContain('class CanonicalIdentityProjectionReadPort');
     expect(composition).not.toContain('DurableIdentityReadPort');
     expect(composition).not.toContain('RuntimeProjectionIdentityReadPort');
+  });
+
+  it('keeps durable hosted read identifiers and source/test basenames phase-neutral', () => {
+    const compositionRoot = join(process.cwd(), 'src/main/composition/hosted');
+    const compositionTestRoot = join(process.cwd(), 'test/main/composition/hosted');
+    const durableSources = [
+      'teamLifecycleReadBootstrapSource.ts',
+      'teamLifecycleReadComposition.ts',
+      'teamLifecycleReadOnlyIdentitySource.ts',
+      'teamRuntimeEvidenceSource.ts',
+    ] as const;
+
+    for (const basename of [...readdirSync(compositionRoot), ...readdirSync(compositionTestRoot)]) {
+      expect(basename).not.toMatch(/^phase2(?:Read|Runtime)/);
+    }
+    for (const path of durableSources) {
+      expect(source(`src/main/composition/hosted/${path}`), path).not.toMatch(
+        /\b(?:Phase2Read|Phase2Runtime|phase2Read)\w*/
+      );
+    }
   });
 });

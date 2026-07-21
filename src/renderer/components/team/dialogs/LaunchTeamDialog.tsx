@@ -6,6 +6,7 @@ import {
   resolveAnthropicRuntimeSelection,
 } from '@features/anthropic-runtime-profile/renderer';
 import {
+  isCodexAccountSnapshotPending,
   mergeCodexCliStatusWithSnapshot,
   useCodexAccountSnapshot,
 } from '@features/codex-account/renderer';
@@ -387,9 +388,11 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
     [loadingCliStatus, codexAccount.snapshot]
   );
   const codexSnapshotPending =
-    codexAccount.loading &&
-    Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex')) &&
-    !codexAccount.snapshot;
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) && Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
   const globalRuntimeProviderStatusById = useMemo(
     () =>
       new Map(
@@ -565,6 +568,10 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
     }
     return statuses;
   }, [effectiveCwd, globalRuntimeProviderStatusById, projectScopedOpenCodeStatus]);
+  const memberModelNormalizationDeferredProviderIds = useMemo<ReadonlySet<TeamProviderId>>(
+    () => (codexSnapshotPending ? new Set<TeamProviderId>(['codex']) : new Set()),
+    [codexSnapshotPending]
+  );
   const effectiveMemberDrafts = useMemo(() => {
     const scopedMembers = syncModelsWithLead
       ? membersDrafts.map(clearMemberModelOverrides)
@@ -573,8 +580,15 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
       members: scopedMembers,
       selectedProviderId,
       runtimeProviderStatusById,
+      deferredProviderIds: memberModelNormalizationDeferredProviderIds,
     }).members;
-  }, [membersDrafts, runtimeProviderStatusById, selectedProviderId, syncModelsWithLead]);
+  }, [
+    memberModelNormalizationDeferredProviderIds,
+    membersDrafts,
+    runtimeProviderStatusById,
+    selectedProviderId,
+    syncModelsWithLead,
+  ]);
   const tmuxRuntime = useTmuxRuntimeReadiness(open && isLaunchMode);
   const selectedMemberProviders = useMemo<TeamProviderId[]>(
     () =>
@@ -692,10 +706,17 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
         members: prev,
         selectedProviderId,
         runtimeProviderStatusById,
+        deferredProviderIds: memberModelNormalizationDeferredProviderIds,
       });
       return sanitized.changed ? sanitized.members : prev;
     });
-  }, [membersDrafts, open, runtimeProviderStatusById, selectedProviderId]);
+  }, [
+    memberModelNormalizationDeferredProviderIds,
+    membersDrafts,
+    open,
+    runtimeProviderStatusById,
+    selectedProviderId,
+  ]);
 
   useEffect(() => {
     if (multimodelEnabled) {
@@ -1228,6 +1249,10 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
       setAnthropicRuntimeNotice(null);
       return;
     }
+    if (selectedProviderId === 'codex' && codexSnapshotPending) {
+      setAnthropicRuntimeNotice(null);
+      return;
+    }
 
     const reconciliation =
       selectedProviderId === 'anthropic'
@@ -1297,6 +1322,7 @@ export const LaunchTeamDialog = (props: LaunchTeamDialogProps): React.JSX.Elemen
     anthropicProviderFastModeDefault,
     anthropicRuntimeSelection,
     codexRuntimeSelection,
+    codexSnapshotPending,
     effectiveAnthropicRuntimeLimitContext,
     previousLaunchParams?.providerBackendId,
     runtimeProviderStatusById,

@@ -14,8 +14,7 @@ import * as path from 'node:path';
 import { getClaudeBasePath } from '@main/utils/pathDecoder';
 import { createLogger } from '@shared/utils/logger';
 
-import type { InstalledPluginEntry } from '@shared/types/extensions';
-import type { InstallScope } from '@shared/types/extensions';
+import type { InstalledPluginEntry, PluginInstallScope } from '@shared/types/extensions';
 
 const logger = createLogger('Extensions:PluginState');
 
@@ -145,7 +144,7 @@ export class PluginInstallationStateService {
   }
 
   private buildScopedEntries(
-    scope: InstallScope,
+    scope: PluginInstallScope,
     enabledPlugins: Set<string>,
     metadataByKey: Map<string, InstalledPluginEntry[]>
   ): InstalledPluginEntry[] {
@@ -166,7 +165,7 @@ export class PluginInstallationStateService {
     });
   }
 
-  private getPluginScopeKey(pluginId: string, scope: InstallScope): string {
+  private getPluginScopeKey(pluginId: string, scope: PluginInstallScope): string {
     return `${pluginId}::${scope}`;
   }
 
@@ -271,7 +270,7 @@ export class PluginInstallationStateService {
     }
   }
 
-  private normalizeScope(raw: string): InstallScope {
+  private normalizeScope(raw: string): PluginInstallScope {
     const lower = raw.toLowerCase();
     if (lower === 'user' || lower === 'project' || lower === 'local') {
       return lower;

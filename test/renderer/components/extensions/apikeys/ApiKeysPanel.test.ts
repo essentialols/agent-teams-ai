@@ -1,10 +1,11 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
+
+import { createDefaultCliExtensionCapabilities } from '@shared/utils/providerExtensionCapabilities';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CodexAccountSnapshotDto } from '@features/codex-account/contracts';
 import type { CliInstallationStatus } from '@shared/types';
-import { createDefaultCliExtensionCapabilities } from '@shared/utils/providerExtensionCapabilities';
 
 interface StoreState {
   apiKeys: {
@@ -61,10 +62,7 @@ vi.mock('@renderer/api', () => ({
 }));
 
 vi.mock('@renderer/components/ui/button', () => ({
-  Button: ({
-    children,
-    onClick,
-  }: React.PropsWithChildren<{ onClick?: () => void }>) =>
+  Button: ({ children, onClick }: React.PropsWithChildren<{ onClick?: () => void }>) =>
     React.createElement(
       'button',
       {
@@ -76,7 +74,8 @@ vi.mock('@renderer/components/ui/button', () => ({
 }));
 
 vi.mock('@renderer/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
+  Tooltip: ({ children }: React.PropsWithChildren) =>
+    React.createElement(React.Fragment, null, children),
   TooltipTrigger: ({ children }: React.PropsWithChildren) =>
     React.createElement(React.Fragment, null, children),
   TooltipContent: () => null,
@@ -257,6 +256,69 @@ describe('ApiKeysPanel', () => {
     expect(host.textContent).toContain('ChatGPT account ready');
     expect(storeState.fetchApiKeys).toHaveBeenCalledTimes(1);
     expect(storeState.fetchApiKeyStorageStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('does not claim the Codex key is missing while the first account check is pending', async () => {
+    codexAccountHookState.loading = true;
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(ApiKeysPanel, {
+          projectPath: null,
+          projectLabel: null,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const codexLabel = Array.from(host.querySelectorAll('p')).find(
+      (element) => element.textContent === 'Codex runtime'
+    );
+    const codexCardText =
+      codexLabel?.parentElement?.parentElement?.parentElement?.textContent ?? '';
+    expect(codexCardText).toContain('Checking Codex account and credential status...');
+    expect(codexCardText).not.toContain('Key missing');
+    expect(codexCardText).not.toContain('No stored or environment key detected for this provider.');
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('does not claim the Codex key is missing after a transient account check failure', async () => {
+    codexAccountHookState.error = 'Codex account request timed out';
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        React.createElement(ApiKeysPanel, {
+          projectPath: null,
+          projectLabel: null,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const codexLabel = Array.from(host.querySelectorAll('p')).find(
+      (element) => element.textContent === 'Codex runtime'
+    );
+    const codexCardText =
+      codexLabel?.parentElement?.parentElement?.parentElement?.textContent ?? '';
+    expect(codexCardText).toContain('Checking Codex account and credential status...');
+    expect(codexCardText).not.toContain('Key missing');
 
     await act(async () => {
       root.unmount();

@@ -228,6 +228,7 @@ import {
   TEAM_UPDATE_TASK_STATUS,
   TEAM_VALIDATE_CLI_ARGS,
   TELEMETRY_GET_SENTRY_CONTEXT,
+  TELEMETRY_GET_SENTRY_STATUS,
   TERMINAL_DATA,
   TERMINAL_EXIT,
   TERMINAL_KILL,
@@ -424,6 +425,7 @@ import type {
   McpServerDiagnostic,
   OperationResult,
   PluginInstallRequest,
+  PluginInstallScope,
   SkillCatalogItem,
   SkillDeleteRequest,
   SkillDetail,
@@ -598,6 +600,7 @@ const electronAPI: ElectronAPI = {
   tokenUsage: createTokenUsageBridge(ipcRenderer),
   telemetry: {
     getSentryContext: () => ipcRenderer.invoke(TELEMETRY_GET_SENTRY_CONTEXT),
+    getSentryStatus: () => ipcRenderer.invoke(TELEMETRY_GET_SENTRY_STATUS),
   },
   startup: {
     getStatus: () => ipcRenderer.invoke(APP_STARTUP_GET_STATUS) as Promise<AppStartupStatus>,
@@ -2016,7 +2019,7 @@ const electronAPI: ElectronAPI = {
       invokeIpcWithResult<string | null>(PLUGIN_GET_README, pluginId),
     install: (request: PluginInstallRequest) =>
       invokeIpcWithResult<OperationResult>(PLUGIN_INSTALL, request),
-    uninstall: (pluginId: string, scope?: string, projectPath?: string) =>
+    uninstall: (pluginId: string, scope?: PluginInstallScope, projectPath?: string) =>
       invokeIpcWithResult<OperationResult>(PLUGIN_UNINSTALL, pluginId, scope, projectPath),
   },
 

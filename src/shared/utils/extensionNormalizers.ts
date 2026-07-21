@@ -14,6 +14,7 @@ import type {
   InstallScope,
   PluginCapability,
   PluginCatalogItem,
+  PluginInstallScope,
 } from '@shared/types';
 
 /**
@@ -111,7 +112,7 @@ export function buildPluginId(pluginName: string, marketplaceName: string): stri
  */
 export function getPluginOperationKey(
   pluginId: string,
-  scope: InstallScope,
+  scope: PluginInstallScope,
   projectPath?: string | null
 ): string {
   if (scope === 'project' || scope === 'local') {
@@ -154,7 +155,7 @@ export function getMcpProjectStateKey(projectPath?: string | null): string {
  */
 export function hasInstallationInScope(
   installations: Pick<InstalledPluginEntry, 'scope'>[],
-  scope: InstallScope
+  scope: PluginInstallScope
 ): boolean {
   return installations.some((installation) => installation.scope === scope);
 }

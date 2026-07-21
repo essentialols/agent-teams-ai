@@ -6,6 +6,7 @@ import {
   resolveAnthropicRuntimeSelection,
 } from '@features/anthropic-runtime-profile/renderer';
 import {
+  isCodexAccountSnapshotPending,
   mergeCodexCliStatusWithSnapshot,
   useCodexAccountSnapshot,
 } from '@features/codex-account/renderer';
@@ -549,9 +550,11 @@ export const CreateTeamDialog = ({
     [loadingCliStatus, codexAccount.snapshot]
   );
   const codexSnapshotPending =
-    codexAccount.loading &&
-    Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex')) &&
-    !codexAccount.snapshot;
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) && Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
   const globalRuntimeProviderStatusById = useMemo(
     () =>
       new Map(
@@ -806,6 +809,10 @@ export const CreateTeamDialog = ({
     }
     return statuses;
   }, [effectiveCwd, globalRuntimeProviderStatusById, projectScopedOpenCodeStatus]);
+  const memberModelNormalizationDeferredProviderIds = useMemo<ReadonlySet<TeamProviderId>>(
+    () => (codexSnapshotPending ? new Set<TeamProviderId>(['codex']) : new Set()),
+    [codexSnapshotPending]
+  );
   const dialogTeamNameKey = sanitizeTeamName(teamName.trim());
   /** All taken names: existing teams + teams currently being provisioned. */
   const allTakenTeamNames = useMemo(
@@ -830,8 +837,15 @@ export const CreateTeamDialog = ({
       members: scopedMembers,
       selectedProviderId,
       runtimeProviderStatusById,
+      deferredProviderIds: memberModelNormalizationDeferredProviderIds,
     }).members;
-  }, [members, runtimeProviderStatusById, selectedProviderId, syncModelsWithLead]);
+  }, [
+    memberModelNormalizationDeferredProviderIds,
+    members,
+    runtimeProviderStatusById,
+    selectedProviderId,
+    syncModelsWithLead,
+  ]);
   const hasSelectedWorktreeIsolation =
     !soloTeam &&
     effectiveMemberDrafts.some((member) => !member.removedAt && member.isolation === 'worktree');
@@ -985,11 +999,18 @@ export const CreateTeamDialog = ({
       members,
       selectedProviderId,
       runtimeProviderStatusById,
+      deferredProviderIds: memberModelNormalizationDeferredProviderIds,
     });
     if (sanitized.changed) {
       setMembers(sanitized.members);
     }
-  }, [members, runtimeProviderStatusById, selectedProviderId, setMembers]);
+  }, [
+    memberModelNormalizationDeferredProviderIds,
+    members,
+    runtimeProviderStatusById,
+    selectedProviderId,
+    setMembers,
+  ]);
 
   useEffect(() => {
     prepareChecksRef.current = prepareChecks;
@@ -1932,6 +1953,10 @@ export const CreateTeamDialog = ({
       setAnthropicRuntimeNotice(null);
       return;
     }
+    if (selectedProviderId === 'codex' && codexSnapshotPending) {
+      setAnthropicRuntimeNotice(null);
+      return;
+    }
 
     const reconciliation =
       selectedProviderId === 'anthropic'
@@ -1995,6 +2020,7 @@ export const CreateTeamDialog = ({
     anthropicProviderFastModeDefault,
     anthropicRuntimeSelection,
     codexRuntimeSelection,
+    codexSnapshotPending,
     effectiveAnthropicRuntimeLimitContext,
     runtimeProviderStatusById,
     selectedEffort,

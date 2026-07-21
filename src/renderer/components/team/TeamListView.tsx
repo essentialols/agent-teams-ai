@@ -52,6 +52,7 @@ import {
   Copy,
   FolderOpen,
   GitBranch,
+  Import,
   Loader2,
   Network,
   Play,
@@ -73,6 +74,7 @@ import {
   findTeamProjectSelectionTarget,
   resolveCreateTeamDefaultProjectPath,
   resolveTeamProjectSelection,
+  resolveTeamsProjectNavigationPath,
   teamMatchesProjectSelection,
 } from './teamProjectSelection';
 import { TeamTaskStatusSummary } from './TeamTaskStatusSummary';
@@ -548,6 +550,7 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
     selectedWorktreeId,
     selectedProjectId,
     activeProjectId,
+    teamsProjectNavigationIntent,
     branchByPath,
   } = useStore(
     useShallow((s) => ({
@@ -568,6 +571,7 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
       selectedWorktreeId: s.selectedWorktreeId,
       selectedProjectId: s.selectedProjectId,
       activeProjectId: s.activeProjectId,
+      teamsProjectNavigationIntent: s.teamsProjectNavigationIntent,
       branchByPath: s.branchByPath,
     }))
   );
@@ -698,10 +702,15 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
       activeProjectId,
     ]
   );
-  const currentProjectPath = teamPriorityProjectPath ?? currentProjectSelection.projectPath;
+  const navigationProjectPath = resolveTeamsProjectNavigationPath(
+    teamsProjectNavigationIntent,
+    selectedProjectId
+  );
+  const selectedProjectPath = navigationProjectPath ?? currentProjectSelection.projectPath;
+  const currentProjectPath = teamPriorityProjectPath ?? selectedProjectPath;
   const createTeamDefaultProjectPath = resolveCreateTeamDefaultProjectPath({
     initialProjectPath: copyData?.cwd,
-    selectedProjectPath: currentProjectSelection.projectPath,
+    selectedProjectPath,
     priorityProjectPath: teamPriorityProjectPath,
   });
 
@@ -783,6 +792,7 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
 
   const handleProjectSelectionChange = useCallback(
     (projectPath: string | null): void => {
+      useStore.setState({ teamsProjectNavigationIntent: null });
       if (!projectPath) {
         setTeamPriorityProjectPath(null);
         useStore.setState(getProjectSelectionResetState());
@@ -1137,6 +1147,7 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
         activeTeams={activeTeams}
         initialData={copyData ?? undefined}
         defaultProjectPath={createTeamDefaultProjectPath}
+        forceDefaultProjectSelection={copyData == null && navigationProjectPath != null}
         onClose={handleCreateDialogClose}
         onCreate={handleCreateSubmit}
         onOpenTeam={openTeamTab}
@@ -1226,16 +1237,11 @@ const DesktopTeamListView = memo(function DesktopTeamListView(): React.JSX.Eleme
             disabled={!canCreate}
             onClick={() => setShowImportDialog(true)}
           >
-            <FolderOpen size={13} />
+            <Import size={13} />
             {t('list.actions.importTeam')}
           </Button>
-          <Button
-            size="sm"
-            className="gap-1.5"
-            disabled={!canCreate}
-            onClick={() => setShowCreateDialog(true)}
-          >
-            <Plus size={13} />
+          <Button className="gap-2" disabled={!canCreate} onClick={() => setShowCreateDialog(true)}>
+            <Plus size={15} />
             {t('list.actions.createTeam')}
           </Button>
         </div>

@@ -38,7 +38,10 @@ import {
   type TeamRuntimeStopResult,
 } from '../../../../src/main/services/team/runtime/TeamRuntimeAdapter';
 import { TeamConfigReader } from '../../../../src/main/services/team/TeamConfigReader';
-import { createPersistedLaunchSnapshot } from '../../../../src/main/services/team/TeamLaunchStateEvaluator';
+import {
+  createPersistedLaunchSnapshot,
+  normalizePersistedLaunchSnapshot,
+} from '../../../../src/main/services/team/TeamLaunchStateEvaluator';
 import {
   getMixedLaunchFallbackRecoveryError,
   TeamProvisioningService,
@@ -1366,6 +1369,12 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
         lanes: {},
       }
     );
+    await waitForCondition(
+      async () =>
+        (await fs
+          .stat(path.join(getTeamsBasePath(), teamName, 'launch-state.json'))
+          .catch(() => null)) === null
+    );
     await expect(
       fs.readFile(path.join(getTeamsBasePath(), teamName, 'launch-state.json'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' });
@@ -1626,6 +1635,90 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
       alive: true,
       runtimeModel: 'zai-coding-plan/glm-5.2',
     });
+  });
+
+  it('stops the exact persisted primary candidate before rollback after relaunch persistence fails', async () => {
+    const teamName = 'pure-opencode-primary-restart-persist-failure-safe-e2e';
+    const adapter = new FakeOpenCodeRuntimeAdapter();
+    const svc = new TeamProvisioningService();
+    svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+
+    const { runId } = await svc.createTeam(
+      {
+        teamName,
+        cwd: projectPath,
+        providerId: 'opencode',
+        model: 'xai/grok-4.5',
+        skipPermissions: true,
+        members: [
+          {
+            name: 'tom',
+            role: 'Same-model teammate',
+            providerId: 'opencode',
+            model: 'xai/grok-4.5',
+          },
+          {
+            name: 'alice',
+            role: 'Side-lane teammate',
+            providerId: 'opencode',
+            model: 'zai-coding-plan/glm-5.1',
+          },
+        ],
+      },
+      () => undefined
+    );
+
+    const events: string[] = [];
+    const originalAdapterLaunch = adapter.launch.bind(adapter);
+    vi.spyOn(adapter, 'launch').mockImplementation(async (input) => {
+      events.push(`launch:${input.laneId}:${input.expectedMembers.map((member) => member.name)}`);
+      return originalAdapterLaunch(input);
+    });
+    const originalAdapterStop = adapter.stop.bind(adapter);
+    vi.spyOn(adapter, 'stop').mockImplementation(async (input) => {
+      events.push(`stop:${input.laneId}:${input.cwd}`);
+      return originalAdapterStop(input);
+    });
+    const originalPrimaryLaunch = (svc as any).launchOpenCodeAggregatePrimaryLane.bind(svc);
+    let failPersistedCandidate = true;
+    vi.spyOn(svc as any, 'launchOpenCodeAggregatePrimaryLane').mockImplementation(
+      async (...args: unknown[]) => {
+        const result = await originalPrimaryLaunch(...args);
+        if (failPersistedCandidate) {
+          failPersistedCandidate = false;
+          throw new Error('primary candidate post-persistence index failed');
+        }
+        return result;
+      }
+    );
+
+    await expect(svc.restartMember(teamName, 'tom')).rejects.toThrow(
+      'primary candidate post-persistence index failed'
+    );
+
+    expect(events).toEqual([
+      `stop:primary:${projectPath}`,
+      'launch:primary:team-lead',
+      `stop:primary:${projectPath}`,
+      'launch:primary:team-lead,tom',
+    ]);
+    expect(adapter.stopInputs.at(-1)).toMatchObject({
+      runId,
+      teamName,
+      laneId: 'primary',
+      cwd: projectPath,
+      reason: 'cleanup',
+      force: true,
+    });
+    expect(svc.isTeamAlive(teamName)).toBe(true);
+    await expect(readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName)).resolves.toMatchObject(
+      {
+        lanes: {
+          primary: { state: 'active' },
+          'secondary:opencode:alice': { state: 'active' },
+        },
+      }
+    );
   });
 
   it('rolls back when primary restart returns a hard failure for the OpenCode lead', async () => {
@@ -12661,7 +12754,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
               lastEvaluatedAt: '2026-04-23T10:00:00.000Z',
             },
             'secondary:opencode:bob': {
-              name: 'bob',
+              name: 'secondary:opencode:bob',
               providerId: 'opencode',
               model: 'opencode/minimax-m2.5-free',
               laneId: 'secondary:opencode:bob',
@@ -14722,7 +14815,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     await waitForCondition(() => adapter.launchInputs.length === 2);
 
     await svc.stopTeam(teamName);
-    expect(adapter.stopInputs).toHaveLength(2);
+    await waitForCondition(() => adapter.stopInputs.length === 2);
     await waitForCondition(() => !svc.isTeamAlive(teamName));
     await waitForCondition(async () => {
       const laneIndex = await readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName);
@@ -15965,7 +16058,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
       };
     }) as typeof adapter.stop;
 
-    const stopTeam = svc.stopTeam(teamName);
+    const stopPromise = svc.stopTeam(teamName);
     await waitForCondition(() => adapter.stopInputs.length === 1);
     try {
       await expect(
@@ -15981,8 +16074,8 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
       expect(adapter.messageInputs).toEqual([]);
     } finally {
       releaseStop();
-      await stopTeam;
-      expect(adapter.stopInputs).toHaveLength(2);
+      await stopPromise;
+      await waitForCondition(() => adapter.stopInputs.length === 2);
       await waitForCondition(() => !svc.isTeamAlive(teamName));
     }
   });
@@ -21325,6 +21418,76 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     expect(relaunchedStatuses.statuses.alice?.hardFailureReason).toBeUndefined();
   });
 
+  it('rejects an unretainable aggregate launch when its primary stop is unconfirmed and retains retry ownership', async () => {
+    const teamName = 'unretainable-opencode-stop-retry-safe-e2e';
+    const adapter = new FailOnceStopOpenCodeRuntimeAdapter(
+      'unretainable aggregate primary stop was not confirmed'
+    );
+    const svc = new TeamProvisioningService();
+    const writeLaunchFailureArtifactPackBestEffort = vi
+      .spyOn(
+        (svc as any).compatibilityDelegation.configTaskActivityBoundary,
+        'writeLaunchFailureArtifactPackBestEffort'
+      )
+      .mockImplementation(() => undefined);
+    svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+
+    const error = await svc
+      .createTeam(
+        {
+          teamName,
+          cwd: projectPath,
+          providerId: 'opencode',
+          model: 'opencode/big-pickle',
+          skipPermissions: true,
+          members: [
+            { name: 'alice', role: 'Developer', providerId: 'opencode' },
+            {
+              name: 'bob',
+              role: 'Reviewer',
+              providerId: 'opencode',
+              cwd: path.join(projectPath, 'bob-worktree-fixture'),
+            },
+          ],
+        },
+        () => undefined
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(console.warn).toHaveBeenCalledWith(
+      '[Service:TeamProvisioning]',
+      `[${teamName}] Failed to stop unretainable OpenCode primary lane: unretainable aggregate primary stop was not confirmed`
+    );
+    (console.warn as unknown as { mockClear: () => void }).mockClear();
+
+    const runId = adapter.launchInputs[0]?.runId;
+    expect(runId).toBeTruthy();
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).toMatchObject({
+      message: 'OpenCode aggregate launch failed and runtime cleanup was not confirmed',
+      errors: expect.arrayContaining([
+        expect.objectContaining({
+          message: 'unretainable aggregate primary stop was not confirmed',
+        }),
+      ]),
+    });
+    expect((svc as any).runtimeAdapterRunByTeam.get(teamName)).toMatchObject({ runId });
+    expect((svc as any).provisioningRunByTeam.get(teamName)).toBe(runId);
+    expect((svc as any).runs.get(runId)).toMatchObject({ runId, teamName });
+    expect(adapter.stopInputs).toHaveLength(1);
+
+    await expect(svc.stopTeam(teamName)).resolves.toBeUndefined();
+
+    expect(adapter.stopInputs).toHaveLength(2);
+    expect(writeLaunchFailureArtifactPackBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, teamName }),
+      expect.objectContaining({ reason: 'launch_progress_failed' })
+    );
+    expect((svc as any).runtimeAdapterRunByTeam.has(teamName)).toBe(false);
+    expect((svc as any).provisioningRunByTeam.has(teamName)).toBe(false);
+    expect((svc as any).runs.has(runId)).toBe(false);
+  });
+
   it('relaunches an OpenCode team after permission-pending stop and clears pending permissions', async () => {
     const adapter = new FakeOpenCodeRuntimeAdapter('partial_pending');
     const svc = new TeamProvisioningService();
@@ -21375,6 +21538,83 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
       bootstrapConfirmed: true,
     });
     expect(relaunchedStatuses.statuses.alice?.pendingPermissionRequestIds).toBeUndefined();
+  });
+
+  it('reports desktop service-drain rejection before either irreversible shutdown boundary', async () => {
+    vi.resetModules();
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => tempDir),
+        getVersion: vi.fn(() => '1.3.0'),
+        isPackaged: false,
+        on: vi.fn(),
+        whenReady: vi.fn(() => new Promise<void>(() => undefined)),
+      },
+      BrowserWindow: class BrowserWindow {
+        static getAllWindows(): unknown[] {
+          return [];
+        }
+      },
+      dialog: { showMessageBox: vi.fn(() => Promise.resolve({ response: 0 })) },
+      ipcMain: {
+        handle: vi.fn(),
+        on: vi.fn(),
+        removeHandler: vi.fn(),
+        removeListener: vi.fn(),
+      },
+    }));
+    vi.doMock('electron-updater', () => {
+      const autoUpdater = { on: vi.fn(), quitAndInstall: vi.fn() };
+      return { autoUpdater, default: { autoUpdater } };
+    });
+
+    try {
+      const { runDesktopQuitLifecycle, runDesktopUpdateInstallLifecycle } =
+        await import('../../../../src/main/index');
+      const serviceDrainFailure = new Error('service and persistent log drain failed');
+
+      for (const reason of ['app-quit', 'relaunch'] as const) {
+        const reportShutdownFailure = vi.fn(() => Promise.resolve());
+        const prepareToQuit = vi.fn();
+        const markShutdownComplete = vi.fn();
+        const relaunch = vi.fn();
+        const quit = vi.fn();
+
+        await expect(
+          runDesktopQuitLifecycle(reason, {
+            flushConfig: () => Promise.resolve(),
+            shutdownServices: () => Promise.reject(serviceDrainFailure),
+            reportShutdownFailure,
+            prepareToQuit,
+            markShutdownComplete,
+            relaunch,
+            quit,
+          })
+        ).resolves.toBe(false);
+        expect(reportShutdownFailure).toHaveBeenCalledWith(serviceDrainFailure);
+        expect(prepareToQuit).not.toHaveBeenCalled();
+        expect(markShutdownComplete).not.toHaveBeenCalled();
+        expect(relaunch).not.toHaveBeenCalled();
+        expect(quit).not.toHaveBeenCalled();
+      }
+
+      const reportUpdateShutdownFailure = vi.fn(() => Promise.resolve());
+      const markUpdateShutdownComplete = vi.fn();
+      await expect(
+        runDesktopUpdateInstallLifecycle({
+          flushConfig: () => Promise.resolve(),
+          shutdownServices: () => Promise.reject(serviceDrainFailure),
+          reportShutdownFailure: reportUpdateShutdownFailure,
+          markShutdownComplete: markUpdateShutdownComplete,
+        })
+      ).rejects.toBe(serviceDrainFailure);
+      expect(reportUpdateShutdownFailure).toHaveBeenCalledWith(serviceDrainFailure);
+      expect(markUpdateShutdownComplete).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock('electron');
+      vi.doUnmock('electron-updater');
+      vi.resetModules();
+    }
   });
 });
 
@@ -21889,6 +22129,23 @@ class BlockingOpenCodeRuntimeAdapter extends FakeOpenCodeRuntimeAdapter {
   }
 }
 
+class FailOnceStopOpenCodeRuntimeAdapter extends FakeOpenCodeRuntimeAdapter {
+  private shouldRejectStop = true;
+
+  constructor(private readonly stopFailureMessage: string) {
+    super('partial_failure');
+  }
+
+  override async stop(input: TeamRuntimeStopInput): Promise<TeamRuntimeStopResult> {
+    const result = await super.stop(input);
+    if (this.shouldRejectStop) {
+      this.shouldRejectStop = false;
+      throw new Error(this.stopFailureMessage);
+    }
+    return result;
+  }
+}
+
 function latestOpenCodeLaunchRunId(
   adapter: { readonly launchInputs: readonly TeamRuntimeLaunchInput[] },
   teamName: string,
@@ -22110,7 +22367,7 @@ function createMixedLiveRun(input: {
       selectedModelKind: 'explicit',
       resolvedLaunchModel: primary.leadModel,
       catalogId: primary.leadModel,
-      catalogSource: 'bundled',
+      catalogSource: 'static-fallback',
       catalogFetchedAt: now,
       selectedEffort: 'medium',
       resolvedEffort: 'medium',
@@ -23204,20 +23461,21 @@ async function writeLegacyPartialLaunchState(input: {
 }): Promise<void> {
   const teamDir = path.join(getTeamsBasePath(), input.teamName);
   await fs.mkdir(teamDir, { recursive: true });
+  const legacyMarker = {
+    state: 'partial_launch_failure',
+    expectedMembers: input.expectedMembers,
+    confirmedMembers: input.confirmedMembers,
+    missingMembers: input.missingMembers,
+    leadSessionId: 'lead-session',
+    updatedAt: '2026-04-23T10:00:00.000Z',
+  };
+  const adoptedSnapshot = normalizePersistedLaunchSnapshot(input.teamName, legacyMarker);
+  if (!adoptedSnapshot) {
+    throw new Error('Legacy partial launch fixture could not be normalized');
+  }
   await fs.writeFile(
     path.join(teamDir, 'launch-state.json'),
-    `${JSON.stringify(
-      {
-        state: 'partial_launch_failure',
-        expectedMembers: input.expectedMembers,
-        confirmedMembers: input.confirmedMembers,
-        missingMembers: input.missingMembers,
-        leadSessionId: 'lead-session',
-        updatedAt: '2026-04-23T10:00:00.000Z',
-      },
-      null,
-      2
-    )}\n`,
+    `${JSON.stringify(adoptedSnapshot, null, 2)}\n`,
     'utf8'
   );
 }

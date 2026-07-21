@@ -1,3 +1,5 @@
+import { getErrorMessage } from '@shared/utils/errorHandling';
+
 import {
   createPersistedLaunchSnapshot,
   snapshotToMemberSpawnStatuses,
@@ -98,6 +100,13 @@ export interface LaunchOpenCodeAggregatePrimaryLanePorts {
       members: TeamRuntimeLaunchResult['members'];
     }
   ): void;
+  logWarning?(message: string): void;
+}
+
+export class OpenCodeAggregateRuntimeStopError extends AggregateError {
+  constructor(errors: readonly unknown[]) {
+    super([...errors], 'OpenCode aggregate launch failed and runtime cleanup was not confirmed');
+  }
 }
 
 function collectOpenCodeAggregateRuntimeMemberEvidence(
@@ -193,6 +202,58 @@ export async function launchOpenCodeAggregatePrimaryLane(
     launchResult,
     launchInput
   );
+  const retainPrimaryRuntime = shouldRetainOpenCodeRuntimeLaunch(result);
+  if (retainPrimaryRuntime) {
+    const primaryMembers = result.members;
+    const secondaryLanes = params.run.mixedSecondaryLanes ?? [];
+    // Publish ownership before any degraded-lane index write can fail. Once
+    // launch persistence proves that this candidate is retainable, leaving it
+    // untracked would make later cleanup/restart paths unable to target the
+    // exact runtime generation.
+    ports.setRuntimeAdapterRunByTeam(teamName, {
+      runId,
+      providerId: 'opencode',
+      cwd: launchCwd,
+      get members() {
+        return collectOpenCodeAggregateRuntimeMemberEvidence(primaryMembers, secondaryLanes);
+      },
+    });
+  }
+  if (result.teamLaunchState === 'partial_failure') {
+    if (!retainPrimaryRuntime) {
+      try {
+        await params.adapter.stop({
+          ...launchInput,
+          reason: 'cleanup',
+          force: true,
+        });
+      } catch (error) {
+        // A failed stop means the adapter process may still be live even though
+        // its launch evidence was not retainable. Publish its exact ownership
+        // before rejecting so stopTeam/recovery can retry the same generation.
+        ports.setRuntimeAdapterRunByTeam(teamName, {
+          runId,
+          providerId: 'opencode',
+          cwd: launchCwd,
+          members: result.members,
+        });
+        ports.logWarning?.(
+          `[${teamName}] Failed to stop unretainable OpenCode primary lane: ${getErrorMessage(error)}`
+        );
+        throw new OpenCodeAggregateRuntimeStopError([error]);
+      }
+    }
+    await ports.upsertOpenCodeRuntimeLaneIndexEntry({
+      teamsBasePath: ports.getTeamsBasePath(),
+      teamName,
+      laneId: 'primary',
+      runId,
+      state: 'degraded',
+      diagnostics: Array.from(
+        new Set([...(migration.diagnostics ?? []), ...result.diagnostics].filter(Boolean))
+      ),
+    });
+  }
   const snapshotStatuses = snapshotToMemberSpawnStatuses(snapshot);
   for (const member of expectedMembers) {
     const status = snapshotStatuses[member.name];
@@ -210,22 +271,6 @@ export async function launchOpenCodeAggregatePrimaryLane(
     teamColor: params.run.request.color,
     teamDisplayName: params.run.request.displayName,
   });
-  // Persist exact run ownership for every non-terminal launch, plus a partial
-  // failure that still has retainable member runtime evidence. This preserves
-  // the live-base persistence contract without discarding a usable aggregate.
-  const retainRuntimeOwnership = shouldRetainOpenCodeRuntimeLaunch(result);
-  if (retainRuntimeOwnership) {
-    const primaryMembers = result.members;
-    const secondaryLanes = params.run.mixedSecondaryLanes ?? [];
-    ports.setRuntimeAdapterRunByTeam(teamName, {
-      runId,
-      providerId: 'opencode',
-      cwd: launchCwd,
-      get members() {
-        return collectOpenCodeAggregateRuntimeMemberEvidence(primaryMembers, secondaryLanes);
-      },
-    });
-  }
   return result;
 }
 

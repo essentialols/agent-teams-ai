@@ -66,6 +66,7 @@ export interface TeamProvisioningLaunchStateStoreBoundaryServiceHostOptions {
 export class TeamProvisioningLaunchStateStoreBoundary {
   private readonly queue = new Map<string, Promise<unknown>>();
   private readonly writtenRunIdByTeam: Map<string, string>;
+  private readonly observedTrackedRunIdByTeam = new Map<string, string>();
 
   constructor(private readonly ports: TeamProvisioningLaunchStateStoreBoundaryPorts) {
     this.writtenRunIdByTeam = ports.writtenRunIdByTeam ?? new Map<string, string>();
@@ -142,10 +143,14 @@ export class TeamProvisioningLaunchStateStoreBoundary {
     const previousSnapshot = await this.ports.launchStateStore.read(teamName).catch(() => null);
     const trackedRunIdBeforeWrite =
       typeof options?.runId === 'string' ? this.ports.getTrackedRunId(teamName) : undefined;
+    if (typeof options?.runId === 'string' && trackedRunIdBeforeWrite === options.runId) {
+      this.observedTrackedRunIdByTeam.set(teamName, options.runId);
+    }
     if (
       typeof options?.runId === 'string' &&
-      typeof trackedRunIdBeforeWrite === 'string' &&
-      trackedRunIdBeforeWrite !== options.runId
+      ((typeof trackedRunIdBeforeWrite === 'string' && trackedRunIdBeforeWrite !== options.runId) ||
+        (trackedRunIdBeforeWrite == null &&
+          this.observedTrackedRunIdByTeam.get(teamName) === options.runId))
     ) {
       this.ports.logDebug(
         `[${teamName}] Skipping stale launch-state write for run ${options.runId}`
@@ -175,10 +180,14 @@ export class TeamProvisioningLaunchStateStoreBoundary {
     await this.ports.launchStateStore.write(teamName, normalizedSnapshot);
     const trackedRunIdAfterWrite =
       typeof options?.runId === 'string' ? this.ports.getTrackedRunId(teamName) : undefined;
+    if (typeof options?.runId === 'string' && trackedRunIdAfterWrite === options.runId) {
+      this.observedTrackedRunIdByTeam.set(teamName, options.runId);
+    }
     if (
       typeof options?.runId === 'string' &&
-      typeof trackedRunIdAfterWrite === 'string' &&
-      trackedRunIdAfterWrite !== options.runId
+      ((typeof trackedRunIdAfterWrite === 'string' && trackedRunIdAfterWrite !== options.runId) ||
+        (trackedRunIdAfterWrite == null &&
+          this.observedTrackedRunIdByTeam.get(teamName) === options.runId))
     ) {
       await this.ports.launchStateStore.clear(teamName);
       if (this.writtenRunIdByTeam.get(teamName) === writtenRunIdBeforeWrite) {

@@ -330,6 +330,50 @@ describe('atomicWriteAsync', () => {
     platform.mockRestore();
   });
 
+  it('rejects a strict directory device failure before publish', async () => {
+    const failure = Object.assign(new Error('directory device failure'), { code: 'EIO' });
+    mockDirectoryFailure('sync', failure);
+
+    await expect(
+      atomicWriteAsync(TARGET_PATH, CONTENT, {
+        durability: 'strict',
+        syncDirectory: true,
+      })
+    ).rejects.toBe(failure);
+
+    expect(mockRename).not.toHaveBeenCalled();
+  });
+
+  it('accepts an explicitly unsupported directory fsync result in strict mode', async () => {
+    const fileHandle = {
+      sync: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const directoryHandle = {
+      sync: vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error('unsupported directory sync'), { code: 'EINVAL' })
+        ),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const onDirectorySyncOutcome = vi.fn();
+    mockOpen
+      .mockResolvedValueOnce(fileHandle as unknown as fs.promises.FileHandle)
+      .mockResolvedValueOnce(directoryHandle as unknown as fs.promises.FileHandle);
+
+    await expect(
+      atomicWriteAsync(TARGET_PATH, CONTENT, {
+        durability: 'strict',
+        syncDirectory: true,
+        onDirectorySyncOutcome,
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockRename).toHaveBeenCalledOnce();
+    expect(onDirectorySyncOutcome).toHaveBeenCalledWith('unsupported-platform');
+  });
+
   it.each(['open', 'sync', 'close'] as const)(
     'keeps parent-directory %s failure best-effort without strict durability',
     async (stage) => {

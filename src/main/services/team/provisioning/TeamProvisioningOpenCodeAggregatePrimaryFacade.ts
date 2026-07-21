@@ -446,6 +446,12 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
         );
       } catch (rollbackError) {
         if (restartNoLongerCurrent()) {
+          await this.stopUnretainableOpenCodePrimaryLane({
+            adapter,
+            run,
+            previousEffectiveMembers,
+            previousLaunchState,
+          });
           await this.clearCancelledOpenCodeAggregateRestartState(teamName, run.runId);
           throw rollbackError;
         }

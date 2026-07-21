@@ -108,12 +108,14 @@ export function useCodexAccountSnapshot(options: {
   enabledRef.current = enabled;
 
   useEffect(() => {
+    const loadingTokens = loadingTokensRef.current;
+    const rateLimitsLoadingTokens = rateLimitsLoadingTokensRef.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       lifecycleIdRef.current += 1;
-      loadingTokensRef.current.clear();
-      rateLimitsLoadingTokensRef.current.clear();
+      loadingTokens.clear();
+      rateLimitsLoadingTokens.clear();
     };
   }, []);
 

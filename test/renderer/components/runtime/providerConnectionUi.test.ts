@@ -55,15 +55,15 @@ function createAnthropicProvider(
 function createCodexProvider(
   overrides?: Partial<CliProviderStatus> &
     Partial<CliProviderStatus['connection']> & {
-    authenticated?: boolean;
-    authMethod?: string | null;
-    selectedBackendId?: string | null;
-    resolvedBackendId?: string | null;
-    availableBackends?: CliProviderStatus['availableBackends'];
-    backend?: CliProviderStatus['backend'];
-    statusMessage?: string | null;
-    canLoginFromUi?: boolean;
-  }
+      authenticated?: boolean;
+      authMethod?: string | null;
+      selectedBackendId?: string | null;
+      resolvedBackendId?: string | null;
+      availableBackends?: CliProviderStatus['availableBackends'];
+      backend?: CliProviderStatus['backend'];
+      statusMessage?: string | null;
+      canLoginFromUi?: boolean;
+    }
 ): CliProviderStatus {
   return {
     providerId: 'codex',

@@ -1,20 +1,23 @@
+import { BackendSelectingTaskStallJournalStore } from '@features/internal-storage/main/composition/BackendSelectingTaskStallJournalStore';
+import { createInternalStorageFeature } from '@features/internal-storage/main/composition/createInternalStorageFeature';
+import { InternalStorageBackendSelector } from '@features/internal-storage/main/composition/InternalStorageBackendSelector';
+import { InternalStorageJsonReplica } from '@features/internal-storage/main/infrastructure/InternalStorageJsonReplica';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BackendSelectingTaskStallJournalStore } from '@features/internal-storage/main/composition/BackendSelectingTaskStallJournalStore';
-import { createInternalStorageFeature } from '@features/internal-storage/main/composition/createInternalStorageFeature';
-import { InternalStorageBackendSelector } from '@features/internal-storage/main/composition/InternalStorageBackendSelector';
+import { getCommentNotificationJournalPath } from '../../../src/main/services/team/JsonTaskCommentNotificationJournalStore';
 import { getStallMonitorJournalPath } from '../../../src/main/services/team/stallMonitor/JsonTaskStallJournalStore';
 import { setClaudeBasePathOverride } from '../../../src/main/utils/pathDecoder';
 
-import type { InternalStorageBackendInfo } from '@features/internal-storage/contracts/internalStorageContracts';
 import type {
   TaskStallJournalMutation,
   TaskStallJournalStore,
 } from '../../../src/main/services/team/stallMonitor/TaskStallJournalStore';
 import type { TaskStallJournalEntry } from '../../../src/main/services/team/stallMonitor/TeamTaskStallTypes';
+import type { TaskCommentNotificationJournalEntry } from '../../../src/main/services/team/TaskCommentNotificationJournalStore';
+import type { InternalStorageBackendInfo } from '@features/internal-storage/contracts/internalStorageContracts';
 
 class RecordingStore implements TaskStallJournalStore {
   calls = 0;
@@ -95,6 +98,53 @@ describe('createInternalStorageFeature', () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'internal-storage-feature-'));
     setClaudeBasePathOverride(tmpDir);
     await fs.mkdir(path.join(tmpDir, 'teams', 'demo'), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, 'teams', 'replica-team'), { recursive: true });
+
+    const replicatedStall: TaskStallJournalEntry = {
+      epochKey: 'task-replicated:epoch-1',
+      teamName: 'replica-team',
+      taskId: 'task-replicated',
+      branch: 'work',
+      signal: 'turn_ended_after_touch',
+      state: 'alerted',
+      consecutiveScans: 3,
+      createdAt: '2026-07-07T09:00:00.000Z',
+      updatedAt: '2026-07-07T09:05:00.000Z',
+      alertedAt: '2026-07-07T09:05:00.000Z',
+    };
+    const stallReplica = new InternalStorageJsonReplica<{ entries: TaskStallJournalEntry[] }>(
+      (teamName) => `${getStallMonitorJournalPath(teamName)}.sqlite-fallback-replica`,
+      (value): value is { entries: TaskStallJournalEntry[] } => Boolean(value)
+    );
+    await stallReplica.writeClean('replica-team', { entries: [replicatedStall] });
+
+    const replicatedComment: TaskCommentNotificationJournalEntry = {
+      key: 'task-replicated:comment-1',
+      taskId: 'task-replicated',
+      commentId: 'comment-1',
+      author: 'bob',
+      messageId: 'message-1',
+      state: 'sent',
+      createdAt: '2026-07-07T09:00:00.000Z',
+      updatedAt: '2026-07-07T09:05:00.000Z',
+      sentAt: '2026-07-07T09:05:00.000Z',
+    };
+    const commentReplica = new InternalStorageJsonReplica<{
+      initialized: boolean;
+      entries: TaskCommentNotificationJournalEntry[];
+    }>(
+      (teamName) => `${getCommentNotificationJournalPath(teamName)}.sqlite-fallback-replica`,
+      (
+        value
+      ): value is {
+        initialized: boolean;
+        entries: TaskCommentNotificationJournalEntry[];
+      } => Boolean(value)
+    );
+    await commentReplica.writeClean('replica-team', {
+      initialized: true,
+      entries: [replicatedComment],
+    });
 
     // Under vitest either the worker bundle is missing or the native module
     // has the Electron ABI, so the feature must degrade to the JSON stores.
@@ -131,6 +181,17 @@ describe('createInternalStorageFeature', () => {
     expect(await feature.taskCommentNotificationJournalStore.exists('demo')).toBe(false);
     await feature.taskCommentNotificationJournalStore.ensureInitialized('demo');
     expect(await feature.taskCommentNotificationJournalStore.exists('demo')).toBe(true);
+
+    const replicated = await feature.taskStallJournalStore.update('replica-team', (entries) => ({
+      entries,
+      result: entries[0],
+      changed: false,
+    }));
+    expect(replicated).toMatchObject({ state: 'alerted', epochKey: replicatedStall.epochKey });
+    await expect(feature.taskCommentNotificationJournalStore.read('replica-team')).resolves.toEqual(
+      [expect.objectContaining({ state: 'sent', key: replicatedComment.key })]
+    );
+    expect(feature.memberWorkSyncBackend).not.toBeNull();
 
     await feature.dispose();
   });

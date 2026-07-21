@@ -10,6 +10,21 @@ describe('MemberWorkSyncEventQueue', () => {
     vi.useRealTimers();
   });
 
+  it('acknowledges accepted events and rejects enqueue after stop', async () => {
+    const queue = new MemberWorkSyncEventQueue({
+      reconcile: vi.fn(async () => undefined),
+      isTeamActive: () => true,
+    });
+
+    expect(
+      queue.enqueue({ teamName: 'team-a', memberName: 'bob', triggerReason: 'turn_settled' })
+    ).toBe(true);
+    await queue.stop();
+    expect(
+      queue.enqueue({ teamName: 'team-a', memberName: 'bob', triggerReason: 'turn_settled' })
+    ).toBe(false);
+  });
+
   it('coalesces duplicate member events into one queue reconcile', async () => {
     const reconciles: unknown[] = [];
     const auditEvents: string[] = [];

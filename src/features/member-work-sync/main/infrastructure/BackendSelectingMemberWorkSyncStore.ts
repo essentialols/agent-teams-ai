@@ -1,3 +1,18 @@
+import {
+  type InternalStorageBackendSelector,
+  InternalStorageJsonReplica,
+  KeyedMutex,
+  type MemberWorkSyncStorageGateway,
+} from '@features/internal-storage/main';
+
+import {
+  isMemberWorkSyncStoreSnapshot,
+  type JsonMemberWorkSyncStore,
+  type MemberWorkSyncStoreSnapshot,
+} from './JsonMemberWorkSyncStore';
+import { mergeMemberWorkSyncSnapshots } from './memberWorkSyncSnapshotMerge';
+import { recordsToSnapshot, snapshotToRecords } from './memberWorkSyncSqliteMappers';
+
 import type {
   MemberWorkSyncOutboxClaimInput,
   MemberWorkSyncOutboxCountDeliveredForAgendaInput,
@@ -19,13 +34,19 @@ import type {
   MemberWorkSyncReportStorePort,
   MemberWorkSyncStatusStorePort,
 } from '../../core/application/ports';
-import type { JsonMemberWorkSyncStore } from './JsonMemberWorkSyncStore';
+import type { MemberWorkSyncStorePaths } from './MemberWorkSyncStorePaths';
 import type { SqliteMemberWorkSyncStore } from './SqliteMemberWorkSyncStore';
-import type { InternalStorageBackendSelector } from '@features/internal-storage/main';
 
 type FullStore = Required<MemberWorkSyncStatusStorePort> &
   Required<MemberWorkSyncReportStorePort> &
   Required<MemberWorkSyncOutboxStorePort>;
+
+export interface BackendSelectingMemberWorkSyncStoreOptions {
+  gateway: MemberWorkSyncStorageGateway;
+  paths: MemberWorkSyncStorePaths;
+  fallbackRequiresReplica: boolean;
+  logger?: { warn(message: string, metadata?: Record<string, unknown>): void };
+}
 
 /**
  * Routes member-work-sync persistence through the internal-storage session
@@ -39,37 +60,130 @@ export class BackendSelectingMemberWorkSyncStore
     MemberWorkSyncReportStorePort,
     MemberWorkSyncOutboxStorePort
 {
+  private readonly replica: InternalStorageJsonReplica<MemberWorkSyncStoreSnapshot> | null;
+  private readonly replicaMutex = new KeyedMutex();
+  private readonly sqlitePreparedTeams = new Set<string>();
+  private readonly jsonHydratedTeams = new Set<string>();
+
   constructor(
     private readonly selector: InternalStorageBackendSelector,
     private readonly sqliteStore: SqliteMemberWorkSyncStore,
-    private readonly jsonStore: JsonMemberWorkSyncStore
-  ) {}
+    private readonly jsonStore: JsonMemberWorkSyncStore,
+    private readonly options?: BackendSelectingMemberWorkSyncStoreOptions
+  ) {
+    this.replica = options
+      ? new InternalStorageJsonReplica(
+          (teamName) => options.paths.getSqliteFallbackReplicaPath(teamName),
+          isMemberWorkSyncStoreSnapshot
+        )
+      : null;
+  }
 
-  private backend(): Promise<FullStore> {
-    return this.selector.select<FullStore>(this.sqliteStore, this.jsonStore);
+  private async run<T>(
+    teamName: string,
+    mutation: boolean,
+    sqliteAction: (store: FullStore) => Promise<T>,
+    jsonAction: (store: FullStore) => Promise<T>
+  ): Promise<T> {
+    const backend = await this.selector.select<'sqlite' | 'json'>('sqlite', 'json');
+    if (!this.replica || !this.options) {
+      return backend === 'sqlite'
+        ? sqliteAction(this.sqliteStore as FullStore)
+        : jsonAction(this.jsonStore as FullStore);
+    }
+    return this.replicaMutex.run(teamName, async () => {
+      if (backend === 'json') {
+        if (!this.jsonHydratedTeams.has(teamName)) {
+          const snapshot = await this.replica!.readClean(
+            teamName,
+            this.options!.fallbackRequiresReplica
+          );
+          if (snapshot) await this.jsonStore.restoreReplicaSnapshot(teamName, snapshot);
+          this.jsonHydratedTeams.add(teamName);
+        }
+        return jsonAction(this.jsonStore as FullStore);
+      }
+
+      const publishReplica = mutation || !this.sqlitePreparedTeams.has(teamName);
+      if (!this.sqlitePreparedTeams.has(teamName)) {
+        const replicaSnapshot = await this.replica!.readForPrimary(
+          teamName,
+          this.selector.getBackendInfo()?.integrity !== 'recovered'
+        );
+        if (replicaSnapshot) {
+          const canonical = await this.options!.gateway.listTeamSnapshot(teamName);
+          await this.options!.gateway.importTeam(
+            teamName,
+            mergeMemberWorkSyncSnapshots(canonical, snapshotToRecords(replicaSnapshot))
+          );
+        }
+      }
+      if (publishReplica) await this.replica!.markDirty(teamName);
+      const result = await sqliteAction(this.sqliteStore as FullStore);
+      if (publishReplica) {
+        try {
+          const snapshot = recordsToSnapshot(
+            await this.options!.gateway.listTeamSnapshot(teamName)
+          );
+          await this.replica!.writeClean(teamName, snapshot);
+          this.sqlitePreparedTeams.add(teamName);
+        } catch (error) {
+          this.options!.logger?.warn('member-work-sync fallback replica publication failed', {
+            teamName,
+            error: String(error),
+          });
+        }
+      }
+      return result;
+    });
   }
 
   async read(input: {
     teamName: string;
     memberName: string;
   }): Promise<MemberWorkSyncStatus | null> {
-    return (await this.backend()).read(input);
+    return this.run(
+      input.teamName,
+      false,
+      (store) => store.read(input),
+      (store) => store.read(input)
+    );
   }
 
   async write(status: MemberWorkSyncStatus): Promise<void> {
-    await (await this.backend()).write(status);
+    await this.run(
+      status.teamName,
+      true,
+      (store) => store.write(status),
+      (store) => store.write(status)
+    );
   }
 
   async readTeamMetrics(teamName: string): Promise<MemberWorkSyncTeamMetrics> {
-    return (await this.backend()).readTeamMetrics(teamName);
+    return this.run(
+      teamName,
+      false,
+      (store) => store.readTeamMetrics(teamName),
+      (store) => store.readTeamMetrics(teamName)
+    );
   }
 
   async appendPendingReport(request: MemberWorkSyncReportRequest, reason: string): Promise<void> {
-    await (await this.backend()).appendPendingReport(request, reason);
+    await this.run(
+      request.teamName,
+      true,
+      (store) => store.appendPendingReport(request, reason),
+      (store) => store.appendPendingReport(request, reason)
+    );
   }
 
   async listPendingReports(teamName: string): Promise<MemberWorkSyncReportIntent[]> {
-    return (await this.backend()).listPendingReports(teamName);
+    return this.run(
+      teamName,
+      false,
+      (store) => store.listPendingReports(teamName),
+      (store) => store.listPendingReports(teamName)
+    );
   }
 
   async markPendingReportProcessed(
@@ -77,41 +191,81 @@ export class BackendSelectingMemberWorkSyncStore
     id: string,
     result: { status: MemberWorkSyncReportIntentStatus; resultCode: string; processedAt: string }
   ): Promise<void> {
-    await (await this.backend()).markPendingReportProcessed(teamName, id, result);
+    await this.run(
+      teamName,
+      true,
+      (store) => store.markPendingReportProcessed(teamName, id, result),
+      (store) => store.markPendingReportProcessed(teamName, id, result)
+    );
   }
 
   async ensurePending(
     input: MemberWorkSyncOutboxEnsureInput
   ): Promise<MemberWorkSyncOutboxEnsureResult> {
-    return (await this.backend()).ensurePending(input);
+    return this.run(
+      input.teamName,
+      true,
+      (store) => store.ensurePending(input),
+      (store) => store.ensurePending(input)
+    );
   }
 
   async claimDue(input: MemberWorkSyncOutboxClaimInput): Promise<MemberWorkSyncOutboxItem[]> {
-    return (await this.backend()).claimDue(input);
+    return this.run(
+      input.teamName,
+      true,
+      (store) => store.claimDue(input),
+      (store) => store.claimDue(input)
+    );
   }
 
   async markDelivered(input: MemberWorkSyncOutboxMarkDeliveredInput): Promise<void> {
-    await (await this.backend()).markDelivered(input);
+    await this.run(
+      input.teamName,
+      true,
+      (store) => store.markDelivered(input),
+      (store) => store.markDelivered(input)
+    );
   }
 
   async markSuperseded(input: MemberWorkSyncOutboxMarkSupersededInput): Promise<void> {
-    await (await this.backend()).markSuperseded(input);
+    await this.run(
+      input.teamName,
+      true,
+      (store) => store.markSuperseded(input),
+      (store) => store.markSuperseded(input)
+    );
   }
 
   async markFailed(input: MemberWorkSyncOutboxMarkFailedInput): Promise<void> {
-    await (await this.backend()).markFailed(input);
+    await this.run(
+      input.teamName,
+      true,
+      (store) => store.markFailed(input),
+      (store) => store.markFailed(input)
+    );
   }
 
   async countRecentDelivered(
     input: MemberWorkSyncOutboxCountRecentDeliveredInput
   ): Promise<number> {
-    return (await this.backend()).countRecentDelivered(input);
+    return this.run(
+      input.teamName,
+      false,
+      (store) => store.countRecentDelivered(input),
+      (store) => store.countRecentDelivered(input)
+    );
   }
 
   async countDeliveredForAgenda(
     input: MemberWorkSyncOutboxCountDeliveredForAgendaInput
   ): Promise<number> {
-    return (await this.backend()).countDeliveredForAgenda(input);
+    return this.run(
+      input.teamName,
+      false,
+      (store) => store.countDeliveredForAgenda(input),
+      (store) => store.countDeliveredForAgenda(input)
+    );
   }
 
   async findDeliveredReviewPickupRequestEventIds(input: {
@@ -119,7 +273,12 @@ export class BackendSelectingMemberWorkSyncStore
     memberName: string;
     reviewRequestEventIds: string[];
   }): Promise<string[]> {
-    return (await this.backend()).findDeliveredReviewPickupRequestEventIds(input);
+    return this.run(
+      input.teamName,
+      false,
+      (store) => store.findDeliveredReviewPickupRequestEventIds(input),
+      (store) => store.findDeliveredReviewPickupRequestEventIds(input)
+    );
   }
 
   async findRecentRecoveryByIntent(input: {
@@ -134,6 +293,11 @@ export class BackendSelectingMemberWorkSyncStore
     payloadHash: string;
     updatedAt: string;
   } | null> {
-    return (await this.backend()).findRecentRecoveryByIntent(input);
+    return this.run(
+      input.teamName,
+      false,
+      (store) => store.findRecentRecoveryByIntent(input),
+      (store) => store.findRecentRecoveryByIntent(input)
+    );
   }
 }

@@ -17,3 +17,7 @@ export {
   getInternalStorageDatabasePath,
 } from './composition/createInternalStorageFeature';
 export { InternalStorageBackendSelector } from './composition/InternalStorageBackendSelector';
+export {
+  InternalStorageFallbackUnsafeError,
+  InternalStorageJsonReplica,
+} from './infrastructure/InternalStorageJsonReplica';

@@ -184,16 +184,16 @@ export class MemberWorkSyncEventQueue {
     triggerReason: MemberWorkSyncTriggerReason;
     runAfterMs?: number;
     recovery?: MemberWorkSyncReconcileContext['recovery'];
-  }): void {
+  }): boolean {
     if (this.stopped) {
-      return;
+      return false;
     }
 
     const teamName = input.teamName.trim();
     const memberName = input.memberName.trim();
     if (!teamName || !memberName) {
       this.counters.dropped += 1;
-      return;
+      return false;
     }
 
     const key = keyOf(teamName, memberName);
@@ -215,7 +215,7 @@ export class MemberWorkSyncEventQueue {
         source: 'event_queue',
         reason: input.triggerReason,
       });
-      return;
+      return true;
     }
 
     const existing = this.items.get(key);
@@ -248,7 +248,7 @@ export class MemberWorkSyncEventQueue {
         reason: input.triggerReason,
       });
       this.schedule();
-      return;
+      return true;
     }
 
     this.items.set(key, {
@@ -272,6 +272,7 @@ export class MemberWorkSyncEventQueue {
       reason: input.triggerReason,
     });
     this.schedule();
+    return true;
   }
 
   dropTeam(teamName: string): void {

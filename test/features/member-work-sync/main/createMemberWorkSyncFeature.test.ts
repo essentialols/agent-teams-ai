@@ -527,6 +527,7 @@ describe('createMemberWorkSyncFeature composition', () => {
     const runtimeDrain = createDeferred();
     const nudgeDrain = createDeferred();
     const queueDrain = createDeferred();
+    const queueStopStarted = createDeferred();
     const runtimeDisposeOriginal = RuntimeTurnSettledDrainScheduler.prototype.dispose;
     const nudgeDisposeOriginal = MemberWorkSyncNudgeDispatchScheduler.prototype.dispose;
     const queueStopOriginal = MemberWorkSyncEventQueue.prototype.stop;
@@ -547,6 +548,7 @@ describe('createMemberWorkSyncFeature composition', () => {
     const queueStop = vi
       .spyOn(MemberWorkSyncEventQueue.prototype, 'stop')
       .mockImplementation(function (this: MemberWorkSyncEventQueue) {
+        queueStopStarted.resolve();
         return Promise.all([queueStopOriginal.call(this), queueDrain.promise]).then(
           () => undefined
         );
@@ -566,7 +568,7 @@ describe('createMemberWorkSyncFeature composition', () => {
       expect(secondDispose).toBe(firstDispose);
       expect(runtimeDispose).toHaveBeenCalledOnce();
       expect(nudgeDispose).toHaveBeenCalledOnce();
-      expect(queueStop).toHaveBeenCalledOnce();
+      expect(queueStop).not.toHaveBeenCalled();
 
       let disposed = false;
       void firstDispose.then(() => {
@@ -576,11 +578,16 @@ describe('createMemberWorkSyncFeature composition', () => {
       expect(disposed).toBe(false);
 
       runtimeDrain.resolve();
-      queueDrain.resolve();
       await Promise.resolve();
       expect(disposed).toBe(false);
+      expect(queueStop).not.toHaveBeenCalled();
 
       nudgeDrain.resolve();
+      await queueStopStarted.promise;
+      expect(queueStop).toHaveBeenCalledOnce();
+      expect(disposed).toBe(false);
+
+      queueDrain.resolve();
       await firstDispose;
       expect(disposed).toBe(true);
       expect(feature.dispose()).toBe(firstDispose);
@@ -591,6 +598,97 @@ describe('createMemberWorkSyncFeature composition', () => {
       await feature.dispose();
       runtimeDispose.mockRestore();
       nudgeDispose.mockRestore();
+      queueStop.mockRestore();
+    }
+  });
+
+  it('rejects a late turn-settled enqueue after bounded scheduler disposal', async () => {
+    const claudeRoot = makeTempRoot();
+    setClaudeBasePathOverride(claudeRoot);
+    const teamsBasePath = getTeamsBasePath();
+    const resolverStarted = createDeferred();
+    const resolverRelease = createDeferred();
+    let resolveSchedulerStarted!: (scheduler: RuntimeTurnSettledDrainScheduler) => void;
+    const schedulerStarted = new Promise<RuntimeTurnSettledDrainScheduler>((resolve) => {
+      resolveSchedulerStarted = resolve;
+    });
+    const schedulerStart = vi
+      .spyOn(RuntimeTurnSettledDrainScheduler.prototype, 'start')
+      .mockImplementation(function (this: RuntimeTurnSettledDrainScheduler) {
+        resolveSchedulerStarted(this);
+      });
+    const schedulerDispose = vi
+      .spyOn(RuntimeTurnSettledDrainScheduler.prototype, 'dispose')
+      .mockResolvedValue(undefined);
+    const queueStop = vi.spyOn(MemberWorkSyncEventQueue.prototype, 'stop');
+    const feature = createMemberWorkSyncFeature({
+      teamsBasePath,
+      configReader: { getConfig: vi.fn(async () => null) } as never,
+      taskReader: { getTasks: vi.fn(async () => []) } as never,
+      kanbanManager: { getState: vi.fn(async () => null) } as never,
+      membersMetaStore: { getMembers: vi.fn(async () => []) } as never,
+      runtimeTurnSettledTargetResolver: {
+        resolve: vi.fn(async () => {
+          resolverStarted.resolve();
+          await resolverRelease.promise;
+          return { ok: true as const, teamName: 'team-a', memberName: 'bob' };
+        }),
+      },
+    });
+
+    try {
+      const env = await feature.buildRuntimeTurnSettledEnvironment({ provider: 'opencode' });
+      const spoolRoot = env?.[RUNTIME_TURN_SETTLED_SPOOL_ROOT_ENV];
+      expect(spoolRoot).toBeTruthy();
+      const eventFileName = '20260722T120000000Z-dispose-race.opencode.json';
+      await fs.promises.writeFile(
+        path.join(spoolRoot!, 'incoming', eventFileName),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          provider: 'opencode',
+          source: 'agent-teams-orchestrator-opencode',
+          eventName: 'runtime_turn_settled',
+          hookEventName: 'Stop',
+          sessionId: 'ses-opencode-dispose',
+          runtimePromptMessageId: 'msg_dispose',
+          laneId: 'secondary:opencode:bob',
+          memberName: 'bob',
+          teamName: 'team-a',
+          cwd: claudeRoot,
+          outcome: 'success',
+          recordedAt: '2026-07-22T12:00:00.000Z',
+        })}\n`,
+        'utf8'
+      );
+
+      const activeScheduler = await schedulerStarted;
+      const drain = activeScheduler.drainNow();
+      await resolverStarted.promise;
+
+      let disposed = false;
+      const dispose = feature.dispose().then(() => {
+        disposed = true;
+      });
+      await dispose;
+      expect(queueStop).toHaveBeenCalledOnce();
+      expect(disposed).toBe(true);
+
+      resolverRelease.resolve();
+      await expect(drain).resolves.toMatchObject({ enqueued: 0, failed: 1 });
+      await expect(
+        fs.promises.readFile(
+          path.join(spoolRoot!, 'processed', `${eventFileName}.meta.json`),
+          'utf8'
+        )
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(
+        fs.promises.stat(path.join(spoolRoot!, 'processing', eventFileName))
+      ).resolves.toMatchObject({ isFile: expect.any(Function) });
+    } finally {
+      resolverRelease.resolve();
+      await feature.dispose();
+      schedulerStart.mockRestore();
+      schedulerDispose.mockRestore();
       queueStop.mockRestore();
     }
   });

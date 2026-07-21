@@ -299,11 +299,21 @@ function findExactRuntimeMemberEvidence(
   members: Readonly<Record<string, TeamRuntimeMemberLaunchEvidence>> | null | undefined,
   memberName: string
 ): TeamRuntimeMemberLaunchEvidence | undefined {
-  return Object.entries(members ?? {}).find(
-    ([candidateName, evidence]) =>
-      matchesExactTeamMemberName(candidateName, memberName) &&
-      matchesExactTeamMemberName(evidence.memberName, memberName)
-  )?.[1];
+  for (const [candidateName, evidence] of Object.entries(members ?? {})) {
+    if (!matchesExactTeamMemberName(candidateName, memberName)) {
+      continue;
+    }
+    const evidenceMemberName =
+      typeof evidence.memberName === 'string' ? evidence.memberName.trim() : '';
+    if (
+      evidenceMemberName.length > 0 &&
+      !matchesExactTeamMemberName(evidenceMemberName, memberName)
+    ) {
+      continue;
+    }
+    return evidence;
+  }
+  return undefined;
 }
 
 function findExactMapEntry<T>(
@@ -978,7 +988,14 @@ export async function buildTeamAgentRuntimeSnapshot(
   };
 
   const getLiveRuntimeMember = (memberName: string): LiveTeamAgentRuntimeMetadata | undefined => {
-    return findExactMapEntry(liveRuntimeByMember, memberName)?.[1];
+    const exact = findExactMapEntry(liveRuntimeByMember, memberName)?.[1];
+    if (exact) {
+      return exact;
+    }
+    const observedMatches = [...liveRuntimeByMember.entries()].filter(([observedName]) =>
+      matchesObservedMemberNameForExpected(observedName, memberName)
+    );
+    return observedMatches.length === 1 ? observedMatches[0]?.[1] : undefined;
   };
   const getSpawnStatusMember = (memberName: string): MemberSpawnStatusEntry | undefined => {
     if (!canUseSpawnStatusEvidence) {

@@ -197,6 +197,7 @@ function mixedRunWithConfirmedSecondaryEvidence(
     resultRunId?: string;
     evidenceKey?: string;
     evidenceMemberName?: string;
+    omitEvidenceMemberName?: boolean;
     evidenceRuntimePid?: number;
   } = {}
 ): TeamProvisioningRuntimeSnapshotRun {
@@ -214,6 +215,13 @@ function mixedRunWithConfirmedSecondaryEvidence(
   };
   const laneRunId =
     overrides.laneRunId === undefined ? 'run-secondary-current' : overrides.laneRunId;
+  const laneEvidence: Partial<typeof evidence> = {
+    ...evidence,
+    memberName: overrides.evidenceMemberName ?? evidence.memberName,
+  };
+  if (overrides.omitEvidenceMemberName) {
+    delete laneEvidence.memberName;
+  }
   currentRun.mixedSecondaryLanes = [
     {
       laneId: 'secondary:opencode:Worker',
@@ -222,10 +230,7 @@ function mixedRunWithConfirmedSecondaryEvidence(
       result: {
         runId: overrides.resultRunId ?? 'run-secondary-current',
         members: {
-          [overrides.evidenceKey ?? 'Worker']: {
-            ...evidence,
-            memberName: overrides.evidenceMemberName ?? evidence.memberName,
-          },
+          [overrides.evidenceKey ?? 'Worker']: laneEvidence as typeof evidence,
         },
       },
     },
@@ -834,6 +839,48 @@ describe('TeamProvisioningRuntimeSnapshot source precedence', () => {
         laneKind: 'secondary',
         runtimeSessionId: 'session-current',
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts legacy exact-key evidence without an embedded member name', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(UPDATED_AT));
+    try {
+      const currentRun = mixedRunWithConfirmedSecondaryEvidence({
+        omitEvidenceMemberName: true,
+      });
+      const metadata = await buildMixedRuntimeMetadata({ run: currentRun });
+      const snapshot = await buildMixedRuntimeSnapshot({ run: currentRun });
+
+      expect(metadata.get('Worker')).toMatchObject({
+        alive: true,
+        runtimeSessionId: 'session-current',
+      });
+      expect(snapshot.members.Worker).toMatchObject({
+        alive: true,
+        runtimeSessionId: 'session-current',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects exact-key evidence with a conflicting embedded member name', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(UPDATED_AT));
+    try {
+      const currentRun = mixedRunWithConfirmedSecondaryEvidence({
+        evidenceMemberName: 'Worker2',
+      });
+      const metadata = await buildMixedRuntimeMetadata({ run: currentRun });
+      const snapshot = await buildMixedRuntimeSnapshot({ run: currentRun });
+
+      expect(metadata.get('Worker')).toMatchObject({ alive: false });
+      expect(metadata.get('Worker')?.runtimeSessionId).toBeUndefined();
+      expect(snapshot.members.Worker).toMatchObject({ alive: false });
+      expect(snapshot.members.Worker?.runtimeSessionId).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

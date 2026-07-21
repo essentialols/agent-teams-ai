@@ -555,9 +555,10 @@ describe('TeamProvisioningCancellationBoundary', () => {
     ]);
   });
 
-  it('finalizes and cleans up before surfacing a secondary-lane stop failure', async () => {
+  it('retains cancellation evidence after a secondary stop failure and cleans up once on retry', async () => {
     const secondaryStopFailure = new Error('secondary stop failed');
     const events: string[] = [];
+    let secondaryStopAttempts = 0;
     const run = makeRun({
       onProgress: vi.fn(() => {
         events.push('cancelled progress');
@@ -572,27 +573,47 @@ describe('TeamProvisioningCancellationBoundary', () => {
       events.push('primary stopped');
     });
     ports.stopMixedSecondaryRuntimeLanes.mockImplementation(async () => {
-      events.push('secondary stop failed');
-      throw secondaryStopFailure;
+      secondaryStopAttempts += 1;
+      if (secondaryStopAttempts === 1) {
+        events.push('secondary stop failed');
+        throw secondaryStopFailure;
+      }
+      events.push('secondary stopped');
     });
     ports.cleanupRun.mockImplementation(() => {
       events.push('cleanup');
+      ports.runs.delete(run.runId);
     });
     const boundary = createTeamProvisioningCancellationBoundary(ports);
 
     await expect(boundary.cancelProvisioning(run.runId)).rejects.toBe(secondaryStopFailure);
 
+    expect(events).toEqual(['primary stopped', 'secondary stop failed']);
+    expect(ports.updateProgress).not.toHaveBeenCalled();
+    expect(run.onProgress).not.toHaveBeenCalled();
+    expect(ports.cleanupRun).not.toHaveBeenCalled();
+    expect(ports.runs.get(run.runId)).toBe(run);
+
+    await boundary.cancelProvisioning(run.runId);
+
     expect(events).toEqual([
       'primary stopped',
       'secondary stop failed',
+      'primary stopped',
+      'secondary stopped',
       'cancelled progress',
       'cleanup',
     ]);
+    expect(ports.stopOpenCodeRuntimeAdapterTeam).toHaveBeenCalledTimes(2);
+    expect(ports.stopMixedSecondaryRuntimeLanes).toHaveBeenCalledTimes(2);
     expect(ports.updateProgress).toHaveBeenCalledOnce();
+    expect(run.onProgress).toHaveBeenCalledOnce();
+    expect(ports.cleanupRun).toHaveBeenCalledOnce();
     expect(ports.cleanupRun).toHaveBeenCalledWith(run);
+    expect(ports.runs.has(run.runId)).toBe(false);
   });
 
-  it('awaits remaining stops, finalizes cancellation, and cleans up before rethrowing a stop failure', async () => {
+  it('awaits remaining stops, retains failed evidence, and cleans up once after a successful retry', async () => {
     const primaryStopFailure = new Error('primary stop failed');
     const secondaryStopFailure = new Error('lane-a stop failed');
     const primaryStop = createDeferred<void>();
@@ -633,6 +654,9 @@ describe('TeamProvisioningCancellationBoundary', () => {
         stopInputs.push({ laneId: input.laneId, runId: input.runId });
         if (input.laneId === 'lane-a' && laneAStopAttempts++ === 0) {
           throw secondaryStopFailure;
+        }
+        if (input.laneId === 'lane-a') {
+          events.push('lane-a stopped on retry');
         }
         if (input.laneId === 'lane-b') {
           events.push('remaining secondary stop started');
@@ -681,7 +705,13 @@ describe('TeamProvisioningCancellationBoundary', () => {
       trackedRunId: run.runId,
       hasSecondaryRuntimeRuns: true,
     });
+    let primaryStopAttempts = 0;
     ports.stopOpenCodeRuntimeAdapterTeam.mockImplementation(async () => {
+      primaryStopAttempts += 1;
+      if (primaryStopAttempts > 1) {
+        events.push('primary stopped on retry');
+        return;
+      }
       try {
         await primaryStop.promise;
       } catch (error) {
@@ -735,11 +765,34 @@ describe('TeamProvisioningCancellationBoundary', () => {
       'primary stop failed',
       'remaining secondary stop started',
       'remaining secondary stopped',
-      'cancelled progress',
-      'cleanup',
       'cancellation rejected',
     ]);
+    expect(ports.updateProgress).not.toHaveBeenCalled();
+    expect(run.onProgress).not.toHaveBeenCalled();
+    expect(ports.cleanupRun).not.toHaveBeenCalled();
+    expect(ports.runs.get(run.runId)).toBe(run);
+    expect([...secondaryRuns.keys()]).toEqual(['lane-a']);
+    expect(stoppingSecondaryRuntimeTeams.has(run.teamName)).toBe(false);
+
+    await boundary.cancelProvisioning(run.runId);
+
+    expect(stopInputs).toEqual([
+      { laneId: 'lane-a', runId: 'lane-run-a' },
+      { laneId: 'lane-b', runId: 'lane-run-b' },
+      { laneId: 'lane-a', runId: 'lane-run-a' },
+    ]);
+    expect(events).toEqual([
+      'primary stop failed',
+      'remaining secondary stop started',
+      'remaining secondary stopped',
+      'cancellation rejected',
+      'primary stopped on retry',
+      'lane-a stopped on retry',
+      'cancelled progress',
+      'cleanup',
+    ]);
     expect(ports.updateProgress).toHaveBeenCalledOnce();
+    expect(run.onProgress).toHaveBeenCalledOnce();
     expect(run.onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: run.runId,

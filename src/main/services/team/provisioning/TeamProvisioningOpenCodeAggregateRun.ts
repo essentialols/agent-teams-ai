@@ -15,6 +15,7 @@ import type {
   TeamLaunchRuntimeAdapter,
   TeamRuntimeLaunchInput,
   TeamRuntimeLaunchResult,
+  TeamRuntimeStopResult,
 } from '../runtime';
 import type {
   MixedSecondaryRuntimeLaneState,
@@ -192,6 +193,8 @@ export interface OpenCodeWorktreeRootAggregateLaunchPorts extends OpenCodeWorktr
     adapter: TeamLaunchRuntimeAdapter;
     prompt: string;
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
+    assertStillCurrentAfterPersistence?: () => void;
+    onUntrackedPrimaryStopConfirmed?: () => void;
   }): Promise<TeamRuntimeLaunchResult | null>;
   launchSingleMixedSecondaryLane(
     run: OpenCodeAggregateProvisioningRun,
@@ -323,6 +326,11 @@ type OpenCodeAggregateLaneCleanupOwnership =
   | 'team_owner_changed'
   | 'secondary_owner_changed';
 
+type OpenCodeAggregateUntrackedPrimaryStopState =
+  | 'no_untracked_candidate'
+  | 'aggregate_cleanup_owned'
+  | 'inner_stop_confirmed';
+
 function getOpenCodeAggregateSecondaryCleanupOwnership(
   run: OpenCodeAggregateProvisioningRun,
   ports: OpenCodeWorktreeRootAggregateLaunchPorts
@@ -336,6 +344,19 @@ function getOpenCodeAggregateSecondaryCleanupOwnership(
   return ports.hasSecondaryRuntimeRuns(run.teamName) ? 'secondary_owner_changed' : 'owned';
 }
 
+function getOpenCodeAggregateUnconfirmedStopError(
+  result: TeamRuntimeStopResult,
+  laneId: string
+): Error | null {
+  if (result.stopped) {
+    return null;
+  }
+  const diagnostics = [...result.diagnostics, ...result.warnings].filter(Boolean).join('\n');
+  return new Error(
+    diagnostics || `OpenCode aggregate runtime lane ${laneId} stop was not confirmed`
+  );
+}
+
 async function stopOpenCodeAggregateRuntimeLanes(
   run: OpenCodeAggregateProvisioningRun,
   input: {
@@ -343,12 +364,32 @@ async function stopOpenCodeAggregateRuntimeLanes(
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
     primaryCwd: string;
     secondaryCwds: ReadonlyMap<string, string>;
+    untrackedPrimaryStopState: OpenCodeAggregateUntrackedPrimaryStopState;
   },
   ports: OpenCodeWorktreeRootAggregateLaunchPorts
 ): Promise<unknown[]> {
   const ownedRuntimeRun = ports.getRuntimeAdapterRun(run.teamName);
   const stopFailures: unknown[] = [];
-  if (ownedRuntimeRun?.providerId === 'opencode' && ownedRuntimeRun.runId === run.runId) {
+  if (input.untrackedPrimaryStopState === 'aggregate_cleanup_owned') {
+    try {
+      const result = await input.adapter.stop({
+        runId: run.runId,
+        teamName: run.teamName,
+        laneId: 'primary',
+        cwd: input.primaryCwd,
+        providerId: 'opencode',
+        reason: 'cleanup',
+        force: true,
+        previousLaunchState: input.previousLaunchState,
+      });
+      const unconfirmedStop = getOpenCodeAggregateUnconfirmedStopError(result, 'primary');
+      if (unconfirmedStop) {
+        throw unconfirmedStop;
+      }
+    } catch (error) {
+      stopFailures.push(error);
+    }
+  } else if (ownedRuntimeRun?.providerId === 'opencode' && ownedRuntimeRun.runId === run.runId) {
     await ports.stopOpenCodeRuntimeAdapterTeam(run.teamName, run.runId).catch((error) => {
       stopFailures.push(error);
     });
@@ -359,8 +400,8 @@ async function stopOpenCodeAggregateRuntimeLanes(
   for (const lane of run.mixedSecondaryLanes) {
     const ownedLane = ports.getSecondaryRuntimeRun(run.teamName, lane.laneId);
     if (ownedLane?.providerId !== 'opencode' || ownedLane.runId !== lane.runId) continue;
-    await input.adapter
-      .stop({
+    try {
+      const result = await input.adapter.stop({
         runId: ownedLane.runId,
         teamName: run.teamName,
         laneId: lane.laneId,
@@ -368,10 +409,14 @@ async function stopOpenCodeAggregateRuntimeLanes(
         providerId: 'opencode',
         reason: 'cleanup',
         previousLaunchState: input.previousLaunchState,
-      })
-      .catch((error) => {
-        stopFailures.push(error);
       });
+      const unconfirmedStop = getOpenCodeAggregateUnconfirmedStopError(result, lane.laneId);
+      if (unconfirmedStop) {
+        throw unconfirmedStop;
+      }
+    } catch (error) {
+      stopFailures.push(error);
+    }
   }
   return stopFailures;
 }
@@ -434,6 +479,7 @@ async function stopAndRollbackOpenCodeAggregateRuntimeLanes(
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
     primaryCwd: string;
     secondaryCwds: ReadonlyMap<string, string>;
+    untrackedPrimaryStopState: OpenCodeAggregateUntrackedPrimaryStopState;
   },
   ports: OpenCodeWorktreeRootAggregateLaunchPorts,
   launchError: unknown
@@ -635,6 +681,8 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
   ports.setRun(runId, run);
   ports.resetTeamScopedTransientStateForNewRun(teamName);
   let cancellationConsumed = false;
+  let untrackedPrimaryStopState: OpenCodeAggregateUntrackedPrimaryStopState =
+    'no_untracked_candidate';
   const aggregateLaunchNoLongerCurrent = (): boolean => {
     cancellationConsumed ||= ports.consumeCancelledRuntimeAdapterRunId(runId);
     const runtimeOwner = ports.getRuntimeAdapterRun(teamName);
@@ -656,7 +704,13 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
     run.processKilled = true;
     const cleanupOwnership = await stopAndRollbackOpenCodeAggregateRuntimeLanes(
       run,
-      { adapter: input.adapter, previousLaunchState, primaryCwd, secondaryCwds },
+      {
+        adapter: input.adapter,
+        previousLaunchState,
+        primaryCwd,
+        secondaryCwds,
+        untrackedPrimaryStopState,
+      },
       ports,
       new Error('OpenCode aggregate launch was cancelled')
     );
@@ -693,12 +747,24 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
   run.progress = launching;
 
   try {
+    untrackedPrimaryStopState = 'aggregate_cleanup_owned';
     const primaryResult = await ports.launchOpenCodeAggregatePrimaryLane({
       run,
       adapter: input.adapter,
       prompt: input.prompt,
       previousLaunchState,
+      assertStillCurrentAfterPersistence: () => {
+        if (aggregateLaunchNoLongerCurrent()) {
+          throw new Error(
+            `OpenCode aggregate primary launch for team "${teamName}" was cancelled because the owning run is no longer active`
+          );
+        }
+      },
+      onUntrackedPrimaryStopConfirmed: () => {
+        untrackedPrimaryStopState = 'inner_stop_confirmed';
+      },
     });
+    untrackedPrimaryStopState = 'no_untracked_candidate';
     if (aggregateLaunchNoLongerCurrent()) {
       return await finishCancelledAggregateLaunch();
     }
@@ -810,7 +876,13 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
       );
       const laneCleanupOwnership = await stopAndRollbackOpenCodeAggregateRuntimeLanes(
         run,
-        { adapter: input.adapter, previousLaunchState, primaryCwd, secondaryCwds },
+        {
+          adapter: input.adapter,
+          previousLaunchState,
+          primaryCwd,
+          secondaryCwds,
+          untrackedPrimaryStopState,
+        },
         ports,
         launchError
       );
@@ -842,7 +914,15 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
     });
     return { runId };
   } catch (error) {
-    if (error instanceof OpenCodeAggregateRuntimeStopError) {
+    // The real primary helper reports an unconfirmed exact stop with this
+    // aggregate error while the candidate remains aggregate-cleanup-owned.
+    // Give the outer layer one same-generation exact retry before preserving
+    // the failure. Stop errors from later cancellation/terminal cleanup keep
+    // their established propagation path.
+    if (
+      error instanceof OpenCodeAggregateRuntimeStopError &&
+      untrackedPrimaryStopState !== 'aggregate_cleanup_owned'
+    ) {
       run.progress = ports.setRuntimeAdapterProgress(
         buildOpenCodeAggregateFailureProgress({
           launching,
@@ -863,7 +943,13 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
     // (mirror of the cancellation-boundary stop, runId-gated on ownership).
     const stopFailures = await stopOpenCodeAggregateRuntimeLanes(
       run,
-      { adapter: input.adapter, previousLaunchState, primaryCwd, secondaryCwds },
+      {
+        adapter: input.adapter,
+        previousLaunchState,
+        primaryCwd,
+        secondaryCwds,
+        untrackedPrimaryStopState,
+      },
       ports
     );
     const propagatedError =

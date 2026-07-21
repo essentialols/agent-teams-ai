@@ -321,6 +321,47 @@ describe('TeamProvisioningOpenCodeRuntimeAdapterLaunch', () => {
     expect(aliveRuns.get('team-a')).toBe('run-1');
   });
 
+  it('does not publish runtime ownership after persistence loses launch authority', async () => {
+    const calls: string[] = [];
+    let provisioningOwner: string | undefined;
+
+    const result = await runOpenCodeTeamRuntimeAdapterLaunch(
+      {
+        adapter: {
+          launch: vi.fn(async () => runtimeResult()),
+        } as unknown as TeamLaunchRuntimeAdapter,
+        request: {
+          teamName: 'team-a',
+          cwd: '/repo',
+          providerId: 'opencode',
+          members: [{ name: 'alice', role: 'Engineer', providerId: 'opencode' }],
+        },
+        members: [{ name: 'alice', role: 'Engineer', providerId: 'opencode' }],
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...basePorts(calls),
+        setProvisioningRun: (_teamName, runId) => {
+          calls.push('setProvisioningRun');
+          provisioningOwner = runId;
+        },
+        getProvisioningRun: () => provisioningOwner,
+        persistOpenCodeRuntimeAdapterLaunchResult: async (launchResult) => {
+          calls.push('persistLaunchResult');
+          provisioningOwner = undefined;
+          return { result: launchResult };
+        },
+      }
+    );
+
+    expect(result).toEqual({ runId: 'run-1' });
+    expect(calls).toContain('clearPrimaryLaneIfOwned');
+    expect(calls).not.toContain('syncApprovals');
+    expect(calls).not.toContain('setRuntimeRun');
+    expect(calls).not.toContain('setAliveRun');
+  });
+
   it('retains a partial-failure adapter run when another member has usable runtime evidence', async () => {
     const calls: string[] = [];
     const request = {

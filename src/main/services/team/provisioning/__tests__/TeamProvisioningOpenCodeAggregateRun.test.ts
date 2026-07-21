@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  launchOpenCodeAggregatePrimaryLane,
+  persistOpenCodeRuntimeAdapterLaunchResult,
+} from '../TeamProvisioningOpenCodeAggregateLaunchPersistence';
+import {
   buildOpenCodeAggregateFailureProgress,
   buildOpenCodeAggregateFinalProgress,
   createOpenCodeAggregateProvisioningRun,
@@ -11,6 +15,7 @@ import {
 } from '../TeamProvisioningOpenCodeAggregateRun';
 
 import type { TeamLaunchRuntimeAdapter, TeamRuntimeLaunchResult } from '../../runtime';
+import type { OpenCodeRuntimeBootstrapEvidencePorts } from '../TeamProvisioningOpenCodeBootstrapEvidence';
 import type { TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
 import type { TeamCreateRequest, TeamProvisioningProgress } from '@shared/types';
 
@@ -18,6 +23,18 @@ type OpenCodeMemberLanePlan = Extract<TeamRuntimeLanePlan, { mode: 'pure_opencod
 type OpenCodeMember = OpenCodeMemberLanePlan['allMembers'][number];
 
 const testTeamsBasePath = '/safe-test/teams';
+
+function bootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {
+  return {
+    teamsBasePath: testTeamsBasePath,
+    readFileUtf8: vi.fn(),
+    mkdirRecursive: vi.fn(),
+    readCommittedBootstrapSessionEvidence: vi.fn(),
+    getCurrentAgentTeamsMcpHttpTransportEvidence: vi.fn(() => null),
+    isFileLockTimeoutError: vi.fn(() => false),
+    warn: vi.fn(),
+  };
+}
 
 function member(name: string, extra: Partial<OpenCodeMember> = {}): OpenCodeMember {
   return {
@@ -50,6 +67,19 @@ function runtimeResult(overrides: Partial<TeamRuntimeLaunchResult> = {}): TeamRu
     warnings: [],
     diagnostics: [],
     ...overrides,
+  };
+}
+
+function confirmedStopResult(
+  input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]
+): Awaited<ReturnType<TeamLaunchRuntimeAdapter['stop']>> {
+  return {
+    runId: input.runId,
+    teamName: input.teamName,
+    stopped: true,
+    members: {},
+    warnings: [],
+    diagnostics: [],
   };
 }
 
@@ -697,11 +727,17 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
     const alice = member('alice');
     const bob = member('bob');
     const calls: string[] = [];
+    const stopUntrackedPrimary = vi.fn(
+      async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
+        calls.push('stopUntrackedPrimary');
+        return confirmedStopResult(input);
+      }
+    );
 
     await expect(
       runOpenCodeWorktreeRootAggregateLaunch(
         {
-          adapter: {} as TeamLaunchRuntimeAdapter,
+          adapter: { stop: stopUntrackedPrimary } as unknown as TeamLaunchRuntimeAdapter,
           request: request([alice, bob]),
           members: [alice, bob],
           lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [bob] }),
@@ -730,6 +766,7 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
       'invalidateRuntimeSnapshotCaches',
       'setProgress:spawning',
       'launchPrimary',
+      'stopUntrackedPrimary',
       'setProgress:failed',
       'getTeamsBasePath',
       'clearLaneStorage:primary',
@@ -739,7 +776,196 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
       'cleanupRun',
       'invalidateRuntimeSnapshotCaches',
     ]);
+    expect(stopUntrackedPrimary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-open-code',
+        teamName: 'open-code-team',
+        laneId: 'primary',
+        reason: 'cleanup',
+        force: true,
+      })
+    );
   });
+
+  it('stops an unretainable primary exactly once when its degraded-index write throws', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    const failedResult = sharedPreflightFailureResult('alice', 'runtime failed');
+    const adapterStop = vi.fn(async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) =>
+      confirmedStopResult(input)
+    );
+    const adapter = {
+      launch: vi.fn(async () => failedResult),
+      stop: adapterStop,
+    } as unknown as TeamLaunchRuntimeAdapter;
+    let indexWrites = 0;
+
+    await expect(
+      runOpenCodeWorktreeRootAggregateLaunch(
+        {
+          adapter,
+          request: request([alice]),
+          members: [alice],
+          lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+          prompt: 'launch',
+          onProgress: vi.fn(),
+        },
+        {
+          ...baseAggregatePorts(calls),
+          launchOpenCodeAggregatePrimaryLane: (input) =>
+            launchOpenCodeAggregatePrimaryLane(input, {
+              getTeamsBasePath: () => testTeamsBasePath,
+              getOpenCodeRuntimeLaunchCwd: () => '/fake/project',
+              migrateLegacyOpenCodeRuntimeState: async () => ({}),
+              upsertOpenCodeRuntimeLaneIndexEntry: async () => {
+                indexWrites += 1;
+                if (indexWrites === 2) {
+                  throw new Error('degraded index failed after inner stop');
+                }
+              },
+              setOpenCodeRuntimeActiveRunManifest: async () => undefined,
+              persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
+                persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput, {
+                  createOpenCodeRuntimeBootstrapEvidencePorts: bootstrapEvidencePorts,
+                  nowIso: () => '2026-01-01T00:00:00.000Z',
+                  writeLaunchStateSnapshot: async (_teamName, snapshot) => snapshot,
+                }),
+              syncOpenCodeRuntimeToolApprovals: vi.fn(),
+              setRuntimeAdapterRunByTeam: vi.fn(),
+            }),
+        }
+      )
+    ).rejects.toThrow('degraded index failed after inner stop');
+
+    expect(indexWrites).toBe(2);
+    expect(adapterStop).toHaveBeenCalledOnce();
+    expect(adapterStop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-open-code',
+        teamName: 'open-code-team',
+        laneId: 'primary',
+        reason: 'cleanup',
+        force: true,
+      })
+    );
+  });
+
+  it.each(['rejects', 'returns stopped:false'] as const)(
+    'retries the same unretainable primary in outer cleanup when its first exact stop %s',
+    async (firstStopOutcome) => {
+      const alice = member('alice');
+      const calls: string[] = [];
+      const failedResult = sharedPreflightFailureResult('alice', 'runtime failed');
+      const firstStopFailure = new Error(`first exact stop ${firstStopOutcome}`);
+      const stopInputs: Array<Parameters<TeamLaunchRuntimeAdapter['stop']>[0]> = [];
+      const adapterStop = vi.fn(async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
+        stopInputs.push(input);
+        calls.push(`adapterStop:${stopInputs.length}`);
+        if (stopInputs.length === 1) {
+          if (firstStopOutcome === 'rejects') {
+            throw firstStopFailure;
+          }
+          return {
+            runId: input.runId,
+            teamName: input.teamName,
+            stopped: false,
+            members: {},
+            warnings: [],
+            diagnostics: [firstStopFailure.message],
+          };
+        }
+        return confirmedStopResult(input);
+      });
+      const adapter = {
+        launch: vi.fn(async () => failedResult),
+        stop: adapterStop,
+      } as unknown as TeamLaunchRuntimeAdapter;
+      const syncToolApprovals = vi.fn();
+      const publishPrimaryOwnership = vi.fn();
+      let runtimeOwner: ReturnType<
+        OpenCodeWorktreeRootAggregateLaunchPorts['getRuntimeAdapterRun']
+      >;
+      const basePorts = baseAggregatePorts(calls);
+
+      const error = await runOpenCodeWorktreeRootAggregateLaunch(
+        {
+          adapter,
+          request: request([alice]),
+          members: [alice],
+          lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+          prompt: 'launch',
+          onProgress: vi.fn(),
+        },
+        {
+          ...basePorts,
+          getRuntimeAdapterRun: () => runtimeOwner,
+          stopOpenCodeRuntimeAdapterTeam: async () => {
+            calls.push('stopPublishedPrimaryByTeam');
+          },
+          deleteRuntimeAdapterRun: () => {
+            calls.push('deleteRuntimeRun');
+            runtimeOwner = undefined;
+          },
+          launchOpenCodeAggregatePrimaryLane: (input) =>
+            launchOpenCodeAggregatePrimaryLane(input, {
+              getTeamsBasePath: () => testTeamsBasePath,
+              getOpenCodeRuntimeLaunchCwd: () => '/fake/project',
+              migrateLegacyOpenCodeRuntimeState: async () => ({}),
+              upsertOpenCodeRuntimeLaneIndexEntry: async () => undefined,
+              setOpenCodeRuntimeActiveRunManifest: async () => undefined,
+              persistOpenCodeRuntimeAdapterLaunchResult: (result, launchInput) =>
+                persistOpenCodeRuntimeAdapterLaunchResult(result, launchInput, {
+                  createOpenCodeRuntimeBootstrapEvidencePorts: bootstrapEvidencePorts,
+                  nowIso: () => '2026-01-01T00:00:00.000Z',
+                  writeLaunchStateSnapshot: async (_teamName, snapshot) => snapshot,
+                }),
+              syncOpenCodeRuntimeToolApprovals: syncToolApprovals,
+              setRuntimeAdapterRunByTeam: (_teamName, runtimeRun) => {
+                calls.push('publishPrimaryOwnership');
+                publishPrimaryOwnership(runtimeRun);
+                runtimeOwner = runtimeRun;
+              },
+            }),
+        }
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error).toMatchObject({
+        message: 'OpenCode aggregate launch failed and runtime cleanup was not confirmed',
+        errors: [expect.objectContaining({ message: firstStopFailure.message })],
+      });
+      expect(
+        stopInputs.map(({ runId, teamName, laneId }) => ({ runId, teamName, laneId }))
+      ).toEqual([
+        { runId: 'run-open-code', teamName: 'open-code-team', laneId: 'primary' },
+        { runId: 'run-open-code', teamName: 'open-code-team', laneId: 'primary' },
+      ]);
+      expect(adapterStop).toHaveBeenCalledTimes(2);
+      expect(adapterStop.mock.calls[1]?.[0]).toMatchObject({
+        reason: 'cleanup',
+        force: true,
+      });
+      expect(publishPrimaryOwnership).toHaveBeenCalledOnce();
+      expect(runtimeOwner).toBeUndefined();
+      expect(syncToolApprovals).not.toHaveBeenCalled();
+      expect(calls).not.toContain('stopPublishedPrimaryByTeam');
+      expect(calls).not.toContain('setAliveRun');
+      expect(calls.indexOf('adapterStop:2')).toBeLessThan(
+        calls.indexOf('clearLaneStorage:primary')
+      );
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          'setProgress:failed',
+          'clearLaneStorage:primary',
+          'deleteRuntimeRun',
+          'deleteAliveRun',
+          'deleteProvisioningRunIfCurrent',
+          'cleanupRun',
+          'invalidateRuntimeSnapshotCaches',
+        ])
+      );
+    }
+  );
 
   it('stops the owned primary OpenCode adapter process before clearing storage on launch error', async () => {
     const alice = member('alice');
@@ -757,10 +983,11 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
       }
     >();
     const adapter = {
-      stop: vi.fn(async ({ laneId }: { laneId?: string }) => {
+      stop: vi.fn(async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
+        const { laneId } = input;
         calls.push(`stopOwnedSecondary:${laneId}`);
         if (laneId) secondaryRuns.delete(laneId);
-        return {};
+        return confirmedStopResult(input);
       }),
     } as unknown as TeamLaunchRuntimeAdapter;
 
@@ -882,10 +1109,11 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
       }
     >();
     const adapter = {
-      stop: vi.fn(async ({ laneId }: { laneId?: string }) => {
+      stop: vi.fn(async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
+        const { laneId } = input;
         calls.push(`stopOwnedSecondary:${laneId}`);
         if (laneId) secondaryRuns.delete(laneId);
-        return {};
+        return confirmedStopResult(input);
       }),
     } as unknown as TeamLaunchRuntimeAdapter;
 
@@ -1072,11 +1300,11 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
       releaseStop = resolve;
     });
     const adapter = {
-      stop: vi.fn(async () => {
+      stop: vi.fn(async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
         calls.push('stopOwnedSecondary');
         signalStopStarted();
         await stopReleased;
-        return {};
+        return confirmedStopResult(input);
       }),
     } as unknown as TeamLaunchRuntimeAdapter;
 
@@ -1205,9 +1433,9 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
     let trackedRun: OpenCodeAggregateProvisioningRun | undefined;
     const clearInputs: Array<{ laneId: string; expectedRunId: string }> = [];
     const adapter = {
-      stop: vi.fn(async () => {
+      stop: vi.fn(async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
         secondaryTracked = false;
-        return {};
+        return confirmedStopResult(input);
       }),
     } as unknown as TeamLaunchRuntimeAdapter;
 
@@ -1331,6 +1559,148 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
     // The success tail must bail out (cleanupRun) instead of resurrecting the run.
     expect(calls).toContain('cleanupRun');
     expect(calls).not.toContain('setAliveRun');
+  });
+
+  it('fences primary ownership publication and stops the candidate superseded during persistence', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    let superseded = false;
+    const stopUntrackedPrimary = vi.fn(
+      async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => confirmedStopResult(input)
+    );
+
+    await runOpenCodeWorktreeRootAggregateLaunch(
+      {
+        adapter: { stop: stopUntrackedPrimary } as unknown as TeamLaunchRuntimeAdapter,
+        request: request([alice]),
+        members: [alice],
+        lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...baseAggregatePorts(calls),
+        getProvisioningRun: () => (superseded ? undefined : 'run-open-code'),
+        launchOpenCodeAggregatePrimaryLane: async (input) => {
+          calls.push('launchPrimary');
+          superseded = true;
+          expect(input.assertStillCurrentAfterPersistence).toBeTypeOf('function');
+          input.assertStillCurrentAfterPersistence?.();
+          throw new Error('unreachable after authority fence');
+        },
+      }
+    );
+
+    expect(stopUntrackedPrimary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-open-code',
+        teamName: 'open-code-team',
+        laneId: 'primary',
+        reason: 'cleanup',
+        force: true,
+      })
+    );
+    expect(calls).toContain('cleanupRun');
+    expect(calls).not.toContain('setAliveRun');
+    expect(calls).not.toContain('launchSecondary');
+  });
+
+  it('preserves superseded candidate evidence when its exact stop resolves stopped:false', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    let superseded = false;
+    const stopUntrackedPrimary = vi.fn(
+      async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => ({
+        runId: input.runId,
+        teamName: input.teamName,
+        stopped: false,
+        members: {},
+        warnings: [],
+        diagnostics: ['superseded candidate remained live'],
+      })
+    );
+
+    const error = await runOpenCodeWorktreeRootAggregateLaunch(
+      {
+        adapter: { stop: stopUntrackedPrimary } as unknown as TeamLaunchRuntimeAdapter,
+        request: request([alice]),
+        members: [alice],
+        lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...baseAggregatePorts(calls),
+        getProvisioningRun: () => (superseded ? undefined : 'run-open-code'),
+        launchOpenCodeAggregatePrimaryLane: async (input) => {
+          calls.push('launchPrimary');
+          superseded = true;
+          input.assertStillCurrentAfterPersistence?.();
+          throw new Error('unreachable after authority fence');
+        },
+      }
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).toMatchObject({
+      message: 'OpenCode aggregate launch failed and runtime cleanup was not confirmed',
+      errors: [
+        expect.objectContaining({ message: 'OpenCode aggregate launch was cancelled' }),
+        expect.objectContaining({ message: 'superseded candidate remained live' }),
+      ],
+    });
+    expect(stopUntrackedPrimary).toHaveBeenCalledOnce();
+    expect(calls).not.toContain('clearLaneStorage:primary');
+    expect(calls).not.toContain('deleteRuntimeRun');
+    expect(calls).not.toContain('deleteAliveRun');
+    expect(calls).not.toContain('deleteProvisioningRunIfCurrent');
+    expect(calls).not.toContain('cleanupRun');
+  });
+
+  it('preserves superseded candidate evidence when its exact stop is not confirmed', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    let superseded = false;
+    const stopFailure = new Error('superseded candidate stop was not confirmed');
+    const stopUntrackedPrimary = vi.fn(async () => {
+      throw stopFailure;
+    });
+
+    const error = await runOpenCodeWorktreeRootAggregateLaunch(
+      {
+        adapter: { stop: stopUntrackedPrimary } as unknown as TeamLaunchRuntimeAdapter,
+        request: request([alice]),
+        members: [alice],
+        lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...baseAggregatePorts(calls),
+        getProvisioningRun: () => (superseded ? undefined : 'run-open-code'),
+        launchOpenCodeAggregatePrimaryLane: async (input) => {
+          calls.push('launchPrimary');
+          superseded = true;
+          input.assertStillCurrentAfterPersistence?.();
+          throw new Error('unreachable after authority fence');
+        },
+      }
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).toMatchObject({
+      message: 'OpenCode aggregate launch failed and runtime cleanup was not confirmed',
+      errors: [
+        expect.objectContaining({ message: 'OpenCode aggregate launch was cancelled' }),
+        stopFailure,
+      ],
+    });
+    expect(stopUntrackedPrimary).toHaveBeenCalledOnce();
+    expect(calls).not.toContain('clearLaneStorage:primary');
+    expect(calls).not.toContain('deleteRuntimeRun');
+    expect(calls).not.toContain('deleteAliveRun');
+    expect(calls).not.toContain('deleteProvisioningRunIfCurrent');
+    expect(calls).not.toContain('cleanupRun');
   });
 });
 

@@ -141,6 +141,8 @@ export async function launchOpenCodeAggregatePrimaryLane(
     adapter: TeamLaunchRuntimeAdapter;
     prompt: string;
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
+    assertStillCurrentAfterPersistence?: () => void;
+    onUntrackedPrimaryStopConfirmed?: () => void;
   },
   ports: LaunchOpenCodeAggregatePrimaryLanePorts
 ): Promise<TeamRuntimeLaunchResult | null> {
@@ -202,6 +204,7 @@ export async function launchOpenCodeAggregatePrimaryLane(
     launchResult,
     launchInput
   );
+  params.assertStillCurrentAfterPersistence?.();
   const retainPrimaryRuntime = shouldRetainOpenCodeRuntimeLaunch(result);
   if (retainPrimaryRuntime) {
     const primaryMembers = result.members;
@@ -222,15 +225,22 @@ export async function launchOpenCodeAggregatePrimaryLane(
   if (result.teamLaunchState === 'partial_failure') {
     if (!retainPrimaryRuntime) {
       try {
-        await params.adapter.stop({
+        const stopResult = await params.adapter.stop({
           ...launchInput,
           reason: 'cleanup',
           force: true,
         });
+        if (!stopResult.stopped) {
+          throw new Error(
+            [...stopResult.diagnostics, ...stopResult.warnings].filter(Boolean).join('\n') ||
+              'OpenCode unretainable primary lane stop was not confirmed'
+          );
+        }
       } catch (error) {
-        // A failed stop means the adapter process may still be live even though
-        // its launch evidence was not retainable. Publish its exact ownership
-        // before rejecting so stopTeam/recovery can retry the same generation.
+        // A rejected or unconfirmed stop means the adapter process may still be
+        // live even though its launch evidence was not retainable. Publish its
+        // exact ownership before rejecting so stopTeam/recovery can retry the
+        // same generation.
         ports.setRuntimeAdapterRunByTeam(teamName, {
           runId,
           providerId: 'opencode',
@@ -242,6 +252,7 @@ export async function launchOpenCodeAggregatePrimaryLane(
         );
         throw new OpenCodeAggregateRuntimeStopError([error]);
       }
+      params.onUntrackedPrimaryStopConfirmed?.();
     }
     await ports.upsertOpenCodeRuntimeLaneIndexEntry({
       teamsBasePath: ports.getTeamsBasePath(),
@@ -253,6 +264,7 @@ export async function launchOpenCodeAggregatePrimaryLane(
         new Set([...(migration.diagnostics ?? []), ...result.diagnostics].filter(Boolean))
       ),
     });
+    params.assertStillCurrentAfterPersistence?.();
   }
   const snapshotStatuses = snapshotToMemberSpawnStatuses(snapshot);
   for (const member of expectedMembers) {

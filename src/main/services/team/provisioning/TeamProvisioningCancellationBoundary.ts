@@ -294,14 +294,14 @@ export function createTeamProvisioningCancellationBoundary<
           (result): result is PromiseRejectedResult => result.status === 'rejected'
         );
       }
+      if (failedStop) {
+        throw failedStop.reason;
+      }
       try {
         const progress = ports.updateProgress(run, 'cancelled', 'Provisioning cancelled by user');
         run.onProgress(progress);
       } finally {
         ports.cleanupRun(run);
-      }
-      if (failedStop) {
-        throw failedStop.reason;
       }
     },
 

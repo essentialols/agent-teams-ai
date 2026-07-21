@@ -2047,6 +2047,12 @@ describe('TeamDataService', () => {
         summary: 'Start working on #11111111',
       })
     );
+    expect(sendMessage.mock.calls[0]?.[1]?.text).toContain(
+      'This start notification can become stale after reassignment or completion.'
+    );
+    expect(sendMessage.mock.calls[0]?.[1]?.text).toContain(
+      'If the owner changed or the task is completed/deleted, do not start or reopen it'
+    );
   });
 
   it.each(['reconciled', 'replayed'])(

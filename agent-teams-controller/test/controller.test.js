@@ -885,6 +885,12 @@ controller.messages.sendMessage({
     expect(ownerInbox).toHaveLength(4);
     expect(ownerInbox[0].summary).toContain(`#${pendingTask.displayId}`);
     expect(ownerInbox[0].text).toContain('task_get');
+    expect(ownerInbox[0].text).toContain(
+      'Assignment notifications can become stale after a reassignment or completion.'
+    );
+    expect(ownerInbox[0].text).toContain(
+      'or task.status is completed or deleted, do not start or reopen the task'
+    );
     expect(ownerInbox[0].text).toContain('task_start');
     expect(ownerInbox[0].text).toContain('task_add_comment');
     expect(ownerInbox[0].text).toContain(
@@ -926,6 +932,42 @@ controller.messages.sendMessage({
     expect(briefing).not.toContain('Completed task description should stay out of compact rows');
     expect(briefing).toContain(`#${approvedTask.displayId}`);
     expect(briefing).toContain('Counters: actionable=4, awareness=3');
+  });
+
+  it('revokes the previous owner notification when a live task is reassigned', () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    const task = controller.tasks.createTask({
+      subject: 'Move before work starts',
+      owner: 'alice',
+      createdBy: 'user',
+    });
+    controller.tasks.setTaskOwner(task.id, 'bob', 'user');
+
+    const aliceInbox = JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'alice.json'), 'utf8')
+    );
+    const bobInbox = JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'bob.json'), 'utf8')
+    );
+
+    expect(aliceInbox).toHaveLength(2);
+    expect(aliceInbox[0].text).toContain('New task assigned to you:');
+    expect(aliceInbox[1]).toMatchObject({
+      from: 'user',
+      summary: `Task #${task.displayId} reassigned away from you`,
+      source: 'system_notification',
+    });
+    expect(aliceInbox[1].text).toContain('was reassigned away from you to @bob');
+    expect(aliceInbox[1].text).toContain('This supersedes any earlier assignment notification');
+    expect(aliceInbox[1].text).toContain('Stop work on it');
+
+    expect(bobInbox).toHaveLength(1);
+    expect(bobInbox[0].text).toContain('New task assigned to you:');
+    expect(bobInbox[0].text).toContain(
+      'Assignment notifications can become stale after a reassignment or completion.'
+    );
   });
 
   it('treats stale legacy terminal reviewState on pending tasks as owner-ready work', async () => {

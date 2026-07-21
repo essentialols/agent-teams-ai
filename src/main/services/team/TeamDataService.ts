@@ -2457,6 +2457,7 @@ export class TeamDataService {
       '',
       wrapAgentBlock(
         [
+          `This start notification can become stale after reassignment or completion. Before modifying anything, fetch the current task and verify that task.owner is your configured teammate name and task.status is pending or in_progress. If the owner changed or the task is completed/deleted, do not start or reopen it, modify files, add a completion comment, or complete it; stop unless the current owner explicitly asks you to collaborate on fresh follow-up work.`,
           `Begin work on this task immediately. Keep it moving until it is completed or clearly blocked. Do not leave it idle.`,
           `To fetch the full task context (description, comments, attachments) use:`,
           `task_get { teamName: "${teamName}", taskId: "${task.id}" }`,

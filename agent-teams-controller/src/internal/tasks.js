@@ -114,7 +114,7 @@ function buildAssignmentMessage(context, task, options = {}) {
         teamName: context.teamName,
         leadName: '<lead-name>',
         fromName: '<your-name>',
-        text: `#${task.displayId || task.id} done. <2-4 sentence summary>. Full details in task comment <short-commentId-from-step-4>. Moving to next task.`,
+        text: `#${task.displayId || task.id} done. <2-4 sentence summary>. Full details in task comment <short-commentId-from-step-5>. Moving to next task.`,
         summary: `#${task.displayId || task.id} done`,
     });
     const runtimeVisibleMessageRule = messagingProtocol.visibleMessageRule
@@ -129,19 +129,66 @@ function buildAssignmentMessage(context, task, options = {}) {
         wrapAgentBlock(`Use the board MCP tools to work this task correctly:
 1. Check the latest full context before starting:
    task_get { teamName: "${context.teamName}", taskId: "${task.id}" }
-2. If you are idle and the task is ready to start after checking dependencies and context, call task_start now:
+2. Assignment notifications can become stale after a reassignment or completion. After task_get, compare task.owner with your configured teammate name and check task.status. If task.owner is empty or belongs to someone else, or task.status is completed or deleted, do not start or reopen the task, modify files for it, add a completion comment, or complete it. Stop and wait unless the current owner explicitly asks you to collaborate on fresh follow-up work.
+3. If you are still the current owner, are idle, and the task is ready to start after checking dependencies and context, call task_start now:
    task_start { teamName: "${context.teamName}", taskId: "${task.id}" }
-3. If you are busy on another task, blocked, or still need more context, immediately add a task comment on this task with the reason and your best ETA or what you are waiting on, keep it pending/TODO, and do not call task_start until you truly begin:
+4. If you are still the current owner but are busy on another task, blocked, or still need more context, immediately add a task comment on this task with the reason and your best ETA or what you are waiting on, keep it pending/TODO, and do not call task_start until you truly begin:
    task_add_comment { teamName: "${context.teamName}", taskId: "${task.id}", text: "<reason + ETA or blocker>", from: "<your-name>" }
-4. When the work is done, FIRST post a task comment with your full results, THEN mark it completed:
+5. When the work is done, FIRST post a task comment with your full results, THEN mark it completed:
    task_add_comment { teamName: "${context.teamName}", taskId: "${task.id}", text: "<full results>", from: "<your-name>" }
    The response contains comment.id (UUID). Take its first 8 characters as the short commentId.
    task_complete { teamName: "${context.teamName}", taskId: "${task.id}" }
-5. After task_complete, notify your lead via ${messagingProtocol.sendLeadPhrase} with a brief summary and a pointer to the full comment (use the short commentId from step 4).
+6. After task_complete, notify your lead via ${messagingProtocol.sendLeadPhrase} with a brief summary and a pointer to the full comment (use the short commentId from step 5).
    Example: ${notifyLeadExample}${runtimeVisibleMessageRule}${runtimeTaskToolHint}`)
     );
 
     return lines.join('\n');
+}
+
+function maybeNotifyPreviousOwnerOnReassignment(context, previousTask, updatedTask, options = {}) {
+    const previousOwner = normalizeActorName(previousTask && previousTask.owner);
+    if (
+        !previousOwner ||
+        previousTask.status === 'completed' ||
+        previousTask.status === 'deleted' ||
+        isSameMember(previousOwner, updatedTask && updatedTask.owner)
+    ) {
+        return;
+    }
+
+    const leadName = runtimeHelpers.inferLeadName(context.paths);
+    const sender = normalizeActorName(options.from) || leadName;
+    if (isSameMember(previousOwner, sender)) {
+        return;
+    }
+
+    const nextOwner = normalizeActorName(updatedTask && updatedTask.owner);
+    const taskLabel = `#${updatedTask.displayId || updatedTask.id}`;
+    const destination = nextOwner ? `@${nextOwner}` : 'the unassigned queue';
+    const leadSessionId = runtimeHelpers.resolveLeadSessionId(context.paths);
+    const sendReassignmentMessage = isSameMember(sender, 'user')
+        ? messages.sendTrustedMessage
+        : messages.sendMessage;
+
+    try {
+        sendReassignmentMessage(context, {
+            member: previousOwner,
+            from: sender,
+            text: [
+                `Task ${taskLabel} *${updatedTask.subject}* was reassigned away from you to ${destination}.`,
+                ``,
+                wrapAgentBlock(
+                    `This supersedes any earlier assignment notification for this task. Stop work on it and do not modify files, add completion comments, or complete it unless the current owner explicitly asks you to collaborate. If you already made changes, stop at a safe boundary and send the current owner concise handoff context; otherwise stay silent.`
+                ),
+            ].join('\n'),
+            taskRefs: [buildTaskRef(context, updatedTask)],
+            summary: `Task ${taskLabel} reassigned away from you`,
+            source: 'system_notification',
+            ...(leadSessionId ? { leadSessionId } : {}),
+        });
+    } catch (error) {
+        warnNonCritical(`[tasks] reassignment notification failed for task ${updatedTask.id}`, error);
+    }
 }
 
 function buildTaskRef(context, task) {
@@ -531,6 +578,10 @@ function setTaskOwner(context, taskId, owner, actor) {
             summary: `Task #${updatedTask.displayId || updatedTask.id} assigned`,
         });
     }
+
+    maybeNotifyPreviousOwnerOnReassignment(context, previousTask, updatedTask, {
+        from: actor,
+    });
 
     return updatedTask;
 }

@@ -362,6 +362,10 @@ export abstract class TeamProvisioningServiceRuntimeStateFacade extends TeamProv
       {
         nowIso,
         buildLaunchDiagnostics: (run) => boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run)),
+        reportBackgroundPersistenceError: (run, error) =>
+          logger.warn(
+            `[${run.teamName}] Failed to persist background member spawn status: ${getErrorMessage(error)}`
+          ),
       }
     );
   protected readonly memberSpawnStatusAuditPorts: MemberSpawnStatusAuditPorts<ProvisioningRun> =

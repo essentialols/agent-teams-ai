@@ -4327,7 +4327,9 @@ describe(
       trackLiveRun(svc, freshRun);
 
       await (svc as any).launchMixedSecondaryLaneIfNeeded(freshRun);
-      await waitForCondition(() => adapter.launchInputs.length === 3);
+      // The fresh pair is serialized behind cancelled-lane cleanup. Full-suite filesystem pressure
+      // can legitimately outlive the short polling default without indicating a stuck handoff.
+      await waitForCondition(() => adapter.launchInputs.length === 3, 60_000);
       await waitForCondition(() =>
         freshRun.mixedSecondaryLanes.every((lane: { state: string }) => lane.state === 'finished')
       );
@@ -11654,6 +11656,14 @@ describe(
       (svc as any).getLiveTeamAgentRuntimeMetadata = async () => new Map();
 
       await svc.restartMember(teamName, 'bob');
+      const persistedRestartState = JSON.parse(
+        await fs.readFile(path.join(getTeamsBasePath(), teamName, 'launch-state.json'), 'utf8')
+      ) as { members: Record<string, { launchState?: string }> };
+      expect(persistedRestartState.members.bob?.launchState).toBe('runtime_pending_bootstrap');
+      const persistedRestartSummary = JSON.parse(
+        await fs.readFile(path.join(getTeamsBasePath(), teamName, 'launch-summary.json'), 'utf8')
+      ) as { teamName?: string; pendingCount?: number };
+      expect(persistedRestartSummary).toMatchObject({ teamName, pendingCount: 1 });
       await expect(svc.restartMember(teamName, 'bob')).rejects.toThrow(
         'Restart for teammate "bob" is already in progress'
       );
@@ -21784,9 +21794,12 @@ async function writeOpenCodeBootstrapSessionEvidenceForTest(input: {
   });
 }
 
-async function waitForCondition(assertion: () => boolean | Promise<boolean>): Promise<void> {
+async function waitForCondition(
+  assertion: () => boolean | Promise<boolean>,
+  timeoutMs = 20_000
+): Promise<void> {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 20_000) {
+  while (Date.now() - startedAt < timeoutMs) {
     if (await assertion()) {
       return;
     }

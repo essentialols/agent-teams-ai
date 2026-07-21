@@ -52,6 +52,7 @@ export interface MemberSpawnStatusMutationPorts<TRun extends MemberSpawnStatusRu
   isCurrentTrackedRun(run: TRun): boolean;
   emitMemberSpawnChange(run: TRun, memberName: string): void;
   persistLaunchStateSnapshot(run: TRun, phase: PersistedTeamLaunchPhase): Promise<unknown>;
+  reportBackgroundPersistenceError(run: TRun, error: unknown): void;
 }
 
 export interface MemberSpawnStatusMutationServiceHost<TRun extends MemberSpawnStatusRun> {
@@ -66,6 +67,7 @@ export interface MemberSpawnStatusMutationServiceHost<TRun extends MemberSpawnSt
 export interface MemberSpawnStatusMutationServiceHostOptions<TRun extends MemberSpawnStatusRun> {
   nowIso: MemberSpawnStatusMutationPorts<TRun>['nowIso'];
   buildLaunchDiagnostics(run: TRun): TeamProvisioningProgress['launchDiagnostics'] | null;
+  reportBackgroundPersistenceError: MemberSpawnStatusMutationPorts<TRun>['reportBackgroundPersistenceError'];
 }
 
 export function createMemberSpawnStatusMutationPortsFromService<TRun extends MemberSpawnStatusRun>(
@@ -99,7 +101,17 @@ export function createMemberSpawnStatusMutationPortsFromService<TRun extends Mem
     isCurrentTrackedRun: (run) => service.isCurrentTrackedRun(run),
     emitMemberSpawnChange: (run, memberName) => service.emitMemberSpawnChange(run, memberName),
     persistLaunchStateSnapshot: (run, phase) => service.persistLaunchStateSnapshot(run, phase),
+    reportBackgroundPersistenceError: options.reportBackgroundPersistenceError,
   };
+}
+
+function persistLaunchStateSnapshotInBackground<TRun extends MemberSpawnStatusRun>(
+  run: TRun,
+  ports: MemberSpawnStatusMutationPorts<TRun>
+): void {
+  void ports
+    .persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active')
+    .catch((error: unknown) => ports.reportBackgroundPersistenceError(run, error));
 }
 
 export interface MemberSpawnStatusesSnapshotCacheEntry {
@@ -363,7 +375,7 @@ export function setMemberSpawnStatusForRun<TRun extends MemberSpawnStatusRun>(
   if (!ports.isCurrentTrackedRun(run)) return;
   ports.emitMemberSpawnChange(run, memberName);
   if (run.isLaunch) {
-    void ports.persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active');
+    persistLaunchStateSnapshotInBackground(run, ports);
   }
 }
 
@@ -404,7 +416,7 @@ export function confirmMemberSpawnStatusFromTranscriptForRun<TRun extends Member
   if (!ports.isCurrentTrackedRun(run)) return;
   ports.emitMemberSpawnChange(run, memberName);
   if (run.isLaunch) {
-    void ports.persistLaunchStateSnapshot(run, run.provisioningComplete ? 'finished' : 'active');
+    persistLaunchStateSnapshotInBackground(run, ports);
   }
 }
 

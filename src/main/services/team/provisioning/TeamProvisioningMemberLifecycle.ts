@@ -1792,7 +1792,6 @@ export class TeamProvisioningMemberLifecycleController {
           persistedRuntimeMembers,
           paneId: directTmuxRestartPaneId,
         });
-        return;
       } catch (error) {
         if (!this.isRunStillCurrentAndAlive(run, teamName)) {
           throw error;
@@ -1812,6 +1811,15 @@ export class TeamProvisioningMemberLifecycleController {
         }
         throw error;
       }
+      // Status mutations publish in the background for low-latency runtime event handling.
+      // Do not resolve the lifecycle command until all earlier status publications are drained.
+      if (run.isLaunch) {
+        await this.persistLaunchStateSnapshotForCurrentRun(
+          run,
+          run.provisioningComplete ? 'finished' : 'active'
+        );
+      }
+      return;
     }
 
     if (shouldDirectProcessRestart) {
@@ -1826,7 +1834,6 @@ export class TeamProvisioningMemberLifecycleController {
           configuredMember,
           persistedRuntimeMembers,
         });
-        return;
       } catch (error) {
         if (!this.isRunStillCurrentAndAlive(run, teamName)) {
           throw error;
@@ -1846,6 +1853,13 @@ export class TeamProvisioningMemberLifecycleController {
         }
         throw error;
       }
+      if (run.isLaunch) {
+        await this.persistLaunchStateSnapshotForCurrentRun(
+          run,
+          run.provisioningComplete ? 'finished' : 'active'
+        );
+      }
+      return;
     }
 
     let restartMcpLaunchConfig: RuntimeBootstrapMemberMcpLaunchConfig | null = null;
@@ -1891,6 +1905,12 @@ export class TeamProvisioningMemberLifecycleController {
         );
       }
       throw error;
+    }
+    if (run.isLaunch) {
+      await this.persistLaunchStateSnapshotForCurrentRun(
+        run,
+        run.provisioningComplete ? 'finished' : 'active'
+      );
     }
   }
 

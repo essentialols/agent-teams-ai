@@ -75,6 +75,7 @@ class TestMemberStatusQueryFacade extends TeamProvisioningMemberStatusQueryFacad
     isCurrentTrackedRun: (run: ProvisioningRun) => this.isCurrentTrackedRun(run),
     emitMemberSpawnChange: this.mutationPorts.emitMemberSpawnChange,
     persistLaunchStateSnapshot: this.mutationPorts.persistLaunchStateSnapshot,
+    reportBackgroundPersistenceError: vi.fn(),
   };
   protected readonly memberSpawnStatusAuditPorts = {} as never;
   protected readonly runtimeSnapshotFacade = {

@@ -2287,7 +2287,6 @@ describe('ProviderRuntimeSettingsDialog', () => {
             createCodexProvider({
               authenticated: false,
               authMethod: null,
-              statusMessage: 'Codex CLI not found',
               codex: {
                 appServerState: 'runtime-missing',
                 appServerStatusMessage: 'Codex CLI not found',

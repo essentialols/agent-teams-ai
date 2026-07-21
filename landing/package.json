@@ -58,6 +58,7 @@
     "immutable": "5.1.9",
     "linkify-it": "5.0.2",
     "shell-quote": "1.10.0",
+    "svgo": "4.0.2",
     "tar": "7.5.20",
     "axios": "1.18.1"
   }

@@ -863,6 +863,38 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
     expect(calls).toContain('cleanupRun');
     expect(calls).not.toContain('setAliveRun');
   });
+
+  it('fences primary ownership publication when stop supersedes persistence', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    let superseded = false;
+
+    await runOpenCodeWorktreeRootAggregateLaunch(
+      {
+        adapter: {} as TeamLaunchRuntimeAdapter,
+        request: request([alice]),
+        members: [alice],
+        lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...baseAggregatePorts(calls),
+        getProvisioningRun: () => (superseded ? undefined : 'run-open-code'),
+        launchOpenCodeAggregatePrimaryLane: async (input) => {
+          calls.push('launchPrimary');
+          superseded = true;
+          expect(input.assertStillCurrentAfterPersistence).toBeTypeOf('function');
+          input.assertStillCurrentAfterPersistence?.();
+          throw new Error('unreachable after authority fence');
+        },
+      }
+    );
+
+    expect(calls).toContain('cleanupRun');
+    expect(calls).not.toContain('setAliveRun');
+    expect(calls).not.toContain('launchSecondary');
+  });
 });
 
 function baseAggregatePorts(calls: string[]): OpenCodeWorktreeRootAggregateLaunchPorts {

@@ -191,6 +191,7 @@ export interface OpenCodeWorktreeRootAggregateLaunchPorts extends OpenCodeWorktr
     adapter: TeamLaunchRuntimeAdapter;
     prompt: string;
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
+    assertStillCurrentAfterPersistence?: () => void;
   }): Promise<TeamRuntimeLaunchResult | null>;
   launchSingleMixedSecondaryLane(
     run: OpenCodeAggregateProvisioningRun,
@@ -567,6 +568,13 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
       adapter: input.adapter,
       prompt: input.prompt,
       previousLaunchState,
+      assertStillCurrentAfterPersistence: () => {
+        if (aggregateLaunchNoLongerCurrent()) {
+          throw new Error(
+            `OpenCode aggregate primary launch for team "${teamName}" was cancelled because the owning run is no longer active`
+          );
+        }
+      },
     });
     if (aggregateLaunchNoLongerCurrent()) {
       return await finishCancelledAggregateLaunch();

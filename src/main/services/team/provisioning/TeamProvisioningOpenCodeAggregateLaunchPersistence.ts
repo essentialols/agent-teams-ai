@@ -134,6 +134,7 @@ export async function launchOpenCodeAggregatePrimaryLane(
     adapter: TeamLaunchRuntimeAdapter;
     prompt: string;
     previousLaunchState: PersistedTeamLaunchSnapshot | null;
+    assertStillCurrentAfterPersistence?: () => void;
   },
   ports: LaunchOpenCodeAggregatePrimaryLanePorts
 ): Promise<TeamRuntimeLaunchResult | null> {
@@ -194,6 +195,7 @@ export async function launchOpenCodeAggregatePrimaryLane(
     launchResult,
     launchInput
   );
+  params.assertStillCurrentAfterPersistence?.();
   const retainPrimaryRuntime =
     result.teamLaunchState !== 'partial_failure' || hasRetainableOpenCodeRuntimeMember(result);
   if (retainPrimaryRuntime) {

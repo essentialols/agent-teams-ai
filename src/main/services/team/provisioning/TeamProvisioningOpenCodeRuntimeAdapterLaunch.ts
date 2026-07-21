@@ -313,6 +313,13 @@ export async function runOpenCodeTeamRuntimeAdapterLaunch(
       launchResult,
       launchInput
     );
+    if (
+      ports.consumeCancelledRuntimeAdapterRunId(runId) ||
+      ports.getProvisioningRun(teamName) !== runId
+    ) {
+      await ports.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(teamName, runId);
+      return { runId };
+    }
     const requestTeamColor = 'color' in input.request ? input.request.color : undefined;
     const requestTeamDisplayName =
       'displayName' in input.request ? input.request.displayName : undefined;

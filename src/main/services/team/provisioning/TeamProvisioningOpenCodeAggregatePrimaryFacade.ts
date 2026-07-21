@@ -360,6 +360,7 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
         adapter,
         prompt: '',
         previousLaunchState,
+        assertStillCurrentAfterPersistence: assertRestartCurrent,
       });
       if (restartNoLongerCurrent()) {
         await this.stopUnretainableOpenCodePrimaryLane({
@@ -419,6 +420,7 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
           adapter,
           prompt: '',
           previousLaunchState,
+          assertStillCurrentAfterPersistence: assertRestartCurrent,
         });
         if (restartNoLongerCurrent()) {
           await this.clearCancelledOpenCodeAggregateRestartState(teamName, run.runId);

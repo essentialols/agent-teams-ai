@@ -414,6 +414,69 @@ describe('TeamProvisioningOpenCodeAggregateLaunchPersistence', () => {
     });
   });
 
+  it('does not publish primary runtime ownership after persistence loses authority', async () => {
+    const request = {
+      teamName: 'team-a',
+      cwd: '/repo',
+      providerId: 'opencode',
+      members: [{ name: 'alice', role: 'Engineer', providerId: 'opencode' }],
+    } as TeamCreateRequest;
+    const setRuntimeAdapterRunByTeam =
+      vi.fn<LaunchOpenCodeAggregatePrimaryLanePorts['setRuntimeAdapterRunByTeam']>();
+    const syncOpenCodeRuntimeToolApprovals =
+      vi.fn<LaunchOpenCodeAggregatePrimaryLanePorts['syncOpenCodeRuntimeToolApprovals']>();
+
+    await expect(
+      launchOpenCodeAggregatePrimaryLane(
+        {
+          run: {
+            runId: 'run-1',
+            teamName: 'team-a',
+            request,
+            effectiveMembers: request.members,
+            memberSpawnStatuses: new Map(),
+          },
+          adapter: {
+            launch: vi.fn(async () => ({
+              runId: 'run-1',
+              teamName: 'team-a',
+              launchPhase: 'finished',
+              teamLaunchState: 'clean_success',
+              members: {
+                alice: confirmedMemberEvidence('alice', 'opencode/model'),
+              },
+              warnings: [],
+              diagnostics: [],
+            })),
+          } as unknown as TeamLaunchRuntimeAdapter,
+          prompt: 'launch',
+          previousLaunchState: null,
+          assertStillCurrentAfterPersistence: () => {
+            throw new Error('run ownership was cleared during persistence');
+          },
+        },
+        {
+          getTeamsBasePath: () => '/workspace/teams',
+          getOpenCodeRuntimeLaunchCwd: () => '/repo',
+          migrateLegacyOpenCodeRuntimeState: async () => ({}),
+          upsertOpenCodeRuntimeLaneIndexEntry: async () => {},
+          setOpenCodeRuntimeActiveRunManifest: async () => {},
+          persistOpenCodeRuntimeAdapterLaunchResult: (result, input) =>
+            persistOpenCodeRuntimeAdapterLaunchResult(result, input, {
+              createOpenCodeRuntimeBootstrapEvidencePorts: bootstrapEvidencePorts,
+              nowIso: () => '2026-01-01T00:00:00.000Z',
+              writeLaunchStateSnapshot: async (_teamName, snapshot) => snapshot,
+            }),
+          syncOpenCodeRuntimeToolApprovals,
+          setRuntimeAdapterRunByTeam,
+        }
+      )
+    ).rejects.toThrow('run ownership was cleared during persistence');
+
+    expect(setRuntimeAdapterRunByTeam).not.toHaveBeenCalled();
+    expect(syncOpenCodeRuntimeToolApprovals).not.toHaveBeenCalled();
+  });
+
   it('stops an unretainable failed primary runtime and persists the lane as degraded', async () => {
     const failedResult: TeamRuntimeLaunchResult = {
       runId: 'run-failed',

@@ -21,10 +21,7 @@ const apiMocks = vi.hoisted(() => ({
   >(() => () => undefined),
 }));
 
-type IdleCallbackForTest = (deadline: {
-  didTimeout: boolean;
-  timeRemaining: () => number;
-}) => void;
+type IdleCallbackForTest = (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void;
 
 vi.mock('@renderer/api', () => ({
   api: apiMocks,
@@ -352,9 +349,8 @@ describe('useCodexAccountSnapshot', () => {
   it('does not surface an older initial failure after a newer pushed snapshot', async () => {
     const initialRequest = createDeferred<CodexAccountSnapshotDto>();
     apiMocks.getCodexAccountSnapshot.mockReturnValue(initialRequest.promise);
-    let snapshotListener:
-      | ((event: unknown, snapshot: CodexAccountSnapshotDto) => void)
-      | null = null;
+    let snapshotListener: ((event: unknown, snapshot: CodexAccountSnapshotDto) => void) | null =
+      null;
     apiMocks.onCodexAccountSnapshotChanged.mockImplementation((callback) => {
       snapshotListener = callback;
       return () => undefined;
@@ -534,9 +530,8 @@ describe('useCodexAccountSnapshot', () => {
   });
 
   it('ignores older pushed Codex snapshots after a fresher snapshot was applied', async () => {
-    let snapshotListener:
-      | ((event: unknown, snapshot: CodexAccountSnapshotDto) => void)
-      | null = null;
+    let snapshotListener: ((event: unknown, snapshot: CodexAccountSnapshotDto) => void) | null =
+      null;
     const staleSnapshot = withSnapshotOverrides(createSnapshot(), {
       updatedAt: '2026-01-01T00:00:00.000Z',
       managedAccount: {
@@ -732,9 +727,8 @@ describe('useCodexAccountSnapshot', () => {
     });
     const refreshDeferred = createDeferred<CodexAccountSnapshotDto>();
     apiMocks.refreshCodexAccountSnapshot.mockReturnValue(refreshDeferred.promise);
-    let snapshotListener:
-      | ((event: unknown, snapshot: CodexAccountSnapshotDto) => void)
-      | null = null;
+    let snapshotListener: ((event: unknown, snapshot: CodexAccountSnapshotDto) => void) | null =
+      null;
     apiMocks.onCodexAccountSnapshotChanged.mockImplementation(
       (callback: (event: unknown, snapshot: CodexAccountSnapshotDto) => void) => {
         snapshotListener = callback;

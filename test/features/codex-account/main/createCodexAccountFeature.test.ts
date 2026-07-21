@@ -374,20 +374,19 @@ describe('createCodexAccountFeature', () => {
     binaryResolveMock.mockImplementation(async () =>
       getCachedShellEnvMock()?.PATH?.includes('/custom/bin') ? '/custom/bin/codex' : null
     );
-    resolveInteractiveShellEnvBestEffortMock.mockImplementation(async (options?: {
-      background?: boolean;
-      fallbackEnv?: NodeJS.ProcessEnv;
-    }) => {
-      if (options?.background === false) {
-        return options.fallbackEnv ?? {};
-      }
+    resolveInteractiveShellEnvBestEffortMock.mockImplementation(
+      async (options?: { background?: boolean; fallbackEnv?: NodeJS.ProcessEnv }) => {
+        if (options?.background === false) {
+          return options.fallbackEnv ?? {};
+        }
 
-      const shellEnv = {
-        PATH: '/custom/bin:/usr/bin:/bin',
-      };
-      getCachedShellEnvMock.mockReturnValue(shellEnv);
-      return shellEnv;
-    });
+        const shellEnv = {
+          PATH: '/custom/bin:/usr/bin:/bin',
+        };
+        getCachedShellEnvMock.mockReturnValue(shellEnv);
+        return shellEnv;
+      }
+    );
     readAccountMock.mockResolvedValue({
       account: createAccountResponse(),
       initialize: {
@@ -504,9 +503,7 @@ describe('createCodexAccountFeature', () => {
       });
 
       expect(publishedSnapshots.map((snapshot) => Date.parse(snapshot.updatedAt))).toEqual([
-        1_767_225_600_000,
-        1_767_225_600_001,
-        1_767_225_600_002,
+        1_767_225_600_000, 1_767_225_600_001, 1_767_225_600_002,
       ]);
       expect(publishedSnapshots.at(-1)?.login.status).toBe('cancelled');
     } finally {
@@ -712,18 +709,16 @@ describe('createCodexAccountFeature', () => {
           platformOs: 'macos',
         },
       });
-    readRateLimitsMock
-      .mockResolvedValueOnce(createRateLimitsResponse())
-      .mockResolvedValueOnce({
-        ...createRateLimitsResponse(),
-        rateLimits: {
-          ...createRateLimitsResponse().rateLimits,
-          primary: {
-            ...createRateLimitsResponse().rateLimits.primary,
-            usedPercent: 12,
-          },
+    readRateLimitsMock.mockResolvedValueOnce(createRateLimitsResponse()).mockResolvedValueOnce({
+      ...createRateLimitsResponse(),
+      rateLimits: {
+        ...createRateLimitsResponse().rateLimits,
+        primary: {
+          ...createRateLimitsResponse().rateLimits.primary,
+          usedPercent: 12,
         },
-      });
+      },
+    });
 
     const feature = createCodexAccountFeature({
       logger: createLoggerPort(),
@@ -867,6 +862,68 @@ describe('createCodexAccountFeature', () => {
       expect(logoutSnapshot.managedAccount).toBeNull();
       expect(refreshedSnapshot.managedAccount).toBeNull();
       expect(readAccountMock.mock.calls.at(-1)?.[0]).toMatchObject({
+        refreshToken: true,
+      });
+    } finally {
+      await feature.dispose();
+    }
+  });
+
+  it('keeps refreshes requested on both sides of a mutation in FIFO order', async () => {
+    const firstRead = createDeferred<{
+      account: ReturnType<typeof createAccountResponse>;
+      initialize: { codexHome: string; platformFamily: string; platformOs: string };
+    }>();
+    const loggedInRead = {
+      account: createAccountResponse(),
+      initialize: {
+        codexHome: '/Users/test/.codex',
+        platformFamily: 'unix',
+        platformOs: 'macos',
+      },
+    };
+    const loggedOutRead = {
+      account: createAccountResponse({ account: null, requiresOpenaiAuth: false }),
+      initialize: {
+        codexHome: '/Users/test/.codex',
+        platformFamily: 'unix',
+        platformOs: 'macos',
+      },
+    };
+    readAccountMock.mockReturnValueOnce(firstRead.promise).mockResolvedValue(loggedOutRead);
+    readRateLimitsMock.mockResolvedValue(createRateLimitsResponse());
+    logoutMock.mockResolvedValue({});
+
+    const feature = createCodexAccountFeature({
+      logger: createLoggerPort(),
+      configManager: createConfigManager('chatgpt'),
+    });
+
+    try {
+      const beforeMutation = feature.refreshSnapshot();
+      await vi.waitFor(() => {
+        expect(readAccountMock).toHaveBeenCalledTimes(1);
+      });
+
+      const logoutPromise = feature.logout();
+      const afterMutation = feature.refreshSnapshot({
+        includeRateLimits: true,
+        forceRefreshToken: true,
+      });
+      firstRead.resolve(loggedInRead);
+
+      const [beforeSnapshot, logoutSnapshot, afterSnapshot] = await Promise.all([
+        beforeMutation,
+        logoutPromise,
+        afterMutation,
+      ]);
+
+      expect(beforeSnapshot.managedAccount?.email).toBe('user@example.com');
+      expect(logoutSnapshot.managedAccount).toBeNull();
+      expect(afterSnapshot.managedAccount).toBeNull();
+      expect(readAccountMock).toHaveBeenCalledTimes(2);
+      expect(readAccountMock.mock.calls[1]?.[0]).toMatchObject({
+        includeRateLimits: true,
         refreshToken: true,
       });
     } finally {

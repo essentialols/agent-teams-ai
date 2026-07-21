@@ -203,10 +203,7 @@ vi.mock('@renderer/components/ui/tabs', () => ({
       { 'data-value': value, 'data-on-change': Boolean(onValueChange) },
       children
     ),
-  TabsList: ({
-    children,
-    className,
-  }: React.PropsWithChildren<{ className?: string }>) =>
+  TabsList: ({ children, className }: React.PropsWithChildren<{ className?: string }>) =>
     React.createElement('div', { role: 'tablist', className }, children),
   TabsTrigger: ({
     children,
@@ -2446,8 +2443,12 @@ describe('ProviderRuntimeSettingsDialog', () => {
     expect(host.textContent).not.toContain('Desktop currently exposes status only.');
 
     await act(async () => {
-      (host.querySelector('[data-testid="runtime-provider-connected"]') as HTMLButtonElement).click();
-      (host.querySelector('[data-testid="runtime-provider-configured"]') as HTMLButtonElement).click();
+      (
+        host.querySelector('[data-testid="runtime-provider-connected"]') as HTMLButtonElement
+      ).click();
+      (
+        host.querySelector('[data-testid="runtime-provider-configured"]') as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     expect(onRefreshProvider).toHaveBeenNthCalledWith(1, 'opencode', 'provider_setup');

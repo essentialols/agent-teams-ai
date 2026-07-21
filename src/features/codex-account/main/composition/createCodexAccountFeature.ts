@@ -74,6 +74,7 @@ interface CodexSnapshotRefreshOptions {
 interface CodexSnapshotRefreshBatch {
   acceptingRequests: boolean;
   initialOptions: CodexSnapshotRefreshOptions | null;
+  activeOptions: CodexSnapshotRefreshOptions | null;
   pendingOptions: CodexSnapshotRefreshOptions | null;
   promise: Promise<CodexAccountSnapshotDto>;
 }
@@ -245,6 +246,17 @@ function mergeRefreshOptions(
   };
 }
 
+function doRefreshOptionsCover(
+  current: CodexSnapshotRefreshOptions | null,
+  requested: CodexSnapshotRefreshOptions
+): boolean {
+  return Boolean(
+    current &&
+    (!requested.includeRateLimits || current.includeRateLimits) &&
+    (!requested.forceRefreshToken || current.forceRefreshToken)
+  );
+}
+
 async function resolveCodexBinaryForAccountSnapshot(): Promise<string | null> {
   const binaryPath = await CodexBinaryResolver.resolve();
   if (binaryPath) {
@@ -346,6 +358,13 @@ class CodexAccountFeatureFacadeImpl implements CodexAccountFeatureFacade {
     }
 
     if (this.refreshBatch?.acceptingRequests) {
+      if (
+        doRefreshOptionsCover(this.refreshBatch.initialOptions, normalizedOptions) ||
+        doRefreshOptionsCover(this.refreshBatch.activeOptions, normalizedOptions) ||
+        doRefreshOptionsCover(this.refreshBatch.pendingOptions, normalizedOptions)
+      ) {
+        return this.refreshBatch.promise;
+      }
       this.refreshBatch.pendingOptions = mergeRefreshOptions(
         this.refreshBatch.pendingOptions,
         normalizedOptions
@@ -357,6 +376,7 @@ class CodexAccountFeatureFacadeImpl implements CodexAccountFeatureFacade {
     const batch = {
       acceptingRequests: true,
       initialOptions: normalizedOptions,
+      activeOptions: null,
       pendingOptions: null,
       promise: Promise.resolve(null as unknown as CodexAccountSnapshotDto),
     } satisfies CodexSnapshotRefreshBatch;
@@ -478,8 +498,10 @@ class CodexAccountFeatureFacadeImpl implements CodexAccountFeatureFacade {
     batch.initialOptions = null;
 
     while (nextOptions) {
+      batch.activeOptions = nextOptions;
       lastSnapshot =
         this.getCachedSnapshotForOptions(nextOptions) ?? (await this.loadSnapshot(nextOptions));
+      batch.activeOptions = null;
       nextOptions = batch.pendingOptions;
       batch.pendingOptions = null;
     }

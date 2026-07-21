@@ -15,6 +15,7 @@ const CODEX_HIDDEN_REFRESH_MS = 5 * 60_000;
 export const CODEX_ACCOUNT_STARTUP_IDLE_MIN_DELAY_MS = 2_000;
 export const CODEX_ACCOUNT_STARTUP_IDLE_MAX_DELAY_MS = 30_000;
 export const CODEX_ACCOUNT_STARTUP_IDLE_DELAY_MS = CODEX_ACCOUNT_STARTUP_IDLE_MAX_DELAY_MS;
+export const CODEX_ACCOUNT_INITIAL_REQUEST_TIMEOUT_MS = 60_000;
 
 function isDocumentVisible(): boolean {
   if (typeof document === 'undefined') {
@@ -47,11 +48,31 @@ function getSnapshotUpdatedAtMs(snapshot: CodexAccountSnapshotDto): number | nul
   return Number.isFinite(updatedAtMs) ? updatedAtMs : null;
 }
 
+function withInitialRequestTimeout<T>(request: Promise<T>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error('Codex account status check timed out. Retrying in the background.'));
+    }, CODEX_ACCOUNT_INITIAL_REQUEST_TIMEOUT_MS);
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  });
+}
+
 export function isCodexAccountSnapshotPending(
   loading: boolean,
-  snapshot: CodexAccountSnapshotDto | null
+  snapshot: CodexAccountSnapshotDto | null,
+  error?: string | null
 ): boolean {
-  if (!loading || snapshot?.login.status === 'starting' || snapshot?.login.status === 'pending') {
+  if (
+    (!loading && !error) ||
+    snapshot?.login.status === 'starting' ||
+    snapshot?.login.status === 'pending'
+  ) {
     return false;
   }
 
@@ -269,12 +290,14 @@ export function useCodexAccountSnapshot(options: {
       const lifecycleId = lifecycleIdRef.current;
       const snapshotRevision = snapshotRevisionRef.current;
       const errorRequestId = ++latestErrorRequestIdRef.current;
-      const initialSnapshotRequest = Promise.resolve().then(() =>
-        options.includeRateLimits
-          ? api.refreshCodexAccountSnapshot({
-              includeRateLimits: true,
-            })
-          : api.getCodexAccountSnapshot()
+      const initialSnapshotRequest = withInitialRequestTimeout(
+        Promise.resolve().then(() =>
+          options.includeRateLimits
+            ? api.refreshCodexAccountSnapshot({
+                includeRateLimits: true,
+              })
+            : api.getCodexAccountSnapshot()
+        )
       );
 
       void initialSnapshotRequest

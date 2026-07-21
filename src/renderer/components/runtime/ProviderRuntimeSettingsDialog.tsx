@@ -2023,11 +2023,13 @@ export const ProviderRuntimeSettingsDialog = ({
                 >
                   {selectedProviderSummaryLabel}
                 </span>
-                {managedRuntimeSummary && !hideConnectionMethodMeta ? (
+                {!maskCodexNegativeBootstrapState &&
+                managedRuntimeSummary &&
+                !hideConnectionMethodMeta ? (
                   <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
                     {managedRuntimeSummary}
                   </span>
-                ) : runtimeSummary ? (
+                ) : !maskCodexNegativeBootstrapState && runtimeSummary ? (
                   <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
                     {t('providerRuntime.runtimeSummary', { runtime: runtimeSummary })}
                   </span>

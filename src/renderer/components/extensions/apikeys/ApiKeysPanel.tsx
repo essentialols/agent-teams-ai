@@ -141,7 +141,11 @@ export const ApiKeysPanel = ({
           ...item,
           pending:
             item.providerId === 'codex' &&
-            isCodexAccountSnapshotPending(codexAccount.loading, codexAccount.snapshot),
+            isCodexAccountSnapshotPending(
+              codexAccount.loading,
+              codexAccount.snapshot,
+              codexAccount.error
+            ),
           authenticated: provider.authenticated,
           apiKeyConfigured: provider.connection?.apiKeyConfigured ?? false,
           sourceLabel: provider.connection?.apiKeySourceLabel ?? null,

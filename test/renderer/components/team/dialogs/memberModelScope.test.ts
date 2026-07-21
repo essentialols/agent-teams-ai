@@ -8,6 +8,18 @@ import type { MemberDraft } from '@renderer/components/team/members/membersEdito
 import type { CliProviderStatus, TeamProviderId } from '@shared/types';
 
 describe('memberModelScope', () => {
+  it('preserves inherited Codex models while account availability is pending', () => {
+    const member = draft({ name: 'researcher', model: 'gpt-5.4' });
+    const result = clearInheritedMemberModelsUnavailableForProvider({
+      members: [member],
+      selectedProviderId: 'codex',
+      runtimeProviderStatusById: providerStatuses([providerStatus('codex', [])]),
+      deferredProviderIds: new Set(['codex']),
+    });
+
+    expect(result).toEqual({ members: [member], changed: false });
+  });
+
   it('drops stale inherited member models that are not in the selected provider catalog', () => {
     const scoped = resolveProviderScopedMemberModel({
       memberModel: 'gemini-3-pro-preview',

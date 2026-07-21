@@ -270,7 +270,7 @@ async function handlePluginInstall(
     if (!request || typeof request.pluginId !== 'string' || !request.pluginId) {
       throw new Error('Invalid install request: pluginId is required');
     }
-    if (request.scope && !VALID_PLUGIN_SCOPES.has(request.scope)) {
+    if (!VALID_PLUGIN_SCOPES.has(request.scope)) {
       throw new Error(`Invalid scope: "${request.scope}"`);
     }
     const result = await getPluginInstaller().install(request);
@@ -291,7 +291,7 @@ async function handlePluginUninstall(
     if (typeof pluginId !== 'string' || !pluginId) {
       throw new Error('pluginId is required');
     }
-    if (scope && !VALID_PLUGIN_SCOPES.has(scope)) {
+    if (scope !== undefined && !VALID_PLUGIN_SCOPES.has(scope)) {
       throw new Error(`Invalid scope: "${scope}"`);
     }
     const result = await getPluginInstaller().uninstall(
@@ -317,7 +317,7 @@ async function handleMcpInstall(
     if (typeof request.serverName !== 'string' || !request.serverName) {
       throw new Error('Invalid install request: serverName is required');
     }
-    if (request.scope && !VALID_MCP_SCOPES.has(request.scope)) {
+    if (!VALID_MCP_SCOPES.has(request.scope)) {
       throw new Error(`Invalid scope: "${request.scope}"`);
     }
     const result = await getMcpInstaller().install(request);
@@ -339,7 +339,7 @@ async function handleMcpInstallCustom(
     if (!request.installSpec) {
       throw new Error('Invalid custom install request: installSpec is required');
     }
-    if (request.scope && !VALID_MCP_SCOPES.has(request.scope)) {
+    if (!VALID_MCP_SCOPES.has(request.scope)) {
       throw new Error(`Invalid scope: "${request.scope}"`);
     }
     const result = await getMcpInstaller().installCustom(request);
@@ -360,7 +360,7 @@ async function handleMcpUninstall(
     if (typeof name !== 'string' || !name) {
       throw new Error('Server name is required');
     }
-    if (scope && !VALID_MCP_SCOPES.has(scope)) {
+    if (scope !== undefined && !VALID_MCP_SCOPES.has(scope)) {
       throw new Error(`Invalid scope: "${scope}"`);
     }
     const result = await getMcpInstaller().uninstall(

@@ -73,10 +73,12 @@ vi.mock('@renderer/components/ui/checkbox', () => ({
 vi.mock('@renderer/components/ui/dialog', () => ({
   Dialog: ({ open, children }: React.PropsWithChildren<{ open: boolean }>) =>
     open ? React.createElement('div', null, children) : null,
-  DialogContent: ({ children }: React.PropsWithChildren) => React.createElement('div', null, children),
+  DialogContent: ({ children }: React.PropsWithChildren) =>
+    React.createElement('div', null, children),
   DialogDescription: ({ children }: React.PropsWithChildren) =>
     React.createElement('p', null, children),
-  DialogHeader: ({ children }: React.PropsWithChildren) => React.createElement('div', null, children),
+  DialogHeader: ({ children }: React.PropsWithChildren) =>
+    React.createElement('div', null, children),
   DialogTitle: ({ children }: React.PropsWithChildren) => React.createElement('h2', null, children),
 }));
 
@@ -106,7 +108,8 @@ vi.mock('@renderer/components/ui/select', () => ({
       {
         value,
         disabled,
-        onChange: (event: React.ChangeEvent<HTMLSelectElement>) => onValueChange(event.target.value),
+        onChange: (event: React.ChangeEvent<HTMLSelectElement>) =>
+          onValueChange(event.target.value),
       },
       children
     ),
@@ -403,6 +406,61 @@ This file uses a freeform layout without generated sections.
     const selects = host.querySelectorAll('select');
     const rootSelect = selects[1] as HTMLSelectElement;
     expect(Array.from(rootSelect.options).some((option) => option.value === 'codex')).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('preserves a create draft while Codex root availability is revalidated', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const renderEditor = async (
+      allowCodexRootKind: boolean,
+      codexRootKindPending: boolean
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          React.createElement(SkillEditorDialog, {
+            open: true,
+            mode: 'create',
+            projectPath: '/tmp/project',
+            projectLabel: 'Project',
+            allowCodexRootKind,
+            codexRootKindPending,
+            detail: null,
+            onClose: vi.fn(),
+            onSaved: vi.fn(),
+          })
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderEditor(true, false);
+    const nameInput = host.querySelector('#skill-name') as HTMLInputElement;
+    const rootSelect = host.querySelectorAll('select')[1] as HTMLSelectElement;
+    await act(async () => {
+      const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      inputSetter?.call(nameInput, 'My unfinished draft');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      const selectSetter = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        'value'
+      )?.set;
+      selectSetter?.call(rootSelect, 'codex');
+      rootSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await renderEditor(false, true);
+
+    expect((host.querySelector('#skill-name') as HTMLInputElement).value).toBe(
+      'My unfinished draft'
+    );
+    expect((host.querySelectorAll('select')[1] as HTMLSelectElement).value).toBe('codex');
 
     await act(async () => {
       root.unmount();

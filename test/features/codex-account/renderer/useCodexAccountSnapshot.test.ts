@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CODEX_ACCOUNT_INITIAL_REQUEST_TIMEOUT_MS,
   isCodexAccountSnapshotPending,
   useCodexAccountSnapshot,
 } from '../../../../src/features/codex-account/renderer/hooks/useCodexAccountSnapshot';
@@ -128,6 +129,11 @@ describe('useCodexAccountSnapshot', () => {
     expect(isCodexAccountSnapshotPending(true, createSnapshot())).toBe(false);
     expect(isCodexAccountSnapshotPending(true, loginPendingSnapshot)).toBe(false);
     expect(isCodexAccountSnapshotPending(false, runtimeMissingSnapshot)).toBe(false);
+    expect(isCodexAccountSnapshotPending(false, runtimeMissingSnapshot, 'refresh failed')).toBe(
+      true
+    );
+    expect(isCodexAccountSnapshotPending(false, null, 'refresh failed')).toBe(true);
+    expect(isCodexAccountSnapshotPending(false, createSnapshot(), 'refresh failed')).toBe(false);
   });
 
   it('reports loading on the first render before an immediate initial request starts', async () => {
@@ -581,6 +587,50 @@ describe('useCodexAccountSnapshot', () => {
 
     expect(host.firstElementChild?.getAttribute('data-loading')).toBe('false');
     expect(host.textContent).toContain('synchronous bridge failure');
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it('times out a stuck initial account request and recovers on the background retry', async () => {
+    vi.useFakeTimers();
+    apiMocks.getCodexAccountSnapshot.mockReturnValue(new Promise(() => undefined));
+    apiMocks.refreshCodexAccountSnapshot.mockResolvedValue(createSnapshot());
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    function Harness(): React.ReactElement {
+      const state = useCodexAccountSnapshot({ enabled: true });
+      return React.createElement(
+        'div',
+        { 'data-loading': state.loading ? 'true' : 'false' },
+        state.error ?? state.snapshot?.managedAccount?.email ?? 'empty'
+      );
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(CODEX_ACCOUNT_INITIAL_REQUEST_TIMEOUT_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host.firstElementChild?.getAttribute('data-loading')).toBe('false');
+    expect(host.textContent).toContain('Retrying in the background');
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(apiMocks.refreshCodexAccountSnapshot).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('belief@example.com');
 
     act(() => {
       root.unmount();

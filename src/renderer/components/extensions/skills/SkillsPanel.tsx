@@ -170,8 +170,11 @@ export const SkillsPanel = ({
       Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex')),
   });
   const codexSnapshotPending =
-    isCodexAccountSnapshotPending(codexAccount.loading, codexAccount.snapshot) &&
-    Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) && Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
   const effectiveCliStatus = useMemo(
     () =>
       loadingCliStatus
@@ -760,6 +763,7 @@ export const SkillsPanel = ({
         projectPath={projectPath}
         projectLabel={projectLabel}
         allowCodexRootKind={codexSkillOverlayAvailable}
+        codexRootKindPending={codexSnapshotPending}
         detail={null}
         onClose={() => setCreateOpen(false)}
         onSaved={(skillId) => {
@@ -776,6 +780,7 @@ export const SkillsPanel = ({
         projectPath={projectPath}
         projectLabel={projectLabel}
         allowCodexRootKind={codexSkillOverlayAvailable}
+        codexRootKindPending={codexSnapshotPending}
         detail={editingDetail}
         onClose={() => {
           setEditOpen(false);
@@ -794,6 +799,7 @@ export const SkillsPanel = ({
         projectPath={projectPath}
         projectLabel={projectLabel}
         allowCodexRootKind={codexSkillOverlayAvailable}
+        codexRootKindPending={codexSnapshotPending}
         onClose={() => setImportOpen(false)}
         onImported={(skillId) => {
           setImportOpen(false);

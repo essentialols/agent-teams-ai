@@ -619,14 +619,20 @@ function formatRuntimeAuthSummary(
   cliStatus: NonNullable<ReturnType<typeof useCliInstaller>['cliStatus']>,
   visibleProviders: readonly CliProviderStatus[],
   additionalConnectedCount: number,
+  codexSnapshotPending: boolean,
   t: ReturnType<typeof useAppTranslation>['t']
 ): string | null {
   if (isMultimodelRuntimeStatus(cliStatus)) {
-    if (visibleProviders.length > 0 && visibleProviders.every(isPendingMultimodelProviderStatus)) {
+    const isPending = (provider: CliProviderStatus): boolean =>
+      isPendingMultimodelProviderStatus(provider) ||
+      isCodexSnapshotPending(provider, codexSnapshotPending);
+    if (visibleProviders.length > 0 && visibleProviders.every(isPending)) {
       return t('cliStatus.provider.checkingProviders');
     }
     const connected =
-      visibleProviders.filter(isProviderCountedAsConnected).length + additionalConnectedCount;
+      visibleProviders.filter(
+        (provider) => !isPending(provider) && isProviderCountedAsConnected(provider)
+      ).length + additionalConnectedCount;
 
     return connected > 0
       ? t('cliStatus.provider.connectedCount', { connected })
@@ -646,12 +652,17 @@ function formatRuntimeAuthSummary(
 
 function isCheckingMultimodelStatus(
   cliStatus: NonNullable<ReturnType<typeof useCliInstaller>['cliStatus']>,
-  visibleProviders: readonly CliProviderStatus[]
+  visibleProviders: readonly CliProviderStatus[],
+  codexSnapshotPending: boolean
 ): boolean {
   return (
     isMultimodelRuntimeStatus(cliStatus) &&
     visibleProviders.length > 0 &&
-    visibleProviders.every(isPendingMultimodelProviderStatus)
+    visibleProviders.every(
+      (provider) =>
+        isPendingMultimodelProviderStatus(provider) ||
+        isCodexSnapshotPending(provider, codexSnapshotPending)
+    )
   );
 }
 
@@ -955,7 +966,12 @@ const InstalledBanner = ({
   const canOpenExtensions = cliStatus.installed;
   const hasConnectedMultimodelProvider =
     isMultimodelRuntimeStatus(cliStatus) &&
-    (visibleProviders.some(isProviderCountedAsConnected) || openCodeConnectedPlanCount > 0);
+    (visibleProviders.some(
+      (provider) =>
+        !isCodexSnapshotPending(provider, codexSnapshotPending) &&
+        isProviderCountedAsConnected(provider)
+    ) ||
+      openCodeConnectedPlanCount > 0);
   const runtimeLabel = hasConnectedMultimodelProvider
     ? t('cliStatus.provider.readyToRunAgents')
     : formatRuntimeLabel(cliStatus);
@@ -963,6 +979,7 @@ const InstalledBanner = ({
     cliStatus,
     visibleProviders,
     openCodeConnectedPlanCount,
+    codexSnapshotPending,
     t
   );
   const showCollapseControl = visibleProviders.length > 0;
@@ -1658,8 +1675,11 @@ export const CliStatusBanner = ({
     [cliStatusLoading, openCodeRuntimeStatus, openCodeRuntimeStatusLoading, visibleCliProviders]
   );
   const codexSnapshotPending =
-    isCodexAccountSnapshotPending(codexAccount.loading, codexAccount.snapshot) &&
-    Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) && Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
   const effectiveCliStatus = useMemo(
     () =>
       loadingCliStatus
@@ -2034,7 +2054,9 @@ export const CliStatusBanner = ({
     if (installerState === 'completed') return 'success';
     if (installerState !== 'idle') return 'info';
     if (!renderCliStatus) return 'loading';
-    if (isCheckingMultimodelStatus(renderCliStatus, visibleCliProviders)) return 'info';
+    if (isCheckingMultimodelStatus(renderCliStatus, visibleCliProviders, codexSnapshotPending)) {
+      return 'info';
+    }
     if (renderCliStatus.authStatusChecking) return 'info';
     if (!renderCliStatus.installed) return 'error';
     if (isMultimodelRuntimeStatus(renderCliStatus) && visibleCliProviders.length === 0) {

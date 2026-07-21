@@ -33,6 +33,7 @@ export type {
   PluginCapability,
   PluginCatalogItem,
   PluginFilters,
+  PluginInstallScope,
   PluginInstallRequest,
   PluginSortField,
 } from './plugin';

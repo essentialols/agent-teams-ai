@@ -48,7 +48,8 @@ export interface PersistOpenCodeRuntimeAdapterLaunchResultPorts {
   nowIso(): string;
   writeLaunchStateSnapshot(
     teamName: string,
-    snapshot: PersistedTeamLaunchSnapshot
+    snapshot: PersistedTeamLaunchSnapshot,
+    options: { runId: string }
   ): Promise<PersistedTeamLaunchSnapshot>;
 }
 
@@ -340,7 +341,9 @@ export async function persistOpenCodeRuntimeAdapterLaunchResult(
     members,
   });
   return {
-    snapshot: await ports.writeLaunchStateSnapshot(input.teamName, snapshot),
+    snapshot: await ports.writeLaunchStateSnapshot(input.teamName, snapshot, {
+      runId: input.runId,
+    }),
     result: committedResult,
   };
 }

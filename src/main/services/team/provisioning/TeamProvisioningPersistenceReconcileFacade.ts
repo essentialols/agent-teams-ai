@@ -1,6 +1,7 @@
 import { getPersistedLaunchMemberNames } from './TeamProvisioningLaunchStateProjection';
 import {
   type LaunchStateWriteResult,
+  type PendingOpenCodePrimaryCleanup,
   type TeamProvisioningLaunchStateStoreBoundary,
 } from './TeamProvisioningLaunchStateStoreBoundary';
 import { filterRemovedMembersFromLaunchSnapshot } from './TeamProvisioningMemberStatusProjection';
@@ -40,7 +41,15 @@ export interface TeamProvisioningPersistenceReconcileFacadePorts<
     | 'writeLaunchStateSnapshotNow'
     | 'isLaunchStateNoopRefreshDue'
     | 'enqueue'
-  >;
+  > &
+    Partial<
+      Pick<
+        TeamProvisioningLaunchStateStoreBoundary,
+        | 'readPendingOpenCodePrimaryCleanups'
+        | 'appendPendingOpenCodePrimaryCleanup'
+        | 'consumePendingOpenCodePrimaryCleanup'
+      >
+    >;
   readLaunchState(teamName: string): Promise<PersistedTeamLaunchSnapshot | null>;
   readMembersMeta(teamName: string): Promise<readonly TeamMember[]>;
   overlayPrimaryBootstrapTruthIntoRunStatusesFromBootstrapState(run: TRun): Promise<void>;
@@ -104,9 +113,12 @@ export class TeamProvisioningPersistenceReconcileFacade<
 
   async writeLaunchStateSnapshot(
     teamName: string,
-    snapshot: PersistedTeamLaunchSnapshot
+    snapshot: PersistedTeamLaunchSnapshot,
+    options?: { allowNoopSkip?: boolean; runId?: string }
   ): Promise<PersistedTeamLaunchSnapshot> {
-    return this.ports.launchStateStoreBoundary.writeLaunchStateSnapshot(teamName, snapshot);
+    return options === undefined
+      ? this.ports.launchStateStoreBoundary.writeLaunchStateSnapshot(teamName, snapshot)
+      : this.ports.launchStateStoreBoundary.writeLaunchStateSnapshot(teamName, snapshot, options);
   }
 
   async writeLaunchStateSnapshotNow(
@@ -123,6 +135,30 @@ export class TeamProvisioningPersistenceReconcileFacade<
 
   isLaunchStateNoopRefreshDue(snapshot: PersistedTeamLaunchSnapshot): boolean {
     return this.ports.launchStateStoreBoundary.isLaunchStateNoopRefreshDue(snapshot);
+  }
+
+  readPendingOpenCodePrimaryCleanups(teamId: string): Promise<PendingOpenCodePrimaryCleanup[]> {
+    const read = this.ports.launchStateStoreBoundary.readPendingOpenCodePrimaryCleanups;
+    if (!read) {
+      throw new Error('OpenCode primary cleanup outbox is unavailable');
+    }
+    return read.call(this.ports.launchStateStoreBoundary, teamId);
+  }
+
+  appendPendingOpenCodePrimaryCleanup(cleanup: PendingOpenCodePrimaryCleanup): Promise<void> {
+    const append = this.ports.launchStateStoreBoundary.appendPendingOpenCodePrimaryCleanup;
+    if (!append) {
+      throw new Error('OpenCode primary cleanup outbox is unavailable');
+    }
+    return append.call(this.ports.launchStateStoreBoundary, cleanup);
+  }
+
+  consumePendingOpenCodePrimaryCleanup(cleanup: PendingOpenCodePrimaryCleanup): Promise<boolean> {
+    const consume = this.ports.launchStateStoreBoundary.consumePendingOpenCodePrimaryCleanup;
+    if (!consume) {
+      throw new Error('OpenCode primary cleanup outbox is unavailable');
+    }
+    return consume.call(this.ports.launchStateStoreBoundary, cleanup);
   }
 
   enqueueLaunchStateStoreOperation<T>(teamName: string, operation: () => Promise<T>): Promise<T> {

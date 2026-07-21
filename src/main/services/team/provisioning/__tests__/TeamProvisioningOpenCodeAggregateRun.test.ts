@@ -17,12 +17,27 @@ import {
 import type { TeamLaunchRuntimeAdapter, TeamRuntimeLaunchResult } from '../../runtime';
 import type { OpenCodeRuntimeBootstrapEvidencePorts } from '../TeamProvisioningOpenCodeBootstrapEvidence';
 import type { TeamRuntimeLanePlan } from '@features/team-runtime-lanes';
-import type { TeamCreateRequest, TeamProvisioningProgress } from '@shared/types';
+import type {
+  PersistedTeamLaunchSnapshot,
+  TeamCreateRequest,
+  TeamProvisioningProgress,
+} from '@shared/types';
 
 type OpenCodeMemberLanePlan = Extract<TeamRuntimeLanePlan, { mode: 'pure_opencode_member_lanes' }>;
 type OpenCodeMember = OpenCodeMemberLanePlan['allMembers'][number];
 
 const testTeamsBasePath = '/safe-test/teams';
+
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve(value?: T | PromiseLike<T>): void;
+} {
+  let resolve!: (value?: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = (value) => promiseResolve(value as T | PromiseLike<T>);
+  });
+  return { promise, resolve };
+}
 
 function bootstrapEvidencePorts(): OpenCodeRuntimeBootstrapEvidencePorts {
   return {
@@ -1698,6 +1713,96 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
     expect(calls).not.toContain('deleteAliveRun');
     expect(calls).not.toContain('deleteProvisioningRunIfCurrent');
     expect(calls).not.toContain('cleanupRun');
+  });
+
+  it('cleans a persistence-race cancellation by exact run without deleting successor state', async () => {
+    const alice = member('alice');
+    const calls: string[] = [];
+    const persistenceStarted = deferred();
+    const persistenceGate = deferred();
+    const previousLaunchState = {
+      teamName: 'open-code-team',
+      expectedMembers: ['previous-member'],
+      members: {},
+    } as unknown as PersistedTeamLaunchSnapshot;
+    let provisioningOwner = 'run-open-code';
+    const runtimeOwnership: {
+      current?: { runId: string; providerId: 'opencode' };
+    } = {};
+    let persistedSnapshot = 'previous-snapshot';
+    const stopExactPrimary = vi.fn(
+      async (input: Parameters<TeamLaunchRuntimeAdapter['stop']>[0]) => {
+        calls.push('stopExactPrimary');
+        return confirmedStopResult(input);
+      }
+    );
+    const clearPersistedLaunchState = vi.fn<
+      OpenCodeWorktreeRootAggregateLaunchPorts['clearPersistedLaunchState']
+    >(async (_teamName, options) => {
+      calls.push(`clearPersistedLaunchState:${options?.expectedRunId}`);
+      if (options?.expectedRunId === undefined || options.expectedRunId === provisioningOwner) {
+        persistedSnapshot = 'cleared';
+      }
+    });
+
+    const launching = runOpenCodeWorktreeRootAggregateLaunch(
+      {
+        adapter: { stop: stopExactPrimary } as unknown as TeamLaunchRuntimeAdapter,
+        request: request([alice]),
+        members: [alice],
+        lanePlan: lanePlan({ primaryMembers: [alice], sideMembers: [] }),
+        prompt: 'launch',
+        onProgress: vi.fn(),
+      },
+      {
+        ...baseAggregatePorts(calls),
+        readLaunchState: async () => {
+          calls.push('readLaunchState');
+          return previousLaunchState;
+        },
+        clearPersistedLaunchState,
+        getProvisioningRun: () => provisioningOwner,
+        getRuntimeAdapterRun: () => runtimeOwnership.current,
+        launchOpenCodeAggregatePrimaryLane: async (input) => {
+          calls.push('launchPrimary');
+          persistenceStarted.resolve();
+          await persistenceGate.promise;
+          input.assertStillCurrentAfterPersistence?.();
+          throw new Error('unreachable after authority fence');
+        },
+      }
+    );
+    await persistenceStarted.promise;
+
+    provisioningOwner = 'successor-run';
+    runtimeOwnership.current = { runId: 'successor-run', providerId: 'opencode' };
+    persistedSnapshot = 'successor-snapshot';
+    persistenceGate.resolve();
+    await expect(launching).resolves.toEqual({ runId: 'run-open-code' });
+
+    expect(clearPersistedLaunchState).toHaveBeenNthCalledWith(1, 'open-code-team');
+    expect(clearPersistedLaunchState).toHaveBeenNthCalledWith(2, 'open-code-team', {
+      expectedRunId: 'run-open-code',
+    });
+    expect(persistedSnapshot).toBe('successor-snapshot');
+    expect(stopExactPrimary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-open-code',
+        teamName: 'open-code-team',
+        laneId: 'primary',
+        cwd: '/fake/project',
+        providerId: 'opencode',
+        reason: 'cleanup',
+        force: true,
+        previousLaunchState,
+      })
+    );
+    expect(calls.indexOf('clearPersistedLaunchState:run-open-code')).toBeGreaterThan(
+      calls.indexOf('stopExactPrimary')
+    );
+    expect(calls).not.toContain('clearLaneStorage:primary');
+    expect(calls).toContain('cleanupRun');
+    expect(calls).not.toContain('setAliveRun');
   });
 });
 

@@ -5,11 +5,16 @@ import { createLogger } from '@shared/utils/logger';
 import { clearBootstrapState } from '../TeamBootstrapStateReader';
 import { type TeamLaunchStateStore } from '../TeamLaunchStateStore';
 
+import {
+  getPendingOpenCodePrimaryCleanupIdentity,
+  type PendingOpenCodePrimaryCleanup,
+} from './TeamProvisioningLaunchStateStoreBoundary';
 import { type TeamProvisioningMemberLifecycleController } from './TeamProvisioningMemberLifecycle';
 import {
   type LiveRosterAttachReason,
   type ProvisioningRun as MemberLifecycleProvisioningRun,
 } from './TeamProvisioningMemberLifecycleTypes';
+import { OpenCodeAggregateRuntimeStopError } from './TeamProvisioningOpenCodeAggregateLaunchPersistence';
 import {
   hasRetainableOpenCodeRuntimeMember,
   isRecoverableOpenCodeRuntimeEvidence,
@@ -431,7 +436,8 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
         const abortedByOwnershipGuard = getErrorMessage(restartError).includes(
           'owning run is no longer active'
         );
-        if (!abortedByOwnershipGuard) {
+        const cleanupUnconfirmed = restartError instanceof OpenCodeAggregateRuntimeStopError;
+        if (!abortedByOwnershipGuard && !cleanupUnconfirmed) {
           await this.stopUnretainableOpenCodePrimaryLane({
             adapter,
             run,
@@ -439,8 +445,10 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
             previousLaunchState,
           });
         }
-        await this.clearCancelledOpenCodeAggregateRestartState(teamName, run.runId);
-        throw abortedByOwnershipGuard
+        if (!cleanupUnconfirmed) {
+          await this.clearCancelledOpenCodeAggregateRestartState(teamName, run.runId);
+        }
+        throw abortedByOwnershipGuard || cleanupUnconfirmed
           ? restartError
           : this.getCancelledOpenCodeAggregatePrimaryLaunchError(teamName);
       }
@@ -498,6 +506,12 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
         );
       } catch (rollbackError) {
         if (restartNoLongerCurrent()) {
+          await this.stopUnretainableOpenCodePrimaryLane({
+            adapter,
+            run,
+            previousEffectiveMembers,
+            previousLaunchState,
+          });
           await this.clearCancelledOpenCodeAggregateRestartState(teamName, run.runId);
           throw rollbackError;
         }
@@ -577,24 +591,118 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
     previousEffectiveMembers: TeamCreateRequest['members'];
     previousLaunchState: Awaited<ReturnType<TeamLaunchStateStore['read']>>;
   }): Promise<void> {
+    const cwd = this.prepareFacade.getOpenCodeRuntimeLaunchCwd(
+      input.run.request.cwd,
+      input.previousEffectiveMembers
+    );
     try {
-      await input.adapter.stop({
+      const result = await input.adapter.stop({
         runId: input.run.runId,
         laneId: 'primary',
         teamName: input.run.teamName,
-        cwd: this.prepareFacade.getOpenCodeRuntimeLaunchCwd(
-          input.run.request.cwd,
-          input.previousEffectiveMembers
-        ),
+        cwd,
         providerId: 'opencode',
         reason: 'cleanup',
         previousLaunchState: input.previousLaunchState,
         force: true,
       });
+      if (!result.stopped) {
+        throw new Error(
+          [...result.diagnostics, ...result.warnings].filter(Boolean).join('\n') ||
+            'OpenCode unretainable primary lane stop was not confirmed'
+        );
+      }
     } catch (error) {
+      // Persistence has already committed the cancelled candidate by the time
+      // this cleanup runs. Record the rejected generation independently so a
+      // successor owner cannot conceal it and a later retry can target only
+      // the old run without replacing or clearing the successor.
+      const cleanup: PendingOpenCodePrimaryCleanup = {
+        teamId: input.run.teamName,
+        runId: input.run.runId,
+        providerId: 'opencode',
+        cwd,
+        previousLaunchState: input.previousLaunchState,
+      };
+      let outboxError: unknown;
+      try {
+        await this.appendPendingOpenCodePrimaryCleanup(cleanup);
+      } catch (caughtOutboxError) {
+        outboxError = caughtOutboxError;
+      }
+      if (!this.runtimeAdapterRunByTeam.has(input.run.teamName)) {
+        this.runtimeAdapterRunByTeam.set(input.run.teamName, {
+          runId: input.run.runId,
+          providerId: 'opencode',
+          cwd,
+        });
+      }
       logger.warn(
         `[${input.run.teamName}] Failed to stop unretainable OpenCode primary lane: ${getErrorMessage(error)}`
       );
+      throw new OpenCodeAggregateRuntimeStopError(
+        outboxError === undefined ? [error] : [error, outboxError]
+      );
+    }
+  }
+
+  protected async retryPendingOpenCodePrimaryCleanup(teamName: string): Promise<void> {
+    const pendingCleanups = (await this.readPendingOpenCodePrimaryCleanups(teamName))
+      .map((cleanup) => [getPendingOpenCodePrimaryCleanupIdentity(cleanup), cleanup] as const)
+      .sort(([leftIdentity], [rightIdentity]) => {
+        if (leftIdentity === rightIdentity) {
+          return 0;
+        }
+        return leftIdentity < rightIdentity ? -1 : 1;
+      });
+    if (pendingCleanups.length === 0) {
+      return;
+    }
+
+    const adapter = this.appShellBoundary.getOpenCodeRuntimeAdapter();
+    if (!adapter) {
+      throw new OpenCodeAggregateRuntimeStopError([
+        new Error('OpenCode runtime adapter is unavailable for pending primary cleanup'),
+      ]);
+    }
+
+    for (const [, cleanup] of pendingCleanups) {
+      try {
+        const result = await adapter.stop({
+          runId: cleanup.runId,
+          laneId: 'primary',
+          teamName: cleanup.teamId,
+          cwd: cleanup.cwd,
+          providerId: cleanup.providerId,
+          reason: 'cleanup',
+          previousLaunchState: cleanup.previousLaunchState,
+          force: true,
+        });
+        if (!result.stopped) {
+          throw new Error(
+            [...result.diagnostics, ...result.warnings].filter(Boolean).join('\n') ||
+              'OpenCode pending primary cleanup was not confirmed'
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          `[${cleanup.teamId}] Failed to retry pending OpenCode primary cleanup for run ${cleanup.runId}: ${getErrorMessage(error)}`
+        );
+        throw new OpenCodeAggregateRuntimeStopError([error]);
+      }
+
+      await this.consumePendingOpenCodePrimaryCleanup(cleanup);
+      const currentOwner = this.runtimeAdapterRunByTeam.get(cleanup.teamId);
+      if (
+        currentOwner?.runId === cleanup.runId &&
+        currentOwner.providerId === cleanup.providerId &&
+        currentOwner.cwd === cleanup.cwd
+      ) {
+        await this.cancellationBoundary.clearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(
+          cleanup.teamId,
+          cleanup.runId
+        );
+      }
     }
   }
 
@@ -661,6 +769,7 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
 
   override async restartMember(teamName: string, memberName: string): Promise<void> {
     return this.runAfterInFlightTeamOperation(teamName, async () => {
+      await this.retryPendingOpenCodePrimaryCleanup(teamName);
       const activeRestart = this.openCodeAggregatePrimaryRestartByTeam.get(
         teamName.trim().toLowerCase()
       );
@@ -703,8 +812,14 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
         }
       } catch (error) {
         if (restart.lease.cancelRequested) {
-          await this.clearCancelledOpenCodeAggregateRestartState(teamName, restart.lease.runId);
-          if (getErrorMessage(error).includes('owning run is no longer active')) {
+          const cleanupUnconfirmed = error instanceof OpenCodeAggregateRuntimeStopError;
+          if (!cleanupUnconfirmed) {
+            await this.clearCancelledOpenCodeAggregateRestartState(teamName, restart.lease.runId);
+          }
+          if (
+            cleanupUnconfirmed ||
+            getErrorMessage(error).includes('owning run is no longer active')
+          ) {
             throw error;
           }
           throw this.getCancelledOpenCodeAggregateRestartError(teamName, memberName);
@@ -714,6 +829,11 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
         restart.release();
       }
     });
+  }
+
+  protected override async reconcilePersistedLaunchState(teamName: string) {
+    await this.retryPendingOpenCodePrimaryCleanup(teamName);
+    return super.reconcilePersistedLaunchState(teamName);
   }
 
   override async retryFailedOpenCodeSecondaryLanes(

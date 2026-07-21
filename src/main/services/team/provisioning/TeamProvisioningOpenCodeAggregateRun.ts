@@ -185,7 +185,7 @@ export interface OpenCodeWorktreeRootAggregateLaunchPorts extends OpenCodeWorktr
   ): TeamProvisioningProgress;
   resetTeamScopedTransientStateForNewRun(teamName: string): void;
   readLaunchState(teamName: string): Promise<TeamRuntimeLaunchInput['previousLaunchState']>;
-  clearPersistedLaunchState(teamName: string): Promise<void>;
+  clearPersistedLaunchState(teamName: string, options?: { expectedRunId?: string }): Promise<void>;
   setRun(runId: string, run: OpenCodeAggregateProvisioningRun): void;
   invalidateRuntimeSnapshotCaches(teamName: string): void;
   launchOpenCodeAggregatePrimaryLane(input: {
@@ -723,6 +723,9 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
       ports,
       new Error('OpenCode aggregate launch was cancelled')
     );
+    await ports
+      .clearPersistedLaunchState(teamName, { expectedRunId: runId })
+      .catch(() => undefined);
     if (cleanupOwnership === 'secondary_owner_changed') {
       evictOpenCodeAggregateRunPreservingReplacementSecondary(run, ports);
       return { runId };

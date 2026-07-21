@@ -987,16 +987,6 @@ export async function buildTeamAgentRuntimeSnapshot(
     });
   };
 
-  const getLiveRuntimeMember = (memberName: string): LiveTeamAgentRuntimeMetadata | undefined => {
-    const exact = findExactMapEntry(liveRuntimeByMember, memberName)?.[1];
-    if (exact) {
-      return exact;
-    }
-    const observedMatches = [...liveRuntimeByMember.entries()].filter(([observedName]) =>
-      matchesObservedMemberNameForExpected(observedName, memberName)
-    );
-    return observedMatches.length === 1 ? observedMatches[0]?.[1] : undefined;
-  };
   const getSpawnStatusMember = (memberName: string): MemberSpawnStatusEntry | undefined => {
     if (!canUseSpawnStatusEvidence) {
       return undefined;
@@ -1075,6 +1065,19 @@ export async function buildTeamAgentRuntimeSnapshot(
     if (!memberName || isMemberRemovedInMeta(metaMembers, memberName)) continue;
     candidateMembers.set(memberIdentityKey(memberName), member);
   }
+
+  const getLiveRuntimeMember = (memberName: string): LiveTeamAgentRuntimeMetadata | undefined => {
+    const exact = findExactMapEntry(liveRuntimeByMember, memberName)?.[1];
+    if (exact) {
+      return exact;
+    }
+    const observedMatches = [...liveRuntimeByMember.entries()].filter(
+      ([observedName]) =>
+        !candidateMembers.has(memberIdentityKey(observedName)) &&
+        matchesObservedMemberNameForExpected(observedName, memberName)
+    );
+    return observedMatches.length === 1 ? observedMatches[0]?.[1] : undefined;
+  };
 
   for (const member of candidateMembers.values()) {
     const memberName = typeof member?.name === 'string' ? member.name.trim() : '';

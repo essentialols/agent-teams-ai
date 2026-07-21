@@ -844,6 +844,88 @@ describe('TeamProvisioningRuntimeSnapshot source precedence', () => {
     }
   });
 
+  it('reserves exact live runtime keys for their current candidate owner', async () => {
+    const currentRun = run();
+    const canonicalMember = currentRun.request.members[0];
+    if (!canonicalMember) {
+      throw new Error('expected canonical member fixture');
+    }
+    const suffixedMember = { ...canonicalMember, name: 'Worker-2' };
+    currentRun.request.members = [canonicalMember, suffixedMember];
+    currentRun.effectiveMembers = [canonicalMember, suffixedMember];
+    currentRun.allEffectiveMembers = [canonicalMember, suffixedMember];
+
+    const snapshot = await buildTeamAgentRuntimeSnapshot({
+      teamName: TEAM_NAME,
+      runId: RUN_ID,
+      generationAtStart: 0,
+      runs: new Map([[RUN_ID, currentRun]]),
+      runtimeAdapterRunByTeam: new Map(),
+      teamMetaStore: {
+        getMeta: vi.fn(async () => ({ providerId: 'opencode' as const })),
+      },
+      membersMetaStore: {
+        getMembers: vi.fn(async () => []),
+      },
+      launchStateStore: {
+        read: vi.fn(async () => null),
+      },
+      readConfigSnapshot: vi.fn(async () => ({
+        ...config(),
+        members: [canonicalMember, suffixedMember],
+      })),
+      readPersistedRuntimeMembers: vi.fn(() => []),
+      getMemberSpawnStatuses: vi.fn(
+        async (): Promise<MemberSpawnStatusesSnapshot> => ({
+          runId: RUN_ID,
+          source: 'live',
+          statuses: {},
+        })
+      ),
+      getLiveTeamAgentRuntimeMetadata: vi.fn(
+        async () =>
+          new Map<string, LiveTeamAgentRuntimeMetadata>([
+            [
+              'Worker-2',
+              {
+                alive: true,
+                backendType: 'process',
+                providerId: 'opencode',
+                model: 'gpt-current',
+                pid: CURRENT_PID,
+                runtimeSessionId: 'session-worker-2',
+                livenessKind: 'runtime_process',
+                pidSource: 'opencode_bridge',
+              },
+            ],
+          ])
+      ),
+      readRuntimeProcessRowsForUsageSnapshot: vi.fn(async () => []),
+      readProcessUsageStatsByPid: vi.fn(async () => new Map()),
+      buildRuntimeUsageProcessTrees: vi.fn(() => new Map()),
+      buildRuntimeProcessLoadStats: vi.fn(() => undefined),
+      agentRuntimeResourceHistory: {
+        record: vi.fn(() => undefined),
+        prune: vi.fn(),
+      },
+      getRuntimeSnapshotCacheGeneration: vi.fn(() => 0),
+      getTrackedRunId: vi.fn(() => RUN_ID),
+      getAgentRuntimeSnapshotCacheTtlMs: vi.fn(() => 1_000),
+      rememberAgentRuntimeSnapshot: vi.fn(),
+      logDebug: vi.fn(),
+    });
+
+    expect(snapshot.members.Worker).toMatchObject({ alive: false });
+    expect(snapshot.members.Worker?.pid).toBeUndefined();
+    expect(snapshot.members.Worker?.runtimeSessionId).toBeUndefined();
+    expect(snapshot.members['Worker-2']).toMatchObject({
+      alive: true,
+      pid: CURRENT_PID,
+      runtimeSessionId: 'session-worker-2',
+      livenessKind: 'runtime_process',
+    });
+  });
+
   it('accepts legacy exact-key evidence without an embedded member name', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(UPDATED_AT));

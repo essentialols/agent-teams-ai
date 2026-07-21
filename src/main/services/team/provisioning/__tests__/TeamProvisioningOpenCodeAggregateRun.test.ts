@@ -929,11 +929,8 @@ describe('TeamProvisioningOpenCodeAggregateRun', () => {
         }
       ).catch((caught: unknown) => caught);
 
-      expect(error).toBeInstanceOf(AggregateError);
-      expect(error).toMatchObject({
-        message: 'OpenCode aggregate launch failed and runtime cleanup was not confirmed',
-        errors: [expect.objectContaining({ message: firstStopFailure.message })],
-      });
+      expect(error).not.toBeInstanceOf(AggregateError);
+      expect(error).toEqual({ runId: 'run-open-code' });
       expect(
         stopInputs.map(({ runId, teamName, laneId }) => ({ runId, teamName, laneId }))
       ).toEqual([

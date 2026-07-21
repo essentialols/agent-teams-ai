@@ -18980,7 +18980,14 @@ describe('TeamProvisioningService', () => {
             prepare: vi.fn(),
             launch: adapterLaunch,
             reconcile: vi.fn(),
-            stop: vi.fn(async () => undefined),
+            stop: vi.fn(async (input: TeamRuntimeStopInput) => ({
+              runId: input.runId,
+              teamName: input.teamName,
+              stopped: true,
+              members: {},
+              warnings: [],
+              diagnostics: [],
+            })),
           } as unknown as TeamLaunchRuntimeAdapter,
         ])
       );
@@ -19304,7 +19311,14 @@ describe('TeamProvisioningService', () => {
             prepare: vi.fn(),
             launch: adapterLaunch,
             reconcile: vi.fn(),
-            stop: vi.fn(),
+            stop: vi.fn(async (input: TeamRuntimeStopInput) => ({
+              runId: input.runId,
+              teamName: input.teamName,
+              stopped: true,
+              members: {},
+              warnings: [],
+              diagnostics: [],
+            })),
           } as unknown as TeamLaunchRuntimeAdapter,
         ])
       );

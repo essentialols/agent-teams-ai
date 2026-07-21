@@ -331,6 +331,11 @@ type OpenCodeAggregateUntrackedPrimaryStopState =
   | 'aggregate_cleanup_owned'
   | 'inner_stop_confirmed';
 
+interface OpenCodeAggregateRuntimeStopOutcome {
+  failures: unknown[];
+  retriedUntrackedPrimaryStop: boolean;
+}
+
 function getOpenCodeAggregateSecondaryCleanupOwnership(
   run: OpenCodeAggregateProvisioningRun,
   ports: OpenCodeWorktreeRootAggregateLaunchPorts
@@ -367,9 +372,10 @@ async function stopOpenCodeAggregateRuntimeLanes(
     untrackedPrimaryStopState: OpenCodeAggregateUntrackedPrimaryStopState;
   },
   ports: OpenCodeWorktreeRootAggregateLaunchPorts
-): Promise<unknown[]> {
+): Promise<OpenCodeAggregateRuntimeStopOutcome> {
   const ownedRuntimeRun = ports.getRuntimeAdapterRun(run.teamName);
   const stopFailures: unknown[] = [];
+  const retriedUntrackedPrimaryStop = input.untrackedPrimaryStopState === 'aggregate_cleanup_owned';
   if (input.untrackedPrimaryStopState === 'aggregate_cleanup_owned') {
     try {
       const result = await input.adapter.stop({
@@ -418,7 +424,10 @@ async function stopOpenCodeAggregateRuntimeLanes(
       stopFailures.push(error);
     }
   }
-  return stopFailures;
+  return {
+    failures: stopFailures,
+    retriedUntrackedPrimaryStop,
+  };
 }
 
 async function clearOpenCodeAggregateLaneStorageIfOwned(
@@ -484,9 +493,9 @@ async function stopAndRollbackOpenCodeAggregateRuntimeLanes(
   ports: OpenCodeWorktreeRootAggregateLaunchPorts,
   launchError: unknown
 ): Promise<OpenCodeAggregateLaneCleanupOwnership> {
-  const stopFailures = await stopOpenCodeAggregateRuntimeLanes(run, input, ports);
-  if (stopFailures.length > 0) {
-    throw buildOpenCodeAggregateRuntimeStopError(launchError, stopFailures);
+  const stopOutcome = await stopOpenCodeAggregateRuntimeLanes(run, input, ports);
+  if (stopOutcome.failures.length > 0) {
+    throw buildOpenCodeAggregateRuntimeStopError(launchError, stopOutcome.failures);
   }
   return clearOpenCodeAggregateLaneStorageIfOwned(run, ports);
 }
@@ -941,7 +950,7 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
     // The adapter-managed process is not covered by run.child (null), so without
     // an explicit stop it is orphaned when the maps/storage below are cleared
     // (mirror of the cancellation-boundary stop, runId-gated on ownership).
-    const stopFailures = await stopOpenCodeAggregateRuntimeLanes(
+    const stopOutcome = await stopOpenCodeAggregateRuntimeLanes(
       run,
       {
         adapter: input.adapter,
@@ -952,9 +961,19 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
       },
       ports
     );
+    const recoveredUntrackedPrimaryStop =
+      error instanceof OpenCodeAggregateRuntimeStopError &&
+      stopOutcome.retriedUntrackedPrimaryStop &&
+      stopOutcome.failures.length === 0;
     const propagatedError =
-      stopFailures.length > 0 ? buildOpenCodeAggregateRuntimeStopError(error, stopFailures) : error;
-    const message = propagatedError instanceof Error ? propagatedError.message : String(error);
+      stopOutcome.failures.length > 0
+        ? buildOpenCodeAggregateRuntimeStopError(error, stopOutcome.failures)
+        : error;
+    const message = recoveredUntrackedPrimaryStop
+      ? 'OpenCode aggregate launch failed readiness gate; runtime cleanup confirmed after retry'
+      : propagatedError instanceof Error
+        ? propagatedError.message
+        : String(error);
     const failedProgress = ports.setRuntimeAdapterProgress(
       buildOpenCodeAggregateFailureProgress({
         launching,
@@ -964,7 +983,7 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
       input.onProgress
     );
     run.progress = failedProgress;
-    if (stopFailures.length > 0) {
+    if (stopOutcome.failures.length > 0) {
       throw propagatedError;
     }
     if (aggregateLaunchNoLongerCurrent() || !isOpenCodeAggregateCleanupStillOwned(run, ports)) {
@@ -991,6 +1010,9 @@ export async function runOpenCodeWorktreeRootAggregateLaunch(
     // run has since taken over).
     ports.cleanupRun(run);
     ports.invalidateRuntimeSnapshotCaches(teamName);
+    if (recoveredUntrackedPrimaryStop) {
+      return { runId };
+    }
     throw propagatedError;
   }
 }

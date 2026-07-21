@@ -21418,7 +21418,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     expect(relaunchedStatuses.statuses.alice?.hardFailureReason).toBeUndefined();
   });
 
-  it('rejects an unretainable aggregate launch when its primary stop is unconfirmed and retains retry ownership', async () => {
+  it('accepts an unretainable aggregate launch cleanup when its same-generation primary stop retry succeeds', async () => {
     const teamName = 'unretainable-opencode-stop-retry-safe-e2e';
     const adapter = new FailOnceStopOpenCodeRuntimeAdapter(
       'unretainable aggregate primary stop was not confirmed'
@@ -21430,6 +21430,61 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
         'writeLaunchFailureArtifactPackBestEffort'
       )
       .mockImplementation(() => undefined);
+    svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    const progress: TeamProvisioningProgress[] = [];
+
+    const result = await svc.createTeam(
+      {
+        teamName,
+        cwd: projectPath,
+        providerId: 'opencode',
+        model: 'opencode/big-pickle',
+        skipPermissions: true,
+        members: [
+          { name: 'alice', role: 'Developer', providerId: 'opencode' },
+          {
+            name: 'bob',
+            role: 'Reviewer',
+            providerId: 'opencode',
+            cwd: path.join(projectPath, 'bob-worktree-fixture'),
+          },
+        ],
+      },
+      (event) => progress.push(event)
+    );
+
+    expect(console.warn).toHaveBeenCalledWith(
+      '[Service:TeamProvisioning]',
+      `[${teamName}] Failed to stop unretainable OpenCode primary lane: unretainable aggregate primary stop was not confirmed`
+    );
+    (console.warn as unknown as { mockClear: () => void }).mockClear();
+
+    const runId = adapter.launchInputs[0]?.runId;
+    expect(runId).toBeTruthy();
+    expect(result).toEqual({ runId });
+    expect(adapter.stopInputs).toEqual([
+      expect.objectContaining({ runId, teamName, laneId: 'primary', force: true }),
+      expect.objectContaining({ runId, teamName, laneId: 'primary', force: true }),
+    ]);
+    expect(progress.at(-1)).toMatchObject({
+      state: 'failed',
+      error:
+        'OpenCode aggregate launch failed readiness gate; runtime cleanup confirmed after retry',
+    });
+    expect(writeLaunchFailureArtifactPackBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, teamName }),
+      expect.objectContaining({ reason: 'launch_progress_failed' })
+    );
+    expect((svc as any).runtimeAdapterRunByTeam.has(teamName)).toBe(false);
+    expect((svc as any).provisioningRunByTeam.has(teamName)).toBe(false);
+    expect((svc as any).runs.has(runId)).toBe(false);
+  });
+
+  it('rejects an unretainable aggregate launch and retains retry ownership when every primary stop fails', async () => {
+    const teamName = 'unretainable-opencode-stop-always-fails-safe-e2e';
+    const stopFailureMessage = 'unretainable aggregate primary stop remained unconfirmed';
+    const adapter = new FailAlwaysStopOpenCodeRuntimeAdapter(stopFailureMessage);
+    const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
 
     const error = await svc
@@ -21456,7 +21511,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
 
     expect(console.warn).toHaveBeenCalledWith(
       '[Service:TeamProvisioning]',
-      `[${teamName}] Failed to stop unretainable OpenCode primary lane: unretainable aggregate primary stop was not confirmed`
+      `[${teamName}] Failed to stop unretainable OpenCode primary lane: ${stopFailureMessage}`
     );
     (console.warn as unknown as { mockClear: () => void }).mockClear();
 
@@ -21465,27 +21520,22 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect(error).toMatchObject({
       message: 'OpenCode aggregate launch failed and runtime cleanup was not confirmed',
-      errors: expect.arrayContaining([
-        expect.objectContaining({
-          message: 'unretainable aggregate primary stop was not confirmed',
-        }),
-      ]),
+      errors: expect.arrayContaining([expect.objectContaining({ message: stopFailureMessage })]),
     });
+    expect(adapter.stopInputs).toEqual([
+      expect.objectContaining({ runId, teamName, laneId: 'primary', force: true }),
+      expect.objectContaining({ runId, teamName, laneId: 'primary', force: true }),
+    ]);
     expect((svc as any).runtimeAdapterRunByTeam.get(teamName)).toMatchObject({ runId });
     expect((svc as any).provisioningRunByTeam.get(teamName)).toBe(runId);
     expect((svc as any).runs.get(runId)).toMatchObject({ runId, teamName });
-    expect(adapter.stopInputs).toHaveLength(1);
-
-    await expect(svc.stopTeam(teamName)).resolves.toBeUndefined();
-
-    expect(adapter.stopInputs).toHaveLength(2);
-    expect(writeLaunchFailureArtifactPackBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({ runId, teamName }),
-      expect.objectContaining({ reason: 'launch_progress_failed' })
+    await expect(readOpenCodeRuntimeLaneIndex(getTeamsBasePath(), teamName)).resolves.toMatchObject(
+      {
+        lanes: {
+          primary: { runId, state: 'active' },
+        },
+      }
     );
-    expect((svc as any).runtimeAdapterRunByTeam.has(teamName)).toBe(false);
-    expect((svc as any).provisioningRunByTeam.has(teamName)).toBe(false);
-    expect((svc as any).runs.has(runId)).toBe(false);
   });
 
   it('relaunches an OpenCode team after permission-pending stop and clears pending permissions', async () => {
@@ -22143,6 +22193,17 @@ class FailOnceStopOpenCodeRuntimeAdapter extends FakeOpenCodeRuntimeAdapter {
       throw new Error(this.stopFailureMessage);
     }
     return result;
+  }
+}
+
+class FailAlwaysStopOpenCodeRuntimeAdapter extends FakeOpenCodeRuntimeAdapter {
+  constructor(private readonly stopFailureMessage: string) {
+    super('partial_failure');
+  }
+
+  override async stop(input: TeamRuntimeStopInput): Promise<TeamRuntimeStopResult> {
+    await super.stop(input);
+    throw new Error(this.stopFailureMessage);
   }
 }
 

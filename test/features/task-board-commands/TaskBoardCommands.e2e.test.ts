@@ -11,6 +11,7 @@ import {
   createApplicationCommandLedgerFeature,
   NodeApplicationCommandHasher,
 } from '@features/application-command-ledger/main';
+import { InternalStorageBackendSelector } from '@features/internal-storage/main/composition/InternalStorageBackendSelector';
 import { InternalStorageWorkerCore } from '@features/internal-storage/main/infrastructure/worker/InternalStorageWorkerCore';
 import {
   TaskBoardCommandFacade,
@@ -18,7 +19,7 @@ import {
 } from '@features/task-board-commands';
 import { type AgentTeamsController, createController } from 'agent-teams-controller';
 import Database from 'better-sqlite3-node';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InProcessGateway } from '../internal-storage/helpers/InProcessGateway';
 
@@ -59,6 +60,41 @@ describe('task-board commands E2E', () => {
     expect(replay.createdInAttempt).toBe(false);
     expect(replay.task.id).toBe(identity.commandId);
     expect(replay.task).not.toHaveProperty('creationCommand');
+    expect(harness.controller.taskBoard.listTasks()).toHaveLength(1);
+  });
+
+  it('uses the legacy create path when the SQLite backend falls back after an ABI failure', async () => {
+    const harness = await makeHarness();
+    const destinationCreate = vi.spyOn(harness.destination, 'create');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const selector = new InternalStorageBackendSelector(() =>
+      Promise.reject(new Error('native module ABI mismatch'))
+    );
+    const runner = { run: vi.fn() };
+    const hasher = new NodeApplicationCommandHasher();
+    const facade = new TaskBoardCommandFacade(runner as never, {
+      isDurableStorageAvailable: () => selector.select(true, false),
+      hashPayload: (payload) => hasher.hashJson(payload),
+    });
+    const command = {
+      teamName: TEAM_NAME,
+      identity: makeIdentity('12121212-1212-4212-8212-121212121212'),
+      payload: { subject: 'Legacy fallback task', createdBy: 'user' },
+      destination: harness.destination,
+    };
+
+    const first = await facade.createTask(command);
+    const replay = await facade.createTask(command);
+
+    expect(selector.getBackendKind()).toBe('json-fallback');
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(first.outcome).toBe(ApplicationCommandRunOutcome.Executed);
+    expect(first.createdInAttempt).toBe(true);
+    expect(first.task.id).toBe(command.identity.commandId);
+    expect(replay.outcome).toBe(ApplicationCommandRunOutcome.Replayed);
+    expect(replay.createdInAttempt).toBe(false);
+    expect(replay.task.id).toBe(command.identity.commandId);
+    expect(destinationCreate).toHaveBeenCalledOnce();
     expect(harness.controller.taskBoard.listTasks()).toHaveLength(1);
   });
 

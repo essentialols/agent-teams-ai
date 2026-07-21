@@ -1998,18 +1998,82 @@ describe('TeamDataService', () => {
     ).rejects.toThrow('Durable task-board commands are unavailable');
     expect(commandFacade.createTask).toHaveBeenCalledTimes(1);
     expect(directCreate).not.toHaveBeenCalled();
+  });
 
-    service.setTaskBoardCommandFacade(null);
+  it('uses one legacy create when durable task commands are unavailable', async () => {
+    const commandId = '33333333-3333-4333-8333-333333333333';
+    const legacyTask: TeamTask = {
+      id: commandId,
+      subject: 'Legacy task',
+      status: 'pending',
+    };
+    let storedTask: (TeamTask & { creationCommand?: unknown }) | null = null;
+    const directCreate = vi.fn((input: Record<string, unknown>) => {
+      storedTask = {
+        ...legacyTask,
+        creationCommand: input.creationCommand,
+      };
+      return storedTask;
+    });
+    const getTask = vi.fn((taskId: string) => {
+      if (!storedTask || storedTask.id !== taskId) {
+        throw new Error(`Task not found: ${taskId}`);
+      }
+      return storedTask;
+    });
+    const reconcileTaskCreation = vi.fn(() => storedTask);
+    const service = new TeamDataService(
+      {
+        getConfig: vi.fn(async () => ({
+          name: 'My team',
+          members: [],
+          projectPath: '/projects/legacy',
+        })),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      null,
+      {} as never,
+      {} as never,
+      () =>
+        ({
+          taskBoard: {
+            getTask,
+            createTask: directCreate,
+            reconcileTaskCreation,
+          },
+        }) as never
+    );
+
     await expect(
       service.createTask('my-team', {
-        subject: 'Must not bypass durability',
+        subject: legacyTask.subject,
         command: {
-          commandId: '33333333-3333-4333-8333-333333333333',
+          commandId,
           idempotencyKey: 'create-task-intent-3',
         },
       })
-    ).rejects.toThrow('Durable task-board commands are unavailable');
-    expect(directCreate).not.toHaveBeenCalled();
+    ).resolves.toEqual(legacyTask);
+
+    expect(directCreate).toHaveBeenCalledOnce();
+    expect(directCreate).toHaveBeenCalledWith({
+      subject: legacyTask.subject,
+      createdBy: 'user',
+      projectPath: '/projects/legacy',
+      id: commandId,
+      creationCommand: {
+        namespace: 'task-board',
+        scopeKey: 'my-team',
+        operation: 'task.create',
+        commandId,
+        payloadHash: expect.stringMatching(/^sha256:/),
+      },
+    });
+    expect(reconcileTaskCreation).toHaveBeenCalledOnce();
   });
 
   it('notifies a lead-owned task from the final started state on fresh durable execution', async () => {

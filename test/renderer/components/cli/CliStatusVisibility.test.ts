@@ -1282,7 +1282,11 @@ describe('CLI status visibility during completed install state', () => {
     });
 
     expect(host.textContent).toContain('Checking...');
+    expect(host.textContent).toContain('Checking providers...');
     expect(host.textContent).not.toContain('Codex CLI not found');
+    expect(host.textContent).not.toContain('Ready to run agents');
+    expect(host.textContent).not.toContain('Connect a provider to get started');
+    expect(host.textContent).not.toContain('Providers: 1 connected');
     expect(
       Array.from(host.querySelectorAll('button')).some(
         (button) => button.textContent?.trim() === 'Install'

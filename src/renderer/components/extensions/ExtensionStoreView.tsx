@@ -184,7 +184,11 @@ export const ExtensionStoreView = (): React.JSX.Element => {
     includeRateLimits: true,
   });
   const codexSnapshotPending =
-    isCodexAccountSnapshotPending(codexAccount.loading, codexAccount.snapshot) &&
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) &&
     Boolean(
       loadingCliStatus?.providers.some(
         (provider: CliProviderStatus) => provider.providerId === 'codex'

@@ -270,19 +270,14 @@ export const McpServerDetailDialog = ({
       registryId: server.id,
       serverName,
       scope,
-      projectPath: isProjectScopedMcpScope(scope) ? (projectPath ?? undefined) : undefined,
+      projectPath: projectPath ?? undefined,
       envValues,
       headers,
     });
   };
 
   const handleUninstall = () => {
-    uninstallMcpServer(
-      server.id,
-      uninstallServerName,
-      uninstallScope,
-      isProjectScopedMcpScope(uninstallScope) ? (projectPath ?? undefined) : undefined
-    );
+    uninstallMcpServer(server.id, uninstallServerName, uninstallScope, projectPath ?? undefined);
   };
 
   const addHeader = () => {

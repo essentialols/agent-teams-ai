@@ -179,8 +179,11 @@ export const CliStatusSection = (): React.JSX.Element | null => {
     includeRateLimits: true,
   });
   const codexSnapshotPending =
-    isCodexAccountSnapshotPending(codexAccount.loading, codexAccount.snapshot) &&
-    Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) && Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex'));
   const effectiveCliStatus = useMemo(
     () =>
       loadingCliStatus

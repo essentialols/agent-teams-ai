@@ -81,6 +81,7 @@ export function clearInheritedMemberModelsUnavailableForProvider(input: {
   members: MemberDraft[];
   selectedProviderId: TeamProviderId;
   runtimeProviderStatusById: RuntimeProviderStatusById;
+  deferredProviderIds?: ReadonlySet<TeamProviderId>;
 }): { members: MemberDraft[]; changed: boolean } {
   let changed = false;
   const members = input.members.map((member) => {
@@ -91,6 +92,9 @@ export function clearInheritedMemberModelsUnavailableForProvider(input: {
       memberProviderId: member.providerId,
       selectedProviderId: input.selectedProviderId,
     });
+    if (input.deferredProviderIds?.has(providerId)) {
+      return member;
+    }
     const providerStatus = input.runtimeProviderStatusById.get(providerId) ?? null;
     if (shouldClearOpenCodeModelToDefault(providerId, providerStatus)) {
       changed = true;

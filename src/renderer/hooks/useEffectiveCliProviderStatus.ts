@@ -136,7 +136,11 @@ export function useEffectiveCliProviderStatus(
     scopedProviderStatus,
   ]);
   const codexSnapshotPending =
-    isCodexAccountSnapshotPending(codexAccount.loading, codexAccount.snapshot) &&
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) &&
     Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex')) &&
     providerId === 'codex';
   const providerStatus = useMemo(

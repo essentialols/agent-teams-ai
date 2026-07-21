@@ -15,6 +15,7 @@ const CODEX_HIDDEN_REFRESH_MS = 5 * 60_000;
 export const CODEX_ACCOUNT_STARTUP_IDLE_MIN_DELAY_MS = 2_000;
 export const CODEX_ACCOUNT_STARTUP_IDLE_MAX_DELAY_MS = 30_000;
 export const CODEX_ACCOUNT_STARTUP_IDLE_DELAY_MS = CODEX_ACCOUNT_STARTUP_IDLE_MAX_DELAY_MS;
+export const CODEX_ACCOUNT_INITIAL_REQUEST_TIMEOUT_MS = 60_000;
 
 function isDocumentVisible(): boolean {
   if (typeof document === 'undefined') {
@@ -47,11 +48,31 @@ function getSnapshotUpdatedAtMs(snapshot: CodexAccountSnapshotDto): number | nul
   return Number.isFinite(updatedAtMs) ? updatedAtMs : null;
 }
 
+function withInitialRequestTimeout<T>(request: Promise<T>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error('Codex account status check timed out. Retrying in the background.'));
+    }, CODEX_ACCOUNT_INITIAL_REQUEST_TIMEOUT_MS);
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  });
+}
+
 export function isCodexAccountSnapshotPending(
   loading: boolean,
-  snapshot: CodexAccountSnapshotDto | null
+  snapshot: CodexAccountSnapshotDto | null,
+  error?: string | null
 ): boolean {
-  if (!loading || snapshot?.login.status === 'starting' || snapshot?.login.status === 'pending') {
+  if (
+    (!loading && !error) ||
+    snapshot?.login.status === 'starting' ||
+    snapshot?.login.status === 'pending'
+  ) {
     return false;
   }
 
@@ -105,7 +126,6 @@ export function useCodexAccountSnapshot(options: {
   const [initialRefreshAttempted, setInitialRefreshAttempted] = useState(false);
   const [initialRateLimitsAttempted, setInitialRateLimitsAttempted] = useState(false);
   const enabled = electronMode && options.enabled;
-  enabledRef.current = enabled;
 
   useEffect(() => {
     const loadingTokens = loadingTokensRef.current;
@@ -118,6 +138,10 @@ export function useCodexAccountSnapshot(options: {
       rateLimitsLoadingTokens.clear();
     };
   }, []);
+
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   useEffect(() => {
     if (enabled) {
@@ -172,7 +196,7 @@ export function useCodexAccountSnapshot(options: {
       forceRefreshToken?: boolean;
       silent?: boolean;
     }) => {
-      if (!electronMode || !options.enabled) {
+      if (!electronMode || !mountedRef.current || !enabledRef.current) {
         return false;
       }
 
@@ -235,7 +259,7 @@ export function useCodexAccountSnapshot(options: {
         }
       }
     },
-    [applySnapshot, electronMode, options.enabled, options.includeRateLimits]
+    [applySnapshot, electronMode, options.includeRateLimits]
   );
 
   useEffect(() => {
@@ -266,12 +290,14 @@ export function useCodexAccountSnapshot(options: {
       const lifecycleId = lifecycleIdRef.current;
       const snapshotRevision = snapshotRevisionRef.current;
       const errorRequestId = ++latestErrorRequestIdRef.current;
-      const initialSnapshotRequest = Promise.resolve().then(() =>
-        options.includeRateLimits
-          ? api.refreshCodexAccountSnapshot({
-              includeRateLimits: true,
-            })
-          : api.getCodexAccountSnapshot()
+      const initialSnapshotRequest = withInitialRequestTimeout(
+        Promise.resolve().then(() =>
+          options.includeRateLimits
+            ? api.refreshCodexAccountSnapshot({
+                includeRateLimits: true,
+              })
+            : api.getCodexAccountSnapshot()
+        )
       );
 
       void initialSnapshotRequest
@@ -356,6 +382,9 @@ export function useCodexAccountSnapshot(options: {
       return;
     }
 
+    // Visibility may have changed while this hook was disabled and unsubscribed.
+    setVisible(isDocumentVisible());
+
     const handleVisibilityChange = (): void => {
       const nextVisible = isDocumentVisible();
       setVisible(nextVisible);
@@ -434,12 +463,11 @@ export function useCodexAccountSnapshot(options: {
 
   const runAction = useCallback(
     async (runner: () => Promise<CodexAccountSnapshotDto>): Promise<boolean> => {
-      if (!electronMode || !options.enabled) {
+      if (!electronMode || !mountedRef.current || !enabledRef.current) {
         return false;
       }
 
       const lifecycleId = lifecycleIdRef.current;
-      const snapshotRevision = snapshotRevisionRef.current;
       const errorRequestId = ++latestErrorRequestIdRef.current;
       const loadingToken = Symbol('codex-account-action');
       loadingTokensRef.current.add(loadingToken);
@@ -457,7 +485,6 @@ export function useCodexAccountSnapshot(options: {
           mountedRef.current &&
           enabledRef.current &&
           lifecycleIdRef.current === lifecycleId &&
-          snapshotRevisionRef.current === snapshotRevision &&
           latestErrorRequestIdRef.current === errorRequestId
         ) {
           setError(nextError instanceof Error ? nextError.message : 'Codex account action failed');
@@ -470,7 +497,7 @@ export function useCodexAccountSnapshot(options: {
         }
       }
     },
-    [applySnapshot, electronMode, options.enabled]
+    [applySnapshot, electronMode]
   );
 
   // Derived pending state covers the first render, before the initial effect can run.

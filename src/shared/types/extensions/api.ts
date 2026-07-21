@@ -9,7 +9,7 @@ import type {
   ApiKeySaveRequest,
   ApiKeyStorageStatus,
 } from './apikey';
-import type { InstallScope, OperationResult } from './common';
+import type { OperationResult } from './common';
 import type {
   InstalledMcpEntry,
   McpCatalogItem,
@@ -18,7 +18,7 @@ import type {
   McpSearchResult,
   McpServerDiagnostic,
 } from './mcp';
-import type { EnrichedPlugin, PluginInstallRequest } from './plugin';
+import type { EnrichedPlugin, PluginInstallRequest, PluginInstallScope } from './plugin';
 import type {
   SkillCatalogItem,
   SkillDeleteRequest,
@@ -37,7 +37,7 @@ export interface PluginCatalogAPI {
   install: (request: PluginInstallRequest) => Promise<OperationResult>;
   uninstall: (
     pluginId: string,
-    scope?: InstallScope,
+    scope?: PluginInstallScope,
     projectPath?: string
   ) => Promise<OperationResult>;
 }

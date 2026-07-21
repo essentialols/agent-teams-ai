@@ -425,6 +425,7 @@ import type {
   McpServerDiagnostic,
   OperationResult,
   PluginInstallRequest,
+  PluginInstallScope,
   SkillCatalogItem,
   SkillDeleteRequest,
   SkillDetail,
@@ -2018,7 +2019,7 @@ const electronAPI: ElectronAPI = {
       invokeIpcWithResult<string | null>(PLUGIN_GET_README, pluginId),
     install: (request: PluginInstallRequest) =>
       invokeIpcWithResult<OperationResult>(PLUGIN_INSTALL, request),
-    uninstall: (pluginId: string, scope?: string, projectPath?: string) =>
+    uninstall: (pluginId: string, scope?: PluginInstallScope, projectPath?: string) =>
       invokeIpcWithResult<OperationResult>(PLUGIN_UNINSTALL, pluginId, scope, projectPath),
   },
 

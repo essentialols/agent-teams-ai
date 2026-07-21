@@ -1735,7 +1735,8 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
   const shouldAwaitRuntimeModelList =
     effectiveProviderId !== 'anthropic' &&
     openCodeLocalModelOverlay.options.length === 0 &&
-    (runtimeProviderStatus == null ||
+    ((effectiveProviderId === 'codex' && codexSnapshotPending) ||
+      runtimeProviderStatus == null ||
       isTeamProviderModelVerificationPending(effectiveProviderId, runtimeProviderStatus));
   const openCodeScopedCatalogRetryExhausted =
     effectiveProviderId === 'opencode' &&
@@ -1799,6 +1800,7 @@ export const TeamModelSelector: React.FC<TeamModelSelectorProps> = ({
     loadedOpenCodeCatalogScopeKey !== openCodeCatalogScopeKey &&
     settledOpenCodeCatalogScopeKey !== openCodeCatalogScopeKey;
   const shouldDeferModelNormalization =
+    (effectiveProviderId === 'codex' && codexSnapshotPending) ||
     providerModelCatalogLoading ||
     openCodeProjectCatalogPending ||
     openCodeLocalProvidersLoading ||

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import { getHomeDir } from '@main/utils/pathDecoder';
 import { createLogger } from '@shared/utils/logger';
+import { getMcpRuntimeTargetKey } from '@shared/utils/mcpTargets';
 
 import type { InstalledMcpEntry } from '@shared/types/extensions';
 
@@ -100,21 +101,9 @@ export class McpConfigStateReader {
     value: unknown,
     scope: 'user' | 'project' | 'local'
   ): InstalledMcpEntry[] {
-    const mcpServers =
-      value && typeof value === 'object'
-        ? (value as Record<string, { command?: string; url?: string }>)
-        : null;
-    if (!mcpServers) {
-      return [];
-    }
-
-    return Object.entries(mcpServers).map(([name, config]): InstalledMcpEntry => {
-      let transport: string | undefined;
-      if (config.command) transport = 'stdio';
-      else if (config.url) transport = 'http';
-
-      return { name, scope, transport };
-    });
+    return this.readConfiguredMcpServersFromConfig(value, scope).map(
+      ({ config: _config, ...entry }) => entry
+    );
   }
 
   private readConfiguredMcpServersFromConfig(
@@ -137,7 +126,21 @@ export class McpConfigStateReader {
         if (typeof config.command === 'string') transport = 'stdio';
         else if (typeof config.url === 'string') transport = 'http';
 
-        return { name, scope, transport, config: { ...config } };
+        let targetKey: string | undefined;
+        if (
+          transport === 'stdio' &&
+          config.command === 'npx' &&
+          Array.isArray(config.args) &&
+          config.args.length === 2 &&
+          config.args[0] === '-y' &&
+          typeof config.args[1] === 'string'
+        ) {
+          targetKey = getMcpRuntimeTargetKey(`npx -y ${config.args[1]}`, transport) ?? undefined;
+        } else if (transport === 'http' && typeof config.url === 'string') {
+          targetKey = getMcpRuntimeTargetKey(config.url, transport) ?? undefined;
+        }
+
+        return { name, scope, transport, targetKey, config: { ...config } };
       });
   }
 

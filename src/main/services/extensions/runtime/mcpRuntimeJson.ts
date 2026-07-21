@@ -1,4 +1,5 @@
 import { isInstalledMcpScope } from '@shared/utils/mcpScopes';
+import { getMcpRuntimeTargetKey } from '@shared/utils/mcpTargets';
 
 import type { InstalledMcpEntry } from '@shared/types/extensions';
 
@@ -6,6 +7,7 @@ interface McpListJsonServer {
   name?: string;
   scope?: string;
   transport?: string;
+  target?: string;
 }
 
 interface McpListJsonPayload {
@@ -34,12 +36,12 @@ export function parseInstalledMcpJsonOutput(output: string): InstalledMcpEntry[]
       return [];
     }
 
-    return [
-      {
-        name: entry.name,
-        scope: entry.scope,
-        transport: typeof entry.transport === 'string' ? entry.transport : undefined,
-      },
-    ];
+    const transport = typeof entry.transport === 'string' ? entry.transport : undefined;
+    const targetKey =
+      typeof entry.target === 'string'
+        ? (getMcpRuntimeTargetKey(entry.target, transport) ?? undefined)
+        : undefined;
+
+    return [{ name: entry.name, scope: entry.scope, transport, targetKey }];
   });
 }

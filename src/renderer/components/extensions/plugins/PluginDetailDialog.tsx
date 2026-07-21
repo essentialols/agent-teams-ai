@@ -41,7 +41,7 @@ import { InstallCountBadge } from '../common/InstallCountBadge';
 import { SourceBadge } from '../common/SourceBadge';
 
 import type { CliInstallationStatus } from '@shared/types';
-import type { EnrichedPlugin, InstallScope } from '@shared/types/extensions';
+import type { EnrichedPlugin, PluginInstallScope } from '@shared/types/extensions';
 
 interface PluginDetailDialogProps {
   plugin: EnrichedPlugin | null;
@@ -55,10 +55,10 @@ interface PluginDetailDialogProps {
   cliStatusLoading?: boolean;
 }
 
-const SCOPE_OPTIONS: InstallScope[] = ['user', 'project', 'local'];
+const SCOPE_OPTIONS: PluginInstallScope[] = ['user', 'project', 'local'];
 
 function getScopeOptionLabel(
-  scope: InstallScope,
+  scope: PluginInstallScope,
   t: ReturnType<typeof useAppTranslation>['t']
 ): string {
   switch (scope) {
@@ -92,7 +92,7 @@ export const PluginDetailDialog = ({
     }))
   );
 
-  const [scope, setScope] = useState<InstallScope>('user');
+  const [scope, setScope] = useState<PluginInstallScope>('user');
   const projectScopeAvailable = Boolean(projectPath);
 
   useEffect(() => {
@@ -199,7 +199,7 @@ export const PluginDetailDialog = ({
         <div className="flex items-center gap-3 rounded-md border border-border bg-surface-raised px-4 py-3">
           <div className="flex flex-1 items-center gap-2">
             <Label className="text-xs text-text-muted">{t('pluginDetail.scope.label')}</Label>
-            <Select value={scope} onValueChange={(v) => setScope(v as InstallScope)}>
+            <Select value={scope} onValueChange={(v) => setScope(v as PluginInstallScope)}>
               <SelectTrigger className="h-7 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>

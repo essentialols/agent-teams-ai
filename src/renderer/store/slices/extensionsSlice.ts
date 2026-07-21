@@ -30,6 +30,7 @@ import type {
   McpInstallRequest,
   McpServerDiagnostic,
   PluginInstallRequest,
+  PluginInstallScope,
   SkillCatalogItem,
   SkillDeleteRequest,
   SkillDetail,
@@ -113,7 +114,11 @@ export interface ExtensionsSlice {
 
   // ── Mutation actions ──
   installPlugin: (request: PluginInstallRequest) => Promise<void>;
-  uninstallPlugin: (pluginId: string, scope?: InstallScope, projectPath?: string) => Promise<void>;
+  uninstallPlugin: (
+    pluginId: string,
+    scope?: PluginInstallScope,
+    projectPath?: string
+  ) => Promise<void>;
   installMcpServer: (request: McpInstallRequest) => Promise<void>;
   installCustomMcpServer: (request: McpCustomInstallRequest) => Promise<void>;
   uninstallMcpServer: (
@@ -977,7 +982,7 @@ export const createExtensionsSlice: StateCreator<AppState, [], [], ExtensionsSli
   },
 
   // ── Plugin uninstall ──
-  uninstallPlugin: async (pluginId: string, scope?: InstallScope, projectPath?: string) => {
+  uninstallPlugin: async (pluginId: string, scope?: PluginInstallScope, projectPath?: string) => {
     if (!api.plugins) return;
 
     const catalogProjectPathAtOperationStart = get().pluginCatalogProjectPath ?? undefined;

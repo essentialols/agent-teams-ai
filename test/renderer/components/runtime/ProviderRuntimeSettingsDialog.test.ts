@@ -2326,6 +2326,7 @@ describe('ProviderRuntimeSettingsDialog', () => {
     expect(host.textContent).toContain('Checking...');
     expect(host.textContent).not.toContain('Codex CLI not found');
     expect(host.textContent).not.toContain('Install Codex CLI');
+    expect(host.textContent?.toLowerCase()).not.toContain('runtime missing');
   });
 
   it('keeps the API key form open and shows an error when delete fails', async () => {

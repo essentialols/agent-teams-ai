@@ -24,6 +24,7 @@ import {
   getPreferredMcpInstallationEntry,
   sanitizeMcpServerName,
 } from '@shared/utils/extensionNormalizers';
+import { getMcpInstallTargetKey } from '@shared/utils/mcpTargets';
 import { AlertTriangle, RefreshCw, Search, Server } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -215,12 +216,6 @@ export const McpServersPanel = ({
   const isLoading = isSearching ? mcpSearchLoading : browseLoading;
   const warnings = isSearching ? mcpSearchWarnings : [];
 
-  // Installed lookup set (lowercase CLI names)
-  const installedNames = useMemo(
-    () => new Set(installedServers.map((s) => s.name.toLowerCase())),
-    [installedServers]
-  );
-
   const installedEntriesByName = useMemo(() => {
     const entriesByName = new Map<string, InstalledMcpEntry[]>();
     for (const entry of installedServers) {
@@ -230,12 +225,20 @@ export const McpServersPanel = ({
     return entriesByName;
   }, [installedServers]);
 
-  /** Check if a catalog server is installed by comparing sanitized names */
-  const isServerInstalled = (server: McpCatalogItem): boolean =>
-    installedNames.has(sanitizeMcpServerName(server.name));
+  const getInstalledEntries = (server: McpCatalogItem): InstalledMcpEntry[] => {
+    const entriesByDefaultName =
+      installedEntriesByName.get(sanitizeMcpServerName(server.name)) ?? [];
+    if (entriesByDefaultName.length > 0) {
+      return entriesByDefaultName;
+    }
 
-  const getInstalledEntries = (server: McpCatalogItem): InstalledMcpEntry[] =>
-    installedEntriesByName.get(sanitizeMcpServerName(server.name)) ?? [];
+    const targetKey = getMcpInstallTargetKey(server.installSpec);
+    return targetKey ? installedServers.filter((entry) => entry.targetKey === targetKey) : [];
+  };
+
+  /** Match the default name first, then the configured target for custom install names. */
+  const isServerInstalled = (server: McpCatalogItem): boolean =>
+    getInstalledEntries(server).length > 0;
 
   const getInstalledEntry = (server: McpCatalogItem): InstalledMcpEntry | null =>
     getPreferredMcpInstallationEntry(getInstalledEntries(server));
@@ -490,6 +493,7 @@ export const McpServersPanel = ({
               diagnostic={getDiagnostic(server)}
               diagnosticsLoading={mcpDiagnosticsLoading}
               onClick={setSelectedMcpServerId}
+              projectPath={projectPath}
               cliStatus={cliStatus}
               cliStatusLoading={cliStatusLoading}
             />

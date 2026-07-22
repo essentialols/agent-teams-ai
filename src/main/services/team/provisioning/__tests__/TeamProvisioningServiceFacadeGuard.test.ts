@@ -90,6 +90,7 @@ const DOCUMENTED_EFFECTIVE_PUBLIC_SERVICE_INSTANCE_MEMBERS = [
   'respondToToolApproval',
   'restartMember',
   'retryFailedOpenCodeSecondaryLanes',
+  'runLiveRosterMutation',
   'scanOpenCodePromptDeliveryWatchdog',
   'scheduleOpenCodeMemberInboxDeliveryWake',
   'sendMessageToTeam',

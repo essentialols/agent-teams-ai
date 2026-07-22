@@ -281,7 +281,7 @@ describe('RuntimeControlService', () => {
     expect(seenTexts).toEqual(['original payload', 'conflicting payload']);
   });
 
-  it('canonicalizes idempotency-key whitespace before selecting the delivery fence', async () => {
+  it('preserves command idempotency keys while serializing their shared runtime lane', async () => {
     const firstEntered = createDeferred();
     const releaseFirst = createDeferred();
     const enteredKeys: string[] = [];
@@ -308,24 +308,54 @@ describe('RuntimeControlService', () => {
     expect(enteredKeys).toEqual(['  message-key-1  ', 'message-key-1']);
   });
 
-  it('keeps unrelated delivery keys concurrent', async () => {
-    const release = createDeferred();
-    const enteredKeys = new Set<string>();
+  it('serializes different messages that target the same runtime lane', async () => {
+    const firstEntered = createDeferred();
+    const releaseFirst = createDeferred();
+    const enteredKeys: string[] = [];
     const deliverMessage = vi.fn(async (command: RuntimeDeliverMessageCommand) => {
-      enteredKeys.add(command.idempotencyKey);
+      enteredKeys.push(command.idempotencyKey);
+      if (enteredKeys.length === 1) {
+        firstEntered.resolve();
+        await releaseFirst.promise;
+      }
+      return createAck({ state: 'delivered', idempotencyKey: command.idempotencyKey });
+    });
+    const service = new RuntimeControlService([{ providerId: 'opencode', deliverMessage }]);
+
+    const first = service.deliverMessage(createDeliverCommand());
+    await firstEntered.promise;
+    const second = service.deliverMessage(
+      createDeliverCommand({ idempotencyKey: 'message-key-2' })
+    );
+
+    expect(deliverMessage).toHaveBeenCalledTimes(1);
+    releaseFirst.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(enteredKeys).toEqual(['message-key-1', 'message-key-2']);
+  });
+
+  it('keeps unrelated runtime lanes concurrent', async () => {
+    const release = createDeferred();
+    const enteredLanes = new Set<string>();
+    const deliverMessage = vi.fn(async (command: RuntimeDeliverMessageCommand) => {
+      if (command.laneId === undefined) {
+        throw new Error('Expected delivery command to include a runtime lane ID.');
+      }
+      enteredLanes.add(command.laneId);
       await release.promise;
       return createAck({ state: 'delivered', idempotencyKey: command.idempotencyKey });
     });
     const service = new RuntimeControlService([{ providerId: 'opencode', deliverMessage }]);
     const deliveries = [
       service.deliverMessage(createDeliverCommand()),
-      service.deliverMessage(createDeliverCommand({ idempotencyKey: 'message-key-2' })),
+      service.deliverMessage(
+        createDeliverCommand({ laneId: 'lane-2', idempotencyKey: 'message-key-2' })
+      ),
     ];
 
     try {
-      await vi.waitFor(() =>
-        expect(enteredKeys).toEqual(new Set(['message-key-1', 'message-key-2']))
-      );
+      await vi.waitFor(() => expect(enteredLanes).toEqual(new Set(['lane-1', 'lane-2'])));
     } finally {
       release.resolve();
     }

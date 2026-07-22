@@ -18,6 +18,11 @@ import {
   registerTaskLogObservabilityIpc,
   removeTaskLogObservabilityIpc,
 } from '@features/task-log-observability/main';
+import {
+  createTeamApprovalsFeature,
+  registerTeamApprovalsIpc,
+  removeTeamApprovalsIpc,
+} from '@features/team-approvals/main';
 import { createLogger } from '@shared/utils/logger';
 import { ipcMain } from 'electron';
 
@@ -138,6 +143,7 @@ import type { TeamBackupService } from '../services/team/TeamBackupService';
 
 const logger = createLogger('IPC:handlers');
 const taskLogObservabilityLogger = createLogger('IPC:teams');
+const teamApprovalsLogger = createLogger('IPC:teams');
 
 /**
  * Initializes IPC handlers with service registry.
@@ -188,6 +194,10 @@ export function initializeIpcHandlers(
   teamBackupService?: TeamBackupService,
   launchIoGovernor?: LaunchIoGovernor
 ): void {
+  const teamApprovalsFeature = createTeamApprovalsFeature({
+    toolApprovalApi: teamHandlerApis.toolApproval,
+  });
+
   // Initialize domain handlers with registry
   initializeProjectHandlers(registry);
   initializeSessionHandlers(registry);
@@ -263,6 +273,10 @@ export function initializeIpcHandlers(
   registerSshHandlers(ipcMain);
   registerContextHandlers(ipcMain);
   registerTeamHandlers(ipcMain);
+  registerTeamApprovalsIpc(ipcMain, {
+    ...teamApprovalsFeature,
+    logger: teamApprovalsLogger,
+  });
   registerTaskLogObservabilityIpc(ipcMain, {
     readers: {
       activity: boardTaskActivityService,
@@ -321,6 +335,7 @@ export function removeIpcHandlers(): void {
   removeSshHandlers(ipcMain);
   removeContextHandlers(ipcMain);
   removeTeamHandlers(ipcMain);
+  removeTeamApprovalsIpc(ipcMain);
   removeTaskLogObservabilityIpc(ipcMain);
   removeReviewHandlers(ipcMain);
   removeEditorHandlers(ipcMain);

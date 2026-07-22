@@ -25,6 +25,7 @@ import {
 } from './bootstrapUserDataMigration';
 import './sentryBootstrap';
 
+import { TEAM_TOOL_APPROVAL_EVENT } from '@features/team-approvals/contracts';
 import type {
   AppCloseReadinessResult,
   AppCloseReason,
@@ -178,7 +179,6 @@ import {
   SSH_STATUS,
   TEAM_CHANGE,
   TEAM_PROJECT_BRANCH_CHANGE,
-  TEAM_TOOL_APPROVAL_EVENT,
   WINDOW_FULLSCREEN_CHANGED,
   // eslint-disable-next-line boundaries/element-types -- IPC channel constants shared between main and preload
 } from '@preload/constants/ipcChannels';

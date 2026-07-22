@@ -449,20 +449,15 @@ export const TEAM_GET_TASK_ATTACHMENT = 'team:getTaskAttachment';
 /** Delete an attachment from a task */
 export const TEAM_DELETE_TASK_ATTACHMENT = 'team:deleteTaskAttachment';
 
-/** Push event: tool approval request or dismissal (main → renderer) */
-export const TEAM_TOOL_APPROVAL_EVENT = 'team:toolApprovalEvent';
-
-/** Invoke: respond to a tool approval request (renderer → main) */
-export const TEAM_TOOL_APPROVAL_RESPOND = 'team:toolApprovalRespond';
+export {
+  TEAM_TOOL_APPROVAL_EVENT,
+  TEAM_TOOL_APPROVAL_READ_FILE,
+  TEAM_TOOL_APPROVAL_RESPOND,
+  TEAM_TOOL_APPROVAL_SETTINGS,
+} from '@features/team-approvals/contracts';
 
 /** Validate custom CLI args against `claude --help` output */
 export const TEAM_VALIDATE_CLI_ARGS = 'team:validateCliArgs';
-
-/** Invoke: update tool approval settings (renderer → main) */
-export const TEAM_TOOL_APPROVAL_SETTINGS = 'team:toolApprovalSettings';
-
-/** Invoke: read file content for tool approval diff preview (renderer → main) */
-export const TEAM_TOOL_APPROVAL_READ_FILE = 'team:toolApprovalReadFile';
 
 export const TEAM_GET_SAVED_REQUEST = 'team:getSavedRequest';
 export const TEAM_DELETE_DRAFT = 'team:deleteDraft';

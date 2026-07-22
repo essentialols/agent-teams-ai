@@ -85,9 +85,6 @@ import {
   TEAM_START_TASK,
   TEAM_START_TASK_BY_USER,
   TEAM_STOP,
-  TEAM_TOOL_APPROVAL_READ_FILE,
-  TEAM_TOOL_APPROVAL_RESPOND,
-  TEAM_TOOL_APPROVAL_SETTINGS,
   TEAM_UPDATE_CONFIG,
   TEAM_UPDATE_KANBAN,
   TEAM_UPDATE_KANBAN_COLUMN_ORDER,
@@ -185,7 +182,6 @@ import type {
   TeamProvisioningStatusApi,
   TeamRuntimeApi,
   TeamTaskActivityRepairApi,
-  TeamToolApprovalApi,
 } from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
 import type { TeamMembersMetaFile } from '../services/team/TeamMembersMetaStore';
@@ -243,8 +239,6 @@ import type {
   TeamUpdateConfigRequest,
   TeamViewSnapshot,
   TeamWorktreeGitStatus,
-  ToolApprovalFileContent,
-  ToolApprovalSettings,
   UpdateKanbanPatch,
 } from '@shared/types';
 import type { CliArgsValidationResult } from '@shared/utils/cliArgsParser';
@@ -747,7 +741,6 @@ let teamMemberLifecycleApi: TeamMemberLifecycleApi | null = null;
 let teamDiagnosticsApi: TeamDiagnosticsApi | null = null;
 let teamClaudeLogsApi: TeamClaudeLogsApi | null = null;
 let teamMessagingApi: TeamMessagingApi | null = null;
-let teamToolApprovalApi: TeamToolApprovalApi | null = null;
 let teamMemberLogsFinder: TeamMemberLogsFinder | null = null;
 let memberStatsComputer: MemberStatsComputer | null = null;
 let teamBackupService: TeamBackupService | null = null;
@@ -840,7 +833,6 @@ export function initializeTeamHandlers(
   teamDiagnosticsApi = teamHandlerApis.diagnostics;
   teamClaudeLogsApi = teamHandlerApis.claudeLogs;
   teamMessagingApi = teamHandlerApis.messaging;
-  teamToolApprovalApi = teamHandlerApis.toolApproval;
   teamMemberLogsFinder = logsFinder ?? null;
   memberStatsComputer = statsComputer ?? null;
   teamBackupService = backupService ?? null;
@@ -924,10 +916,7 @@ export function registerTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(TEAM_SAVE_TASK_ATTACHMENT, handleSaveTaskAttachment);
   ipcMain.handle(TEAM_GET_TASK_ATTACHMENT, handleGetTaskAttachment);
   ipcMain.handle(TEAM_DELETE_TASK_ATTACHMENT, handleDeleteTaskAttachment);
-  ipcMain.handle(TEAM_TOOL_APPROVAL_RESPOND, handleToolApprovalRespond);
-  ipcMain.handle(TEAM_TOOL_APPROVAL_READ_FILE, handleToolApprovalReadFile);
   ipcMain.handle(TEAM_VALIDATE_CLI_ARGS, handleValidateCliArgs);
-  ipcMain.handle(TEAM_TOOL_APPROVAL_SETTINGS, handleToolApprovalSettings);
   ipcMain.handle(TEAM_GET_SAVED_REQUEST, handleGetSavedRequest);
   ipcMain.handle(TEAM_DELETE_DRAFT, handleDeleteDraft);
   logger.info('Team handlers registered');
@@ -1004,10 +993,7 @@ export function removeTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(TEAM_SAVE_TASK_ATTACHMENT);
   ipcMain.removeHandler(TEAM_GET_TASK_ATTACHMENT);
   ipcMain.removeHandler(TEAM_DELETE_TASK_ATTACHMENT);
-  ipcMain.removeHandler(TEAM_TOOL_APPROVAL_RESPOND);
-  ipcMain.removeHandler(TEAM_TOOL_APPROVAL_READ_FILE);
   ipcMain.removeHandler(TEAM_VALIDATE_CLI_ARGS);
-  ipcMain.removeHandler(TEAM_TOOL_APPROVAL_SETTINGS);
   ipcMain.removeHandler(TEAM_GET_SAVED_REQUEST);
   ipcMain.removeHandler(TEAM_DELETE_DRAFT);
 }
@@ -1087,13 +1073,6 @@ function getTeamMessagingApi(): TeamMessagingApi {
     throw new Error('Team messaging handlers are not initialized');
   }
   return teamMessagingApi;
-}
-
-function getTeamToolApprovalApi(): TeamToolApprovalApi {
-  if (!teamToolApprovalApi) {
-    throw new Error('Team tool approval handlers are not initialized');
-  }
-  return teamToolApprovalApi;
 }
 
 function getTeammateToolTracker(): TeammateToolTracker {
@@ -5443,156 +5422,6 @@ async function handleDeleteTaskAttachment(
     // Remove metadata from task JSON
     await getTeamDataService().removeTaskAttachment(vTeam.value!, vTask.value!, safeAttId);
   });
-}
-
-async function handleToolApprovalRespond(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  runId: unknown,
-  requestId: unknown,
-  allow: unknown,
-  message?: unknown
-): Promise<IpcResult<void>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  if (typeof runId !== 'string' || runId.trim().length === 0) {
-    return { success: false, error: 'runId must be a non-empty string' };
-  }
-  if (typeof requestId !== 'string' || requestId.trim().length === 0) {
-    return { success: false, error: 'requestId must be a non-empty string' };
-  }
-  if (typeof allow !== 'boolean') {
-    return { success: false, error: 'allow must be a boolean' };
-  }
-  return wrapTeamHandler('toolApprovalRespond', () =>
-    getTeamToolApprovalApi().respondToToolApproval(
-      validated.value!,
-      runId,
-      requestId,
-      allow,
-      typeof message === 'string' ? message : undefined
-    )
-  );
-}
-
-async function handleToolApprovalSettings(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  settings: unknown
-): Promise<IpcResult<void>> {
-  if (typeof teamName !== 'string' || teamName.trim().length === 0) {
-    return { success: false, error: 'teamName must be a non-empty string' };
-  }
-  if (typeof settings !== 'object' || settings === null) {
-    return { success: false, error: 'Settings must be an object' };
-  }
-  const s = settings as Record<string, unknown>;
-  if (typeof s.autoAllowAll !== 'boolean') {
-    return { success: false, error: 'autoAllowAll must be a boolean' };
-  }
-  if (typeof s.autoAllowFileEdits !== 'boolean') {
-    return { success: false, error: 'autoAllowFileEdits must be a boolean' };
-  }
-  if (typeof s.autoAllowSafeBash !== 'boolean') {
-    return { success: false, error: 'autoAllowSafeBash must be a boolean' };
-  }
-  if (typeof s.timeoutAction !== 'string' || !['allow', 'deny', 'wait'].includes(s.timeoutAction)) {
-    return { success: false, error: 'timeoutAction must be "allow", "deny", or "wait"' };
-  }
-  if (
-    typeof s.timeoutSeconds !== 'number' ||
-    !Number.isFinite(s.timeoutSeconds) ||
-    s.timeoutSeconds < 5 ||
-    s.timeoutSeconds > 300
-  ) {
-    return { success: false, error: 'timeoutSeconds must be a number between 5 and 300' };
-  }
-
-  try {
-    getTeamToolApprovalApi().updateToolApprovalSettings(
-      teamName,
-      s as unknown as ToolApprovalSettings
-    );
-  } catch (err) {
-    return {
-      success: false,
-      error: `Failed to update tool approval settings: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-  return { success: true, data: undefined };
-}
-
-/** Max file size for tool approval diff preview (2MB). */
-const TOOL_APPROVAL_MAX_FILE_SIZE = 2 * 1024 * 1024;
-
-async function handleToolApprovalReadFile(
-  _event: IpcMainInvokeEvent,
-  filePath: unknown
-): Promise<IpcResult<ToolApprovalFileContent>> {
-  if (typeof filePath !== 'string' || filePath.trim().length === 0) {
-    return { success: false, error: 'filePath must be a non-empty string' };
-  }
-  if (!path.isAbsolute(filePath)) {
-    return { success: false, error: 'filePath must be an absolute path' };
-  }
-
-  try {
-    let stats: fs.Stats;
-    try {
-      stats = await fs.promises.stat(filePath);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return {
-          success: true,
-          data: { content: '', exists: false, truncated: false, isBinary: false },
-        };
-      }
-      throw err;
-    }
-
-    if (!stats.isFile()) {
-      return {
-        success: true,
-        data: { content: '', exists: true, truncated: false, isBinary: false, error: 'Not a file' },
-      };
-    }
-
-    const truncated = stats.size > TOOL_APPROVAL_MAX_FILE_SIZE;
-    const readSize = truncated ? TOOL_APPROVAL_MAX_FILE_SIZE : stats.size;
-
-    // Read file (potentially truncated)
-    const fd = await fs.promises.open(filePath, 'r');
-    try {
-      const buffer = Buffer.alloc(readSize);
-      await fd.read(buffer, 0, readSize, 0);
-
-      // Binary detection: check first 8KB for null bytes
-      const checkSize = Math.min(readSize, 8192);
-      for (let i = 0; i < checkSize; i++) {
-        if (buffer[i] === 0) {
-          return {
-            success: true,
-            data: { content: '', exists: true, truncated: false, isBinary: true },
-          };
-        }
-      }
-
-      return {
-        success: true,
-        data: { content: buffer.toString('utf-8'), exists: true, truncated, isBinary: false },
-      };
-    } finally {
-      await fd.close();
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      success: true,
-      data: { content: '', exists: true, truncated: false, isBinary: false, error: msg },
-    };
-  }
 }
 
 async function handleGetSavedRequest(

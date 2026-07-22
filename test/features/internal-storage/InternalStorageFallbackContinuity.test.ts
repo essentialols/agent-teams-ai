@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -328,7 +328,7 @@ describe('internal storage SQLite -> JSON fallback -> SQLite continuity', () => 
     });
   });
 
-  it('deletes through JSON fallback without the unavailable gateway and does not resurrect on recreate', async () => {
+  it('purges stale active JSON fallback state before SQLite recovers without team-directory removal', async () => {
     const { databasePath, teamsBasePath } = await setup();
     const gateway = openGateway(databasePath);
     const primary = createMwsStore({
@@ -367,15 +367,89 @@ describe('internal storage SQLite -> JSON fallback -> SQLite continuity', () => 
       fallbackRequiresReplica: false,
     });
 
+    await expect(fallback.read({ teamName: TEAM, memberName: 'bob' })).resolves.toMatchObject({
+      agenda: { fingerprint: 'stale-before-delete' },
+    });
+    const paths = new MemberWorkSyncStorePaths(teamsBasePath);
+    const jsonStore = new JsonMemberWorkSyncStore(paths);
+    expect((await jsonStore.readSnapshotForImport(TEAM))?.statuses).toEqual([
+      expect.objectContaining({ memberName: 'bob' }),
+    ]);
+    const immutableArchivePath = `${paths.getMemberStatusPath(TEAM, 'bob')}.pre-sqlite`;
+    const foreignPath = join(paths.getTeamDir(TEAM), 'foreign.json');
+    await writeFile(
+      immutableArchivePath,
+      await readFile(paths.getMemberStatusPath(TEAM, 'bob'), 'utf8')
+    );
+    await writeFile(foreignPath, '{"ownedBy":"another-feature"}\n');
+
     await expect(fallback.purgeTeam(TEAM)).resolves.toBeUndefined();
     expect(unavailableImport).not.toHaveBeenCalled();
-    const pendingPurgePath = new MemberWorkSyncStorePaths(teamsBasePath).getPendingPrimaryPurgePath(
-      TEAM
-    );
+    const pendingPurgePath = paths.getPendingPrimaryPurgePath(TEAM);
     await expect(readFile(pendingPurgePath, 'utf8')).resolves.toContain(`"teamName": "${TEAM}"`);
+    await expect(readFile(pendingPurgePath, 'utf8')).resolves.toContain(
+      '"activeJsonStateCleared": true'
+    );
+    await expect(jsonStore.readSnapshotForImport(TEAM)).resolves.toBeNull();
+    await expect(readFile(immutableArchivePath, 'utf8')).resolves.toContain('"memberName": "bob"');
+    await expect(readFile(foreignPath, 'utf8')).resolves.toBe('{"ownedBy":"another-feature"}\n');
 
-    await rm(join(teamsBasePath, TEAM), { recursive: true, force: true });
-    await mkdir(join(teamsBasePath, TEAM), { recursive: true });
+    const recoveredGateway = openGateway(databasePath);
+    const recoveredPrimary = createMwsStore({
+      kind: 'sqlite',
+      gateway: recoveredGateway,
+      teamsBasePath,
+      fallbackRequiresReplica: false,
+    });
+    await expect(recoveredPrimary.read({ teamName: TEAM, memberName: 'bob' })).resolves.toBeNull();
+    expect((await recoveredGateway.listTeamSnapshot(TEAM)).statuses).toEqual([]);
+    await expect(readFile(pendingPurgePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('imports only fresh same-name-team JSON writes made after fallback purge', async () => {
+    const { databasePath, teamsBasePath } = await setup();
+    const gateway = openGateway(databasePath);
+    const primary = createMwsStore({
+      kind: 'sqlite',
+      gateway,
+      teamsBasePath,
+      fallbackRequiresReplica: false,
+    });
+    const staleStatus: MemberWorkSyncStatus = {
+      teamName: TEAM,
+      memberName: 'bob',
+      state: 'needs_sync',
+      agenda: {
+        teamName: TEAM,
+        memberName: 'bob',
+        generatedAt: T0,
+        fingerprint: 'stale-before-delete',
+        items: [],
+        diagnostics: [],
+      },
+      evaluatedAt: T0,
+      diagnostics: [],
+    };
+    await primary.write(staleStatus);
+    await gateway.close();
+
+    const unavailableImport = vi.fn(() => Promise.reject(new Error('gateway unavailable')));
+    const unavailableGateway = {
+      importTeam: unavailableImport,
+      listTeamSnapshot: vi.fn(() => Promise.reject(new Error('gateway unavailable'))),
+    } as unknown as MemberWorkSyncStorageGateway;
+    const fallback = createMwsStore({
+      kind: 'json',
+      gateway: unavailableGateway,
+      teamsBasePath,
+      fallbackRequiresReplica: false,
+    });
+    await expect(fallback.read({ teamName: TEAM, memberName: 'bob' })).resolves.toMatchObject({
+      agenda: { fingerprint: 'stale-before-delete' },
+    });
+
+    await expect(fallback.purgeTeam(TEAM)).resolves.toBeUndefined();
+    expect(unavailableImport).not.toHaveBeenCalled();
     const freshStatus: MemberWorkSyncStatus = {
       ...staleStatus,
       memberName: 'alice',
@@ -389,6 +463,10 @@ describe('internal storage SQLite -> JSON fallback -> SQLite continuity', () => 
       evaluatedAt: T2,
     };
     await fallback.write(freshStatus);
+    const jsonStore = new JsonMemberWorkSyncStore(new MemberWorkSyncStorePaths(teamsBasePath));
+    expect((await jsonStore.readSnapshotForImport(TEAM))?.statuses).toEqual([
+      expect.objectContaining({ memberName: 'alice' }),
+    ]);
 
     const recoveredGateway = openGateway(databasePath);
     const recoveredPrimary = createMwsStore({
@@ -408,6 +486,9 @@ describe('internal storage SQLite -> JSON fallback -> SQLite continuity', () => 
     expect((await recoveredGateway.listTeamSnapshot(TEAM)).statuses).toEqual([
       expect.objectContaining({ memberName: 'alice' }),
     ]);
+    const pendingPurgePath = new MemberWorkSyncStorePaths(teamsBasePath).getPendingPrimaryPurgePath(
+      TEAM
+    );
     await expect(readFile(pendingPurgePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

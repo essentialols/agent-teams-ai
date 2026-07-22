@@ -1,8 +1,12 @@
 import { listPreSqliteArchiveGenerations } from '@features/internal-storage/main';
 import { withFileLock } from '@main/services/team/fileLock';
-import { atomicWriteAsync, renamePathWithRetry } from '@main/utils/atomicWrite';
+import {
+  atomicWriteAsync,
+  renamePathWithRetry,
+  syncDirectoryDurably,
+} from '@main/utils/atomicWrite';
 import { createHash } from 'crypto';
-import { access, mkdir, readdir, readFile } from 'fs/promises';
+import { access, mkdir, readdir, readFile, rm } from 'fs/promises';
 import { dirname, join } from 'path';
 
 import { assessMemberWorkSyncPhase2Readiness } from '../../core/domain';
@@ -1286,6 +1290,61 @@ export class JsonMemberWorkSyncStore
       payloadHash: latest.payloadHash,
       updatedAt: latest.updatedAt,
     };
+  }
+
+  /**
+   * Removes only the live JSON files that this store can import. The purge is
+   * serialized with every same-team JSON write, while lifecycle callbacks let
+   * the backend durably fence the primary before deletion and record when the
+   * live-state boundary has been cleared. Immutable import archives, the
+   * SQLite fallback replica, report-token material, audit journals, member
+   * metadata, and unrelated files are intentionally outside this ownership
+   * boundary.
+   */
+  async purgeActiveState(
+    teamName: string,
+    lifecycle: {
+      establishPendingPrimaryPurge(): Promise<void>;
+      confirmActiveStateCleared(): Promise<void>;
+    }
+  ): Promise<void> {
+    await this.enqueue(teamName, async () => {
+      await lifecycle.establishPendingPrimaryPurge();
+
+      const activeFilePaths = [
+        this.paths.getLegacyStatusPath(teamName),
+        this.paths.getLegacyPendingReportsPath(teamName),
+        this.paths.getLegacyOutboxPath(teamName),
+        this.paths.getMetricsIndexPath(teamName),
+        this.paths.getOutboxIndexPath(teamName),
+        this.paths.getPendingReportsIndexPath(teamName),
+      ];
+      for (const memberName of await this.scanMemberNamesForImport(teamName)) {
+        activeFilePaths.push(
+          this.paths.getMemberStatusPath(teamName, memberName),
+          this.paths.getMemberReportsPath(teamName, memberName),
+          this.paths.getMemberOutboxPath(teamName, memberName)
+        );
+      }
+
+      const changedDirectories = new Set<string>();
+      for (const filePath of activeFilePaths) {
+        try {
+          await access(filePath);
+          await rm(filePath, { force: true });
+          changedDirectories.add(dirname(filePath));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error;
+          }
+        }
+      }
+      for (const directory of changedDirectories) {
+        await syncDirectoryDurably(directory);
+      }
+
+      await lifecycle.confirmActiveStateCleared();
+    });
   }
 
   /**

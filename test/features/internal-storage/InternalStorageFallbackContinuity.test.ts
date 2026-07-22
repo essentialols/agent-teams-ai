@@ -45,6 +45,7 @@ import {
   JsonTaskStallJournalStore,
 } from '@main/services/team/stallMonitor/JsonTaskStallJournalStore';
 import { getTeamsBasePath, setClaudeBasePathOverride } from '@main/utils/pathDecoder';
+import * as atomicWrite from '@main/utils/atomicWrite';
 import Database from 'better-sqlite3-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -326,6 +327,72 @@ describe('internal storage SQLite -> JSON fallback -> SQLite continuity', () => 
       outboxItems: [],
       metricEvents: [],
     });
+  });
+
+  it('retries every owned directory sync after a crash leaves active files absent', async () => {
+    const { teamsBasePath } = await setup();
+    const paths = new MemberWorkSyncStorePaths(teamsBasePath);
+    const store = new JsonMemberWorkSyncStore(paths);
+    const status: MemberWorkSyncStatus = {
+      teamName: TEAM,
+      memberName: 'bob',
+      state: 'needs_sync',
+      agenda: {
+        teamName: TEAM,
+        memberName: 'bob',
+        generatedAt: T0,
+        fingerprint: 'crash-retry',
+        items: [],
+        diagnostics: [],
+      },
+      evaluatedAt: T0,
+      diagnostics: [],
+    };
+    await store.write(status);
+    await rm(paths.getMemberStatusPath(TEAM, 'bob'));
+    await rm(paths.getMetricsIndexPath(TEAM));
+
+    const realSyncDirectoryDurably = atomicWrite.syncDirectoryDurably;
+    const teamStoreDirectory = paths.getTeamDir(TEAM);
+    const events: string[] = [];
+    const syncDirectoryDurably = vi
+      .spyOn(atomicWrite, 'syncDirectoryDurably')
+      .mockImplementation(async (directory) => {
+        events.push(`sync:${directory}`);
+        await realSyncDirectoryDurably(directory);
+      });
+
+    try {
+      await expect(readFile(paths.getMemberStatusPath(TEAM, 'bob'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      await expect(readFile(paths.getMetricsIndexPath(TEAM), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+
+      await expect(
+        store.purgeActiveState(TEAM, {
+          establishPendingPrimaryPurge: () => {
+            events.push('establish');
+            return Promise.resolve();
+          },
+          confirmActiveStateCleared: () => {
+            events.push('confirm');
+            return Promise.resolve();
+          },
+        })
+      ).resolves.toBeUndefined();
+
+      expect(events).toEqual([
+        'establish',
+        `sync:${teamStoreDirectory}`,
+        `sync:${paths.getIndexesDir(TEAM)}`,
+        `sync:${paths.getMemberWorkSyncDir(TEAM, 'bob')}`,
+        'confirm',
+      ]);
+    } finally {
+      syncDirectoryDurably.mockRestore();
+    }
   });
 
   it('purges stale active JSON fallback state before SQLite recovers without team-directory removal', async () => {

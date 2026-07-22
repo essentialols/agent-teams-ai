@@ -1327,20 +1327,25 @@ export class JsonMemberWorkSyncStore
         );
       }
 
-      const changedDirectories = new Set<string>();
+      const directoriesToSync = new Set(activeFilePaths.map((filePath) => dirname(filePath)));
       for (const filePath of activeFilePaths) {
         try {
           await access(filePath);
           await rm(filePath, { force: true });
-          changedDirectories.add(dirname(filePath));
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
             throw error;
           }
         }
       }
-      for (const directory of changedDirectories) {
-        await syncDirectoryDurably(directory);
+      for (const directory of directoriesToSync) {
+        try {
+          await syncDirectoryDurably(directory);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error;
+          }
+        }
       }
 
       await lifecycle.confirmActiveStateCleared();

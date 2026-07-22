@@ -772,7 +772,7 @@ describe('ipc teams handlers', () => {
     expect(new Set(handlers.keys())).toEqual(new Set(TEAM_HANDLER_KEYS));
   });
 
-  it('preserves legacy TEAM_LIST and returns contained canonical read envelopes', async () => {
+  it('preserves legacy TEAM_LIST and wraps canonical success and failure in the IPC result envelope', async () => {
     const success = {
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       kind: 'success',
@@ -799,22 +799,30 @@ describe('ipc teams handlers', () => {
       cursor: null,
       expectedRevision: null,
     });
-    expect(teamLifecycleRead).toEqual(success);
+    expect(teamLifecycleRead).toEqual({ success: true, data: success });
     expect(listTeamLifecycle).toHaveBeenCalledTimes(1);
 
     listTeamLifecycle.mockRejectedValueOnce(new Error('private sqlite diagnostic'));
-    const failure = await handleListTeamLifecycle({
+    const request = {
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       cursor: null,
       expectedRevision: null,
-    });
-    expect(failure).toEqual({
+    };
+    const failure = {
       schemaVersion: TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
       kind: 'failure',
       error: { code: 'unavailable', reason: 'transport_unavailable' },
       retryable: true,
-    });
-    expect(JSON.stringify(failure)).not.toContain('private sqlite diagnostic');
+    } satisfies CanonicalListTeamLifecycleResult;
+
+    const registeredFailure = await handlers.get(TEAM_LIST)!({} as never, request);
+    expect(registeredFailure).toEqual({ success: true, data: failure });
+    expect(JSON.stringify(registeredFailure)).not.toContain('private sqlite diagnostic');
+
+    listTeamLifecycle.mockRejectedValueOnce(new Error('private sqlite diagnostic'));
+    const rawFailure = await handleListTeamLifecycle(request);
+    expect(rawFailure).toEqual(failure);
+    expect(JSON.stringify(rawFailure)).not.toContain('private sqlite diagnostic');
   });
 
   it('keeps production legacy TEAM_LIST functional when canonical workspace authority is unavailable', async () => {

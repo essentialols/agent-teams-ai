@@ -1278,9 +1278,11 @@ async function handleCreateInitialGitCommit(
 async function handleListTeams(
   _event: IpcMainInvokeEvent,
   teamLifecycleReadRequest?: unknown
-): Promise<IpcResult<TeamSummary[]> | CanonicalListTeamLifecycleResult> {
+): Promise<IpcResult<TeamSummary[] | CanonicalListTeamLifecycleResult>> {
   if (teamLifecycleReadRequest !== undefined) {
-    return handleListTeamLifecycle(teamLifecycleReadRequest);
+    return wrapTeamHandler('listTeamLifecycle', () =>
+      handleListTeamLifecycle(teamLifecycleReadRequest)
+    );
   }
   setCurrentMainOp('team:list');
   const startedAt = Date.now();

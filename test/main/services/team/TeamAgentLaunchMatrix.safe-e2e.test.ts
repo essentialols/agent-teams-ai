@@ -193,6 +193,31 @@ function stubRuntimeUsageStatsByPid(
   };
 }
 
+function stubLiveOpenCodeRuntimeProcessesForTest(
+  service: TeamProvisioningService,
+  teamName: string,
+  memberNames: readonly string[]
+): void {
+  const target = service as unknown as {
+    runtimeResourceSampling: {
+      readRuntimeProcessRowsForLiveRuntimeMetadata: () => Promise<{
+        rows: RuntimeUsageProcessRowForTest[];
+        processTableAvailable: boolean;
+      }>;
+    };
+  };
+  target.runtimeResourceSampling.readRuntimeProcessRowsForLiveRuntimeMetadata = async () => ({
+    rows: memberNames.map((memberName) => ({
+      pid: 10_000,
+      ppid: 1,
+      command: `opencode --team-name ${teamName} --agent-id ${memberName}`,
+      runtimeTelemetrySource: 'native',
+      rssBytes: 10_000_000,
+    })),
+    processTableAvailable: true,
+  });
+}
+
 function describeLaunchMatrix(name: string, factory: () => void): void {
   describe(name, factory, LAUNCH_MATRIX_SAFE_E2E_TIMEOUT_MS);
 }
@@ -408,6 +433,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     const adapter = new FakeOpenCodeRuntimeAdapter();
     const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    stubLiveOpenCodeRuntimeProcessesForTest(svc, teamName, ['alice', 'jack']);
     const progressEvents: TeamProvisioningProgress[] = [];
 
     const { runId } = await svc.createTeam(
@@ -1560,6 +1586,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     const adapter = new FakeOpenCodeRuntimeAdapter();
     const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    stubLiveOpenCodeRuntimeProcessesForTest(svc, teamName, ['bob']);
     const progressEvents: TeamProvisioningProgress[] = [];
 
     await svc.createTeam(
@@ -4602,6 +4629,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     });
     const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    stubLiveOpenCodeRuntimeProcessesForTest(svc, teamName, ['bob', 'tom']);
     const cancelledRun = createMixedLiveRun({ teamName, projectPath });
     cancelledRun.child = { kill: () => undefined };
     trackLiveRun(svc, cancelledRun);
@@ -6879,6 +6907,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     });
     const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    stubLiveOpenCodeRuntimeProcessesForTest(svc, teamName, ['bob']);
     const run = createMixedLiveRun({ teamName, projectPath });
     trackLiveRun(svc, run);
 
@@ -7248,6 +7277,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     });
     const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    stubLiveOpenCodeRuntimeProcessesForTest(svc, teamName, ['bob']);
     const run = createMixedLiveRun({ teamName, projectPath, primaryProviderId: 'anthropic' });
     trackLiveRun(svc, run);
 
@@ -7326,6 +7356,7 @@ describeLaunchMatrix('Team agent launch matrix safe e2e', () => {
     });
     const svc = new TeamProvisioningService();
     svc.setRuntimeAdapterRegistry(new TeamRuntimeAdapterRegistry([adapter]));
+    stubLiveOpenCodeRuntimeProcessesForTest(svc, teamName, ['bob']);
     const run = createMixedLiveRun({ teamName, projectPath, primaryProviderId: 'anthropic' });
     const reviewer = {
       name: 'reviewer',

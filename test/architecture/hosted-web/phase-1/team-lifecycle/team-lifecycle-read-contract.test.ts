@@ -101,7 +101,7 @@ describe('team-lifecycle read contract', () => {
       error: {
         code: 'unsupported',
         reason: 'schema_version_unsupported',
-        diagnosticId: 'phase1-schema-version-invalid-or-unsupported',
+        diagnosticId: 'schema-version-invalid-or-unsupported',
       },
     });
 

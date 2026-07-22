@@ -16491,6 +16491,7 @@ describe('TeamProvisioningService', () => {
       const restartPromise = expect(svc.restartMember('tmux-team', 'forge')).rejects.toThrow(
         'Restart for teammate "forge" is still waiting for the previous tmux pane to exit (%2).'
       );
+      await vi.waitFor(() => expect(listTmuxPanePidsForCurrentPlatform).toHaveBeenCalled());
       await vi.advanceTimersByTimeAsync(1_500);
       await restartPromise;
 
@@ -16560,6 +16561,7 @@ describe('TeamProvisioningService', () => {
       const restartPromise = expect(svc.restartMember('tmux-team', 'forge')).rejects.toThrow(
         'Restart for teammate "forge" is still waiting for the previous tmux pane to exit (%2).'
       );
+      await vi.waitFor(() => expect(listTmuxPanePidsForCurrentPlatform).toHaveBeenCalled());
       await vi.advanceTimersByTimeAsync(1_500);
       await restartPromise;
 

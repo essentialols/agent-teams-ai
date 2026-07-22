@@ -885,6 +885,12 @@ controller.messages.sendMessage({
     expect(ownerInbox).toHaveLength(4);
     expect(ownerInbox[0].summary).toContain(`#${pendingTask.displayId}`);
     expect(ownerInbox[0].text).toContain('task_get');
+    expect(ownerInbox[0].text).toContain(
+      'Assignment notifications can become stale after a reassignment or completion.'
+    );
+    expect(ownerInbox[0].text).toContain(
+      'or task.status is completed or deleted, do not start or reopen the task'
+    );
     expect(ownerInbox[0].text).toContain('task_start');
     expect(ownerInbox[0].text).toContain('task_add_comment');
     expect(ownerInbox[0].text).toContain(
@@ -926,6 +932,42 @@ controller.messages.sendMessage({
     expect(briefing).not.toContain('Completed task description should stay out of compact rows');
     expect(briefing).toContain(`#${approvedTask.displayId}`);
     expect(briefing).toContain('Counters: actionable=4, awareness=3');
+  });
+
+  it('revokes the previous owner notification when a live task is reassigned', () => {
+    const claudeDir = makeClaudeDir();
+    const controller = createController({ teamName: 'my-team', claudeDir });
+
+    const task = controller.tasks.createTask({
+      subject: 'Move before work starts',
+      owner: 'alice',
+      createdBy: 'user',
+    });
+    controller.tasks.setTaskOwner(task.id, 'bob', 'user');
+
+    const aliceInbox = JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'alice.json'), 'utf8')
+    );
+    const bobInbox = JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'teams', 'my-team', 'inboxes', 'bob.json'), 'utf8')
+    );
+
+    expect(aliceInbox).toHaveLength(2);
+    expect(aliceInbox[0].text).toContain('New task assigned to you:');
+    expect(aliceInbox[1]).toMatchObject({
+      from: 'user',
+      summary: `Task #${task.displayId} reassigned away from you`,
+      source: 'system_notification',
+    });
+    expect(aliceInbox[1].text).toContain('was reassigned away from you to @bob');
+    expect(aliceInbox[1].text).toContain('This supersedes any earlier assignment notification');
+    expect(aliceInbox[1].text).toContain('Stop work on it');
+
+    expect(bobInbox).toHaveLength(1);
+    expect(bobInbox[0].text).toContain('New task assigned to you:');
+    expect(bobInbox[0].text).toContain(
+      'Assignment notifications can become stale after a reassignment or completion.'
+    );
   });
 
   it('treats stale legacy terminal reviewState on pending tasks as owner-ready work', async () => {
@@ -2054,6 +2096,129 @@ controller.messages.sendMessage({
 
     const comments = agentController.tasks.getTask(task.id).comments || [];
     expect(comments.map((comment) => comment.author)).toEqual(['user', 'bob']);
+  });
+
+  it('rejects stale owner lifecycle and ownership writes after reassignment', () => {
+    const claudeDir = makeClaudeDir();
+    fs.writeFileSync(
+      path.join(claudeDir, 'teams', 'my-team', 'config.json'),
+      JSON.stringify(
+        {
+          name: 'my-team',
+          leadSessionId: 'lead-session-1',
+          members: [
+            { name: 'team-lead', agentType: 'team-lead' },
+            { name: 'alice', role: 'developer' },
+            { name: 'bob', role: 'developer' },
+          ],
+        },
+        null,
+        2
+      )
+    );
+
+    const appController = createController({ teamName: 'my-team', claudeDir });
+    const agentController = createController({
+      teamName: 'my-team',
+      claudeDir,
+      allowUserMessageSender: false,
+    });
+    const task = appController.taskBoard.createTask({
+      subject: 'Ownership handoff',
+      owner: 'alice',
+      notifyOwner: false,
+    });
+
+    agentController.taskBoard.setTaskOwner(task.id, 'bob', 'team-lead');
+
+    expect(() => agentController.taskBoard.startTask(task.id, 'alice')).toThrow(
+      `Task #${task.displayId} is owned by bob; alice cannot start it`
+    );
+    expect(() => agentController.taskBoard.completeTask(task.id, 'alice')).toThrow(
+      `Task #${task.displayId} is owned by bob; alice cannot set its status to completed`
+    );
+    expect(() => agentController.taskBoard.setTaskStatus(task.id, 'in_progress', 'alice')).toThrow(
+      `Task #${task.displayId} is owned by bob`
+    );
+    expect(() => agentController.taskBoard.setTaskStatus(task.id, 'pending', 'alice')).toThrow(
+      `Task #${task.displayId} is owned by bob`
+    );
+    expect(() => agentController.taskBoard.softDeleteTask(task.id, 'alice')).toThrow(
+      `Task #${task.displayId} is owned by bob`
+    );
+    expect(() => agentController.taskBoard.setTaskOwner(task.id, 'alice', 'alice')).toThrow(
+      `Task #${task.displayId} is owned by bob; alice cannot reassign it`
+    );
+
+    const unchanged = appController.taskBoard.getTask(task.id);
+    expect(unchanged).toMatchObject({ owner: 'bob', status: 'pending' });
+    expect(unchanged.historyEvents.at(-1)).toMatchObject({
+      type: 'owner_changed',
+      from: 'alice',
+      to: 'bob',
+      actor: 'team-lead',
+    });
+
+    expect(agentController.taskBoard.startTask(task.id, 'bob').status).toBe('in_progress');
+    expect(agentController.taskBoard.completeTask(task.id, 'bob').status).toBe('completed');
+  });
+
+  it('keeps lead administration explicit while preventing collaborator task theft', () => {
+    const claudeDir = makeClaudeDir();
+    fs.writeFileSync(
+      path.join(claudeDir, 'teams', 'my-team', 'config.json'),
+      JSON.stringify(
+        {
+          name: 'my-team',
+          leadSessionId: 'lead-session-1',
+          members: [
+            { name: 'team-lead', agentType: 'team-lead' },
+            { name: 'alice', role: 'developer' },
+            { name: 'bob', role: 'developer' },
+          ],
+        },
+        null,
+        2
+      )
+    );
+
+    const appController = createController({ teamName: 'my-team', claudeDir });
+    const agentController = createController({
+      teamName: 'my-team',
+      claudeDir,
+      allowUserMessageSender: false,
+    });
+    const owned = appController.taskBoard.createTask({
+      subject: 'Lead-managed task',
+      owner: 'bob',
+      notifyOwner: false,
+    });
+    const unassigned = appController.taskBoard.createTask({
+      subject: 'Self-claim task',
+      notifyOwner: false,
+    });
+
+    expect(() => agentController.taskBoard.startTask(owned.id)).toThrow(
+      'start it requires actor to be your configured teammate name'
+    );
+    expect(() => agentController.taskBoard.setTaskOwner(owned.id, 'alice', 'alice')).toThrow(
+      `Task #${owned.displayId} is owned by bob`
+    );
+    expect(() => agentController.taskBoard.setTaskOwner(unassigned.id, 'bob', 'alice')).toThrow(
+      `Task #${unassigned.displayId} is unassigned; alice may only assign it to themselves`
+    );
+
+    expect(agentController.taskBoard.setTaskOwner(unassigned.id, 'alice', 'alice').owner).toBe(
+      'alice'
+    );
+    expect(agentController.taskBoard.setTaskStatus(owned.id, 'deleted', 'team-lead').status).toBe(
+      'deleted'
+    );
+    expect(agentController.taskBoard.restoreTask(owned.id, 'team-lead').status).toBe('pending');
+    expect(agentController.taskBoard.setTaskOwner(owned.id, 'team-lead', 'team-lead').owner).toBe(
+      'team-lead'
+    );
+    expect(agentController.taskBoard.startTask(owned.id, 'team-lead').status).toBe('in_progress');
   });
 
   it('keeps internal dependency comments when agent-facing task_complete unblocks a task', () => {

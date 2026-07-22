@@ -56,6 +56,7 @@ interface SkillEditorDialogProps {
   projectPath: string | null;
   projectLabel: string | null;
   allowCodexRootKind: boolean;
+  codexRootKindPending?: boolean;
   detail: SkillDetail | null;
   onClose: () => void;
   onSaved: (skillId: string | null) => void;
@@ -75,6 +76,7 @@ export const SkillEditorDialog = ({
   projectPath,
   projectLabel,
   allowCodexRootKind,
+  codexRootKindPending = false,
   detail,
   onClose,
   onSaved,
@@ -226,7 +228,7 @@ export const SkillEditorDialog = ({
     setReviewLoading(false);
     setSaveLoading(false);
     setMutationError(null);
-  }, [allowCodexRootKind, detail, mode, open, projectPath]);
+  }, [detail, mode, open, projectPath]);
 
   useEffect(() => {
     if (open) {
@@ -247,10 +249,16 @@ export const SkillEditorDialog = ({
   }, [mode, open, projectPath, scope]);
 
   useEffect(() => {
-    if (open && mode === 'create' && rootKind === 'codex' && !allowCodexRootKind) {
+    if (
+      open &&
+      mode === 'create' &&
+      rootKind === 'codex' &&
+      !allowCodexRootKind &&
+      !codexRootKindPending
+    ) {
       setRootKind('claude');
     }
-  }, [allowCodexRootKind, mode, open, rootKind]);
+  }, [allowCodexRootKind, codexRootKindPending, mode, open, rootKind]);
 
   useEffect(() => {
     rawContentRef.current = rawContent;
@@ -307,9 +315,12 @@ export const SkillEditorDialog = ({
     () =>
       SKILL_ROOT_DEFINITIONS.filter(
         (definition) =>
-          definition.rootKind !== 'codex' || allowCodexRootKind || detail?.item.rootKind === 'codex'
+          definition.rootKind !== 'codex' ||
+          allowCodexRootKind ||
+          detail?.item.rootKind === 'codex' ||
+          (codexRootKindPending && rootKind === 'codex')
       ),
-    [allowCodexRootKind, detail?.item.rootKind]
+    [allowCodexRootKind, codexRootKindPending, detail?.item.rootKind, rootKind]
   );
   const instructionsLocked = manualRawEdit || customMarkdownDetected;
   const title = mode === 'create' ? t('skillEditor.title.create') : t('skillEditor.title.edit');

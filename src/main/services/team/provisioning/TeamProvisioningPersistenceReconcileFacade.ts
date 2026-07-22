@@ -1,5 +1,6 @@
 import { getPersistedLaunchMemberNames } from './TeamProvisioningLaunchStateProjection';
 import {
+  type LaunchStateWriteOptions,
   type LaunchStateWriteResult,
   type PendingOpenCodePrimaryCleanup,
   type TeamProvisioningLaunchStateStoreBoundary,
@@ -114,7 +115,7 @@ export class TeamProvisioningPersistenceReconcileFacade<
   async writeLaunchStateSnapshot(
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
+    options?: LaunchStateWriteOptions
   ): Promise<PersistedTeamLaunchSnapshot> {
     return options === undefined
       ? this.ports.launchStateStoreBoundary.writeLaunchStateSnapshot(teamName, snapshot)
@@ -124,7 +125,7 @@ export class TeamProvisioningPersistenceReconcileFacade<
   async writeLaunchStateSnapshotNow(
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
+    options?: LaunchStateWriteOptions
   ): Promise<LaunchStateWriteResult> {
     return this.ports.launchStateStoreBoundary.writeLaunchStateSnapshotNow(
       teamName,

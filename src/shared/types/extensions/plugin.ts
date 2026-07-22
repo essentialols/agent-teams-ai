@@ -4,6 +4,8 @@
 
 import type { InstallScope } from './common';
 
+export type PluginInstallScope = Exclude<InstallScope, 'global'>;
+
 // ── Catalog item (read from marketplace.json) ──────────────────────────────
 
 export interface PluginCatalogItem {
@@ -35,7 +37,7 @@ export interface PluginCatalogItem {
 
 export interface InstalledPluginEntry {
   pluginId: string; // matches PluginCatalogItem.pluginId
-  scope: InstallScope;
+  scope: PluginInstallScope;
   version?: string;
   installedAt?: string;
   installPath?: string;
@@ -69,7 +71,7 @@ export function inferCapabilities(item: PluginCatalogItem): PluginCapability[] {
 
 export interface PluginInstallRequest {
   pluginId: string; // canonical key — main resolves qualifiedName from catalog
-  scope: InstallScope;
+  scope: PluginInstallScope;
   projectPath?: string; // required for repo-scoped installs ('project' or 'local')
 }
 

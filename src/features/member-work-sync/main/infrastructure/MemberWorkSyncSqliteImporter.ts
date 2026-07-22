@@ -1,19 +1,13 @@
 import { MEMBER_WORK_SYNC_STORE_ID } from '@features/internal-storage/contracts/internalStorageContracts';
 import { archiveFileWithGenerations } from '@features/internal-storage/main';
 
+import { mergeMemberWorkSyncSnapshots } from './memberWorkSyncSnapshotMerge';
 import { areSnapshotRecordSetsEquivalent, snapshotToRecords } from './memberWorkSyncSqliteMappers';
 
 import type {
   JsonMemberWorkSyncStore,
   MemberWorkSyncStoreSnapshot,
 } from './JsonMemberWorkSyncStore';
-import type {
-  MemberWorkSyncMetricEventRecord,
-  MemberWorkSyncOutboxItemRecord,
-  MemberWorkSyncReportIntentRecord,
-  MemberWorkSyncStatusRecord,
-  MemberWorkSyncTeamSnapshotRecords,
-} from '@features/internal-storage/contracts/internalStorageContracts';
 import type { MemberWorkSyncStorageGateway } from '@features/internal-storage/main';
 
 export interface MemberWorkSyncSqliteImporterDeps {
@@ -43,60 +37,6 @@ export interface MemberWorkSyncSqliteImporterDeps {
  * intact. This also makes a downgrade that recreated files a safe overlay.
  */
 const IMPORT_FAILURE_RETRY_COOLDOWN_MS = 60_000;
-
-function compareIdentity(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-/**
- * Import snapshots are overlays, not authoritative deletions. Encounter order
- * resolves duplicate identities (the last incoming row wins), then identity
- * sorting makes the replacement and verification deterministic.
- */
-function overlayRecords<T>(
-  canonical: readonly T[],
-  incoming: readonly T[],
-  identity: (record: T) => string
-): T[] {
-  const merged = new Map<string, T>();
-  for (const record of canonical) {
-    merged.set(identity(record), record);
-  }
-  for (const record of incoming) {
-    merged.set(identity(record), record);
-  }
-  return [...merged.entries()]
-    .sort(([left], [right]) => compareIdentity(left, right))
-    .map(([, record]) => record);
-}
-
-function overlaySnapshotRecords(
-  canonical: MemberWorkSyncTeamSnapshotRecords,
-  incoming: MemberWorkSyncTeamSnapshotRecords
-): MemberWorkSyncTeamSnapshotRecords {
-  return {
-    statuses: overlayRecords<MemberWorkSyncStatusRecord>(
-      canonical.statuses,
-      incoming.statuses,
-      (record) => record.memberKey
-    ),
-    reportIntents: overlayRecords<MemberWorkSyncReportIntentRecord>(
-      canonical.reportIntents,
-      incoming.reportIntents,
-      (record) => record.id
-    ),
-    outboxItems: overlayRecords<MemberWorkSyncOutboxItemRecord>(
-      canonical.outboxItems,
-      incoming.outboxItems,
-      (record) => record.id
-    ),
-    metricEvents: overlayRecords<MemberWorkSyncMetricEventRecord>(
-      canonical.metricEvents,
-      incoming.metricEvents,
-      (record) => record.id
-    ),
-  };
-}
 
 export class MemberWorkSyncSqliteImporter {
   private readonly importedTeams = new Set<string>();
@@ -160,7 +100,7 @@ export class MemberWorkSyncSqliteImporter {
       metricEvents: mapped.metricEvents.map((record) => ({ ...record, teamName })),
     };
     const canonicalRecords = await this.deps.gateway.listTeamSnapshot(teamName);
-    const records = overlaySnapshotRecords(canonicalRecords, incomingRecords);
+    const records = mergeMemberWorkSyncSnapshots(canonicalRecords, incomingRecords);
     await this.deps.gateway.importTeam(teamName, records);
 
     const roundTrip = await this.deps.gateway.listTeamSnapshot(teamName);

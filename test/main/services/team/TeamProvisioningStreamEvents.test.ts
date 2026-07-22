@@ -164,6 +164,7 @@ function createStreamEventPorts(): {
           isCurrentTrackedRun: () => true,
           emitMemberSpawnChange: () => {},
           persistLaunchStateSnapshot: async () => null,
+          reportBackgroundPersistenceError: () => {},
         }
       );
     },

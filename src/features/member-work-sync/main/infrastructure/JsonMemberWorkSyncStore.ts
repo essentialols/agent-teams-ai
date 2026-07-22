@@ -57,6 +57,121 @@ export interface MemberWorkSyncStoreSnapshot {
   filesToArchive: string[];
 }
 
+const MEMBER_WORK_SYNC_STATUS_STATES = new Set<string>([
+  'caught_up',
+  'needs_sync',
+  'still_working',
+  'blocked',
+  'inactive',
+  'unknown',
+]);
+const MEMBER_WORK_SYNC_REPORT_STATUSES = new Set<string>([
+  'pending',
+  'accepted',
+  'rejected',
+  'superseded',
+]);
+const MEMBER_WORK_SYNC_OUTBOX_STATUSES = new Set<string>([
+  'pending',
+  'claimed',
+  'delivered',
+  'superseded',
+  'failed_retryable',
+  'failed_terminal',
+]);
+const MEMBER_WORK_SYNC_METRIC_KINDS = new Set<string>([
+  'status_evaluated',
+  'would_nudge',
+  'fingerprint_changed',
+  'report_accepted',
+  'report_rejected',
+]);
+
+export function isMemberWorkSyncStoreSnapshot(
+  value: unknown,
+  expectedTeamName?: string
+): value is MemberWorkSyncStoreSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<MemberWorkSyncStoreSnapshot>;
+  const ownsTeam = (teamName: string): boolean =>
+    expectedTeamName === undefined ||
+    normalizeTeamKey(teamName) === normalizeTeamKey(expectedTeamName);
+  return (
+    Array.isArray(record.statuses) &&
+    record.statuses.every(
+      (row) =>
+        row &&
+        typeof row.teamName === 'string' &&
+        ownsTeam(row.teamName) &&
+        typeof row.memberName === 'string' &&
+        MEMBER_WORK_SYNC_STATUS_STATES.has(row.state) &&
+        typeof row.evaluatedAt === 'string' &&
+        row.agenda != null &&
+        typeof row.agenda === 'object' &&
+        typeof row.agenda.teamName === 'string' &&
+        ownsTeam(row.agenda.teamName) &&
+        typeof row.agenda.memberName === 'string' &&
+        typeof row.agenda.fingerprint === 'string' &&
+        Array.isArray(row.agenda.items) &&
+        Array.isArray(row.agenda.diagnostics) &&
+        row.agenda.diagnostics.every((diagnostic) => typeof diagnostic === 'string') &&
+        Array.isArray(row.diagnostics) &&
+        row.diagnostics.every((diagnostic) => typeof diagnostic === 'string')
+    ) &&
+    Array.isArray(record.reportIntents) &&
+    record.reportIntents.every(
+      (row) =>
+        row &&
+        typeof row.id === 'string' &&
+        typeof row.teamName === 'string' &&
+        ownsTeam(row.teamName) &&
+        typeof row.memberName === 'string' &&
+        MEMBER_WORK_SYNC_REPORT_STATUSES.has(row.status) &&
+        typeof row.reason === 'string' &&
+        typeof row.recordedAt === 'string' &&
+        row.request != null &&
+        typeof row.request === 'object' &&
+        ownsTeam(row.request.teamName)
+    ) &&
+    Array.isArray(record.outboxItems) &&
+    record.outboxItems.every(
+      (row) =>
+        row &&
+        typeof row.id === 'string' &&
+        typeof row.teamName === 'string' &&
+        ownsTeam(row.teamName) &&
+        typeof row.memberName === 'string' &&
+        typeof row.agendaFingerprint === 'string' &&
+        typeof row.payloadHash === 'string' &&
+        MEMBER_WORK_SYNC_OUTBOX_STATUSES.has(row.status) &&
+        Number.isInteger(row.attemptGeneration) &&
+        row.attemptGeneration >= 0 &&
+        row.payload != null &&
+        typeof row.payload === 'object' &&
+        typeof row.payload.to === 'string' &&
+        typeof row.createdAt === 'string' &&
+        typeof row.updatedAt === 'string' &&
+        (row.status !== 'delivered' || typeof row.deliveredMessageId === 'string')
+    ) &&
+    Array.isArray(record.metricEvents) &&
+    record.metricEvents.every(
+      (row) =>
+        row &&
+        typeof row.id === 'string' &&
+        typeof row.teamName === 'string' &&
+        ownsTeam(row.teamName) &&
+        typeof row.memberName === 'string' &&
+        MEMBER_WORK_SYNC_METRIC_KINDS.has(row.kind) &&
+        MEMBER_WORK_SYNC_STATUS_STATES.has(row.state) &&
+        typeof row.agendaFingerprint === 'string' &&
+        typeof row.actionableCount === 'number' &&
+        typeof row.recordedAt === 'string'
+    ) &&
+    Array.isArray(record.filesToArchive) &&
+    record.filesToArchive.length === 0
+  );
+}
+
 interface MemberStatusFile {
   schemaVersion: 2;
   status: MemberWorkSyncStatus;
@@ -1206,6 +1321,74 @@ export class JsonMemberWorkSyncStore
     return snapshot;
   }
 
+  /**
+   * Hydrates the live JSON backend from the last clean SQLite compatibility
+   * replica. Existing live JSON is merged semantically so a previous fallback
+   * session cannot be rolled back by an older replica.
+   */
+  async restoreReplicaSnapshot(
+    teamName: string,
+    replica: MemberWorkSyncStoreSnapshot
+  ): Promise<void> {
+    await this.enqueue(teamName, async () => {
+      const active = await this.readSnapshotForImportUnqueued(teamName);
+      const snapshot = mergeDomainSnapshots(replica, active);
+
+      const metrics: MetricsIndexFile = emptyMetricsIndex();
+      for (const status of snapshot.statuses) {
+        await this.paths.ensureMemberWorkSyncDir(teamName, status.memberName);
+        await this.writeMemberStatusFile(status);
+        metrics.members[normalizeMemberKey(status.memberName)] = {
+          memberName: status.memberName,
+          state: status.state,
+          agendaFingerprint: status.agenda.fingerprint,
+          actionableCount: status.agenda.items.length,
+          evaluatedAt: status.evaluatedAt,
+          ...(status.providerId ? { providerId: status.providerId } : {}),
+        };
+      }
+      metrics.recentEvents = [...snapshot.metricEvents]
+        .sort((left, right) =>
+          left.recordedAt === right.recordedAt
+            ? left.id.localeCompare(right.id)
+            : left.recordedAt.localeCompare(right.recordedAt)
+        )
+        .slice(-200);
+      await this.writeMetricsIndexFile(teamName, metrics);
+
+      const reportsByMember = groupByMember(snapshot.reportIntents);
+      const reportIndex: PendingReportsIndexFile = { schemaVersion: 2, items: {} };
+      for (const intents of reportsByMember.values()) {
+        const memberName = intents[0]?.memberName;
+        if (!memberName) continue;
+        const file: MemberReportsFile = { schemaVersion: 2, intents: {} };
+        for (const intent of intents) {
+          file.intents[intent.id] = intent;
+          reportIndex.items[intent.id] = toPendingReportIndexItem(
+            intent,
+            normalizeMemberKey(memberName)
+          );
+        }
+        await this.writeMemberReportsFile(teamName, memberName, file);
+      }
+      await this.writePendingReportsIndexFile(teamName, reportIndex);
+
+      const outboxByMember = groupByMember(snapshot.outboxItems);
+      const outboxIndex: OutboxIndexFile = { schemaVersion: 2, items: {} };
+      for (const items of outboxByMember.values()) {
+        const memberName = items[0]?.memberName;
+        if (!memberName) continue;
+        const file: MemberOutboxFile = { schemaVersion: 2, items: {} };
+        for (const item of items) {
+          file.items[item.id] = item;
+          outboxIndex.items[item.id] = toOutboxIndexItem(item, normalizeMemberKey(memberName));
+        }
+        await this.writeMemberOutboxFile(teamName, memberName, file);
+      }
+      await this.writeOutboxIndexFile(teamName, outboxIndex);
+    });
+  }
+
   private async readSnapshotForImportUnqueued(
     teamName: string
   ): Promise<MemberWorkSyncStoreSnapshot | null> {
@@ -2124,4 +2307,108 @@ function toPendingReportIndexItem(
     recordedAt: intent.recordedAt,
     ...(intent.processedAt ? { processedAt: intent.processedAt } : {}),
   };
+}
+
+function groupByMember<T extends { memberName: string }>(records: readonly T[]): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const record of records) {
+    const key = normalizeMemberKey(record.memberName);
+    const rows = grouped.get(key) ?? [];
+    rows.push(record);
+    grouped.set(key, rows);
+  }
+  return grouped;
+}
+
+function mergeDomainSnapshots(
+  canonical: MemberWorkSyncStoreSnapshot,
+  incoming: MemberWorkSyncStoreSnapshot | null
+): MemberWorkSyncStoreSnapshot {
+  if (!incoming) return { ...canonical, filesToArchive: [] };
+  return {
+    statuses: mergeDomainRows(
+      canonical.statuses,
+      incoming.statuses,
+      (row) => normalizeMemberKey(row.memberName),
+      (left, right) => (compareReplicaIso(right.evaluatedAt, left.evaluatedAt) >= 0 ? right : left)
+    ),
+    reportIntents: mergeDomainRows(
+      canonical.reportIntents,
+      incoming.reportIntents,
+      (row) => row.id,
+      pickDomainReportIntent
+    ),
+    outboxItems: mergeDomainRows(
+      canonical.outboxItems,
+      incoming.outboxItems,
+      (row) => row.id,
+      pickDomainOutboxItem
+    ),
+    metricEvents: mergeDomainRows(
+      canonical.metricEvents,
+      incoming.metricEvents,
+      (row) => row.id,
+      (_left, right) => right
+    ),
+    filesToArchive: [],
+  };
+}
+
+function mergeDomainRows<T>(
+  canonical: readonly T[],
+  incoming: readonly T[],
+  identity: (record: T) => string,
+  pick: (canonical: T, incoming: T) => T
+): T[] {
+  const merged = new Map<string, T>();
+  for (const record of canonical) merged.set(identity(record), record);
+  for (const record of incoming) {
+    const key = identity(record);
+    const current = merged.get(key);
+    merged.set(key, current ? pick(current, record) : record);
+  }
+  return [...merged.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, record]) => record);
+}
+
+function pickDomainReportIntent(
+  canonical: MemberWorkSyncReportIntent,
+  incoming: MemberWorkSyncReportIntent
+): MemberWorkSyncReportIntent {
+  const isProcessed = (status: MemberWorkSyncReportIntent['status']): boolean =>
+    status !== 'pending';
+  const canonicalProcessed = isProcessed(canonical.status);
+  const incomingProcessed = isProcessed(incoming.status);
+  if (canonicalProcessed !== incomingProcessed) return incomingProcessed ? incoming : canonical;
+  const leftTime = canonicalProcessed ? canonical.processedAt : canonical.recordedAt;
+  const rightTime = incomingProcessed ? incoming.processedAt : incoming.recordedAt;
+  return compareReplicaIso(rightTime, leftTime) >= 0 ? incoming : canonical;
+}
+
+function pickDomainOutboxItem(
+  canonical: MemberWorkSyncOutboxItem,
+  incoming: MemberWorkSyncOutboxItem
+): MemberWorkSyncOutboxItem {
+  const proofRank = (status: MemberWorkSyncOutboxItem['status']): number =>
+    status === 'delivered' ? 2 : status === 'failed_terminal' ? 1 : 0;
+  const canonicalProof = proofRank(canonical.status);
+  const incomingProof = proofRank(incoming.status);
+  if (canonicalProof !== incomingProof && (canonicalProof > 0 || incomingProof > 0)) {
+    return incomingProof > canonicalProof ? incoming : canonical;
+  }
+  if (canonical.attemptGeneration !== incoming.attemptGeneration) {
+    return incoming.attemptGeneration > canonical.attemptGeneration ? incoming : canonical;
+  }
+  return compareReplicaIso(incoming.updatedAt, canonical.updatedAt) >= 0 ? incoming : canonical;
+}
+
+function compareReplicaIso(left: string | undefined, right: string | undefined): number {
+  const leftMs = left ? Date.parse(left) : Number.NaN;
+  const rightMs = right ? Date.parse(right) : Number.NaN;
+  const leftValid = Number.isFinite(leftMs);
+  const rightValid = Number.isFinite(rightMs);
+  if (leftValid !== rightValid) return leftValid ? 1 : -1;
+  if (!leftValid || leftMs === rightMs) return 0;
+  return leftMs < rightMs ? -1 : 1;
 }

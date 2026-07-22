@@ -22362,9 +22362,12 @@ async function writeOpenCodeBootstrapSessionEvidenceForTest(input: {
   });
 }
 
-async function waitForCondition(assertion: () => boolean | Promise<boolean>): Promise<void> {
+async function waitForCondition(
+  assertion: () => boolean | Promise<boolean>,
+  timeoutMs = 20_000
+): Promise<void> {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 20_000) {
+  while (Date.now() - startedAt < timeoutMs) {
     if (await assertion()) {
       return;
     }

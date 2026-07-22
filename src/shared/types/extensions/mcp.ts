@@ -85,6 +85,8 @@ export interface InstalledMcpEntry {
   name: string;
   scope: 'local' | 'user' | 'project' | 'global';
   transport?: string;
+  /** Secret-free identity derived from the configured command or URL. */
+  targetKey?: string;
 }
 
 export type McpServerHealthStatus = 'connected' | 'needs-authentication' | 'failed' | 'unknown';

@@ -8,6 +8,7 @@ export interface ImportLegacyJsonStoreDeps<TRecord> {
   loadExisting(teamName: string): Promise<TRecord[]>;
   replaceAll(teamName: string, records: TRecord[]): Promise<void>;
   recordIdentity(record: TRecord): string;
+  resolveConflict?(canonical: TRecord, incoming: TRecord): TRecord;
   /** Order-insensitive equivalence used to verify the import round-trip. */
   areEquivalent(imported: TRecord[], expected: TRecord[]): boolean;
   recordImport(teamName: string, entryCount: number): Promise<void>;
@@ -86,7 +87,8 @@ export class ImportLegacyJsonStoreUseCase<TRecord> {
     const merged = overlayRecords(
       await this.deps.loadExisting(teamName),
       legacyRecords,
-      this.deps.recordIdentity
+      this.deps.recordIdentity,
+      this.deps.resolveConflict
     );
     await this.deps.replaceAll(teamName, merged);
 
@@ -111,14 +113,17 @@ export class ImportLegacyJsonStoreUseCase<TRecord> {
 function overlayRecords<TRecord>(
   existing: readonly TRecord[],
   incoming: readonly TRecord[],
-  identity: (record: TRecord) => string
+  identity: (record: TRecord) => string,
+  resolveConflict?: (canonical: TRecord, incoming: TRecord) => TRecord
 ): TRecord[] {
   const merged = new Map<string, TRecord>();
   for (const record of existing) {
     merged.set(identity(record), record);
   }
   for (const record of incoming) {
-    merged.set(identity(record), record);
+    const key = identity(record);
+    const current = merged.get(key);
+    merged.set(key, current && resolveConflict ? resolveConflict(current, record) : record);
   }
   return [...merged.values()];
 }

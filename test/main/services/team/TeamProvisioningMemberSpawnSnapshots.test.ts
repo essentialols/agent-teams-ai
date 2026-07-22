@@ -65,6 +65,7 @@ function makeMutationPorts(): MemberSpawnStatusMutationPorts<MemberSpawnStatusRu
     isCurrentTrackedRun: () => true,
     emitMemberSpawnChange: vi.fn(),
     persistLaunchStateSnapshot: vi.fn(() => Promise.resolve(undefined)),
+    reportBackgroundPersistenceError: vi.fn(),
   };
 }
 

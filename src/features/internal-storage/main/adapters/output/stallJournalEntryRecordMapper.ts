@@ -67,3 +67,24 @@ export function areStallJournalRecordSetsEquivalent(
 ): boolean {
   return normalizeForComparison(left) === normalizeForComparison(right);
 }
+
+export function resolveStallJournalRecordConflict(
+  canonical: StallJournalEntryRecord,
+  incoming: StallJournalEntryRecord
+): StallJournalEntryRecord {
+  const rank = (state: string): number =>
+    state === 'alerted' ? 2 : state === 'alert_ready' ? 1 : 0;
+  const canonicalRank = rank(canonical.state);
+  const incomingRank = rank(incoming.state);
+  if (canonicalRank !== incomingRank) return incomingRank > canonicalRank ? incoming : canonical;
+  if (canonical.consecutiveScans !== incoming.consecutiveScans) {
+    return incoming.consecutiveScans > canonical.consecutiveScans ? incoming : canonical;
+  }
+  return isLater(incoming.updatedAt, canonical.updatedAt) ? incoming : canonical;
+}
+
+function isLater(left: string, right: string): boolean {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  return Number.isFinite(leftMs) && (!Number.isFinite(rightMs) || leftMs > rightMs);
+}

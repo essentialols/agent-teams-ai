@@ -1321,6 +1321,39 @@ export class TeamProvisioningMemberLifecycleController {
     return this.persistLaunchStateSnapshot(run, phase);
   }
 
+  private async drainSuccessfulDirectRestartLaunchSnapshot(
+    run: ProvisioningRun,
+    memberName: string
+  ): Promise<void> {
+    if (!run.isLaunch) {
+      return;
+    }
+
+    let persistenceFailed = false;
+    let persistenceError: unknown;
+    try {
+      await this.persistLaunchStateSnapshotForCurrentRun(
+        run,
+        run.provisioningComplete ? 'finished' : 'active'
+      );
+    } catch (error) {
+      persistenceFailed = true;
+      persistenceError = error;
+    }
+
+    // Persistence drains queued status publications. The direct launch is already live at this
+    // point, so a storage failure must not report the restart as failed. A replacement or cancelled
+    // run remains authoritative, including when it changes while the publication is draining.
+    this.assertRunStillCurrentAndAlive(run, run.teamName);
+    if (persistenceFailed) {
+      logger.warn(
+        `[${run.teamName}] Failed to persist successful direct restart launch snapshot for ${memberName}: ${
+          persistenceError instanceof Error ? persistenceError.message : String(persistenceError)
+        }`
+      );
+    }
+  }
+
   async attachLiveRosterMember(
     teamName: string,
     memberName: string,
@@ -1792,7 +1825,6 @@ export class TeamProvisioningMemberLifecycleController {
           persistedRuntimeMembers,
           paneId: directTmuxRestartPaneId,
         });
-        return;
       } catch (error) {
         if (!this.isRunStillCurrentAndAlive(run, teamName)) {
           throw error;
@@ -1812,6 +1844,10 @@ export class TeamProvisioningMemberLifecycleController {
         }
         throw error;
       }
+      // Status mutations publish in the background for low-latency runtime event handling.
+      // Do not resolve the lifecycle command until all earlier status publications are drained.
+      await this.drainSuccessfulDirectRestartLaunchSnapshot(run, memberName);
+      return;
     }
 
     if (shouldDirectProcessRestart) {
@@ -1826,7 +1862,6 @@ export class TeamProvisioningMemberLifecycleController {
           configuredMember,
           persistedRuntimeMembers,
         });
-        return;
       } catch (error) {
         if (!this.isRunStillCurrentAndAlive(run, teamName)) {
           throw error;
@@ -1846,6 +1881,8 @@ export class TeamProvisioningMemberLifecycleController {
         }
         throw error;
       }
+      await this.drainSuccessfulDirectRestartLaunchSnapshot(run, memberName);
+      return;
     }
 
     let restartMcpLaunchConfig: RuntimeBootstrapMemberMcpLaunchConfig | null = null;
@@ -1891,6 +1928,12 @@ export class TeamProvisioningMemberLifecycleController {
         );
       }
       throw error;
+    }
+    if (run.isLaunch) {
+      await this.persistLaunchStateSnapshotForCurrentRun(
+        run,
+        run.provisioningComplete ? 'finished' : 'active'
+      );
     }
   }
 

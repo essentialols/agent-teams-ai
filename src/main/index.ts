@@ -23,7 +23,7 @@ import {
   earlyElectronDevPathOverrideResult,
   earlyElectronUserDataMigrationResult,
 } from './bootstrapUserDataMigration';
-import './sentry';
+import './sentryBootstrap';
 
 import type {
   AppCloseReadinessResult,
@@ -100,7 +100,10 @@ import {
   type TeamRuntimeRecoveryFeatureFacade,
 } from '@features/team-runtime-recovery/main';
 import { TOKEN_USAGE_SNAPSHOT_CHANGED } from '@features/token-usage/contracts';
-import { createApplicationCommandLedgerFeature } from '@features/application-command-ledger/main';
+import {
+  createApplicationCommandLedgerFeature,
+  NodeApplicationCommandHasher,
+} from '@features/application-command-ledger/main';
 import { TaskBoardCommandFacade } from '@features/task-board-commands';
 import {
   createTokenUsageFeature,
@@ -275,7 +278,7 @@ import {
   captureStartupMemorySnapshot,
   formatStartupMemorySnapshot,
 } from './utils/startupTelemetry';
-import { syncTelemetryFlag } from './sentry';
+import { captureMainException, getMainSentryStatus, syncTelemetryFlag } from './sentry';
 import { setCodexRuntimeMainWindow } from './ipc/codexRuntime';
 import {
   ActiveTeamRegistry,
@@ -2259,13 +2262,22 @@ async function initializeServices(): Promise<void> {
   internalStorageFeature = createInternalStorageFeature({
     userDataPath: app.getPath('userData'),
   });
+  if (process.env.AGENT_TEAMS_PACKAGED_SMOKE?.trim() === '1') {
+    void internalStorageFeature.probeBackend();
+  }
   teamDataService = new TeamDataService();
-  if (internalStorageFeature.applicationCommandLedgerBackend) {
+  const applicationCommandLedgerBackend = internalStorageFeature.applicationCommandLedgerBackend;
+  if (applicationCommandLedgerBackend) {
+    const applicationCommandHasher = new NodeApplicationCommandHasher();
     const applicationCommandLedgerFeature = createApplicationCommandLedgerFeature({
-      storageGateway: internalStorageFeature.applicationCommandLedgerBackend.gateway,
+      storageGateway: applicationCommandLedgerBackend.gateway,
     });
     teamDataService.setTaskBoardCommandFacade(
-      new TaskBoardCommandFacade(applicationCommandLedgerFeature.runner)
+      new TaskBoardCommandFacade(applicationCommandLedgerFeature.runner, {
+        isDurableStorageAvailable: () =>
+          applicationCommandLedgerBackend.selector.select(true, false),
+        hashPayload: (payload) => applicationCommandHasher.hashJson(payload),
+      })
     );
   }
   teamDataService.setMemberRuntimeAdvisoryService(teamMemberRuntimeAdvisoryService);
@@ -3563,6 +3575,7 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(getRendererIndexPath()).catch((error: unknown) => {
       logger.error('Failed to load renderer entry HTML:', error);
+      captureMainException(error, 'renderer_load_file');
     });
   }
 
@@ -3619,6 +3632,10 @@ function createWindow(): void {
       if (isMainFrame) {
         logger.error(
           `Failed to load renderer (code=${errorCode}): ${errorDescription} - ${validatedURL}`
+        );
+        captureMainException(
+          new Error(`Renderer main-frame load failed with code ${errorCode}`),
+          'renderer_did_fail_load'
         );
       }
     }
@@ -3729,6 +3746,12 @@ function createWindow(): void {
     if (isShutdownStarted()) {
       return;
     }
+    if (details.reason !== 'clean-exit' && details.reason !== 'killed') {
+      captureMainException(
+        new Error(`Renderer process terminated: ${details.reason}`),
+        'renderer_process_gone'
+      );
+    }
     markRendererUnavailable(mainWindow);
     rendererDidFinishLoad = false;
     fileWatcherStartupStarted = false;
@@ -3752,6 +3775,16 @@ void app.whenReady().then(async () => {
     directory: app.getPath('logs'),
     appVersion: app.getVersion(),
   });
+  const sentryStatus = getMainSentryStatus();
+  if (
+    sentryStatus.state === 'failed' ||
+    (sentryStatus.environment === 'production' && sentryStatus.state === 'unconfigured')
+  ) {
+    logger.error(
+      `[sentry] unavailable: state=${sentryStatus.state} reason=${sentryStatus.reason} ` +
+        `environment=${sentryStatus.environment} release=${sentryStatus.release ?? 'unknown'}`
+    );
+  }
   logger.info('App ready, initializing...');
   configureFatalDiagnosticReport({
     directory: join(app.getPath('userData'), 'diagnostics'),
@@ -3816,6 +3849,7 @@ void app.whenReady().then(async () => {
     });
   } catch (error) {
     logger.error('Startup initialization failed:', error);
+    captureMainException(error, 'startup_initialization');
     publishStartupStatus({
       phase: 'failed',
       message: 'Startup failed',

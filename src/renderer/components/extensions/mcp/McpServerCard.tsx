@@ -39,6 +39,7 @@ interface McpServerCardProps {
   diagnostic?: McpServerDiagnostic | null;
   diagnosticsLoading?: boolean;
   onClick: (serverId: string) => void;
+  projectPath?: string | null;
   cliStatus?: Pick<
     CliInstallationStatus,
     'installed' | 'authLoggedIn' | 'binaryPath' | 'launchError' | 'flavor' | 'providers'
@@ -54,6 +55,7 @@ export const McpServerCard = ({
   diagnostic,
   diagnosticsLoading,
   onClick,
+  projectPath,
   cliStatus: cliStatusOverride,
   cliStatusLoading,
 }: McpServerCardProps): React.JSX.Element => {
@@ -282,6 +284,7 @@ export const McpServerCard = ({
                   registryId: server.id,
                   serverName: defaultServerName,
                   scope: sharedScope,
+                  projectPath: projectPath ?? undefined,
                   envValues: {},
                   headers: [],
                 })
@@ -290,7 +293,8 @@ export const McpServerCard = ({
                 uninstallMcpServer(
                   server.id,
                   sharedInstallEntry?.name ?? defaultServerName,
-                  sharedScope
+                  sharedScope,
+                  projectPath ?? undefined
                 )
               }
               size="sm"

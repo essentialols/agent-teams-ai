@@ -161,6 +161,18 @@ export function snapshotToRecords(
   };
 }
 
+export function recordsToSnapshot(
+  records: MemberWorkSyncTeamSnapshotRecords
+): MemberWorkSyncStoreSnapshot {
+  return {
+    statuses: records.statuses.map(recordToStatus),
+    reportIntents: records.reportIntents.map(recordToReportIntent),
+    outboxItems: records.outboxItems.map(recordToOutboxItem),
+    metricEvents: records.metricEvents.map(recordToMetricEvent),
+    filesToArchive: [],
+  };
+}
+
 function sortByKey<T>(records: T[], key: (record: T) => string): T[] {
   return [...records].sort((left, right) => key(left).localeCompare(key(right)));
 }

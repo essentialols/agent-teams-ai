@@ -1,3 +1,5 @@
+import { NodeApplicationCommandHasher } from '@features/application-command-ledger/main';
+import { TaskBoardCommandFacade } from '@features/task-board-commands';
 import { fromProvisioningMembers, isMixedOpenCodeSideLanePlan } from '@features/team-runtime-lanes';
 import { yieldToEventLoop } from '@main/utils/asyncYield';
 import { getClaudeBasePath, getTasksBasePath, getTeamsBasePath } from '@main/utils/pathDecoder';
@@ -68,7 +70,6 @@ import type { TaskChangePresenceRepository } from './cache/TaskChangePresenceRep
 import type { TaskCommentNotificationJournalStore } from './TaskCommentNotificationJournalStore';
 import type { TeamLogSourceTracker } from './TeamLogSourceTracker';
 import type { TeamMetaFile } from './TeamMetaStore';
-import type { TaskBoardCommandFacade } from '@features/task-board-commands';
 import type {
   AddMemberRequest,
   AttachmentMeta,
@@ -118,6 +119,13 @@ const TASK_COMMENT_NOTIFICATION_SOURCE = 'system_notification';
 const PASSIVE_USER_REPLY_LINK_WINDOW_MS = 15_000;
 const MEMBER_RUNTIME_ADVISORY_SNAPSHOT_BUDGET_MS = 250;
 const GLOBAL_TASK_TEAM_CONFIG_CONCURRENCY = 12;
+
+function createNonDurableTaskBoardCommandFacade(): TaskBoardCommandFacade {
+  const hasher = new NodeApplicationCommandHasher();
+  return new TaskBoardCommandFacade(null, {
+    hashPayload: (payload) => hasher.hashJson(payload),
+  });
+}
 const TEAM_NOTIFICATION_CONTEXT_CACHE_MAX_AGE_MS = 5_000;
 const MAX_MESSAGES_PAGE_LIVE_OVERLAY_PAYLOAD = 200;
 const SAFE_DIAGNOSTIC_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -499,7 +507,7 @@ export class TeamDataService {
   private readonly notificationContextCache = new Map<string, TeamNotificationContextCacheEntry>();
   private readonly notificationContextInFlight = new Map<string, InFlightTeamNotificationContext>();
   private readonly notificationContextGenerationByTeam = new Map<string, number>();
-  private taskBoardCommandFacade: TaskBoardCommandFacade | null = null;
+  private taskBoardCommandFacade = createNonDurableTaskBoardCommandFacade();
 
   constructor(
     private readonly configReader: TeamConfigReader = new TeamConfigReader(),
@@ -721,7 +729,7 @@ export class TeamDataService {
   }
 
   setTaskBoardCommandFacade(facade: TaskBoardCommandFacade | null): void {
-    this.taskBoardCommandFacade = facade;
+    this.taskBoardCommandFacade = facade ?? createNonDurableTaskBoardCommandFacade();
   }
 
   /** Composition-time backend swap; must run before notification processing starts. */
@@ -2450,7 +2458,7 @@ export class TeamDataService {
               [
                 `Begin work on this task immediately. Keep it moving until it is completed or clearly blocked. Do not leave it idle.`,
                 `Update task status using the board MCP tools:`,
-                `task_complete { teamName: "${teamName}", taskId: "${task.id}" }`,
+                `task_complete { teamName: "${teamName}", taskId: "${task.id}", actor: "${task.owner}" }`,
               ].join('\n')
             )
           );
@@ -2533,11 +2541,12 @@ export class TeamDataService {
       '',
       wrapAgentBlock(
         [
+          `This start notification can become stale after reassignment or completion. Before modifying anything, fetch the current task and verify that task.owner is your configured teammate name and task.status is pending or in_progress. If the owner changed or the task is completed/deleted, do not start or reopen it, modify files, add a completion comment, or complete it; stop unless the current owner explicitly asks you to collaborate on fresh follow-up work.`,
           `Begin work on this task immediately. Keep it moving until it is completed or clearly blocked. Do not leave it idle.`,
           `To fetch the full task context (description, comments, attachments) use:`,
           `task_get { teamName: "${teamName}", taskId: "${task.id}" }`,
           `When done, update task status:`,
-          `task_complete { teamName: "${teamName}", taskId: "${task.id}" }`,
+          `task_complete { teamName: "${teamName}", taskId: "${task.id}", actor: "${task.owner}" }`,
         ].join('\n')
       )
     );

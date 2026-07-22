@@ -30,6 +30,10 @@ export type {
   StoredSnapshotRetentionLeaseUse,
 } from './infrastructure/CoordinationDurabilityStorageGateway';
 export {
+  InternalStorageFallbackUnsafeError,
+  InternalStorageJsonReplica,
+} from './infrastructure/InternalStorageJsonReplica';
+export {
   INTERNAL_STORAGE_APPLICATION_ID,
   INTERNAL_STORAGE_REQUIRED_BACKUP_TABLES,
   INTERNAL_STORAGE_SCHEMA_VERSION,

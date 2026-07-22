@@ -45,6 +45,7 @@ const createPorts = (): MemberSpawnStatusMutationPorts<MemberSpawnStatusRun> => 
   isCurrentTrackedRun: vi.fn(() => true),
   emitMemberSpawnChange: vi.fn(),
   persistLaunchStateSnapshot: vi.fn(async () => undefined),
+  reportBackgroundPersistenceError: vi.fn(),
 });
 
 describe('member spawn snapshot mutations', () => {
@@ -73,6 +74,7 @@ describe('member spawn snapshot mutations', () => {
           observedAt: '2026-01-01T00:03:00.000Z',
         },
       ],
+      reportBackgroundPersistenceError: vi.fn(),
     });
 
     expect(ports.nowIso()).toBe('2026-01-01T00:03:00.000Z');
@@ -188,5 +190,25 @@ describe('member spawn snapshot mutations', () => {
     expect(ports.appendMemberBootstrapDiagnostic).not.toHaveBeenCalled();
     expect(ports.emitMemberSpawnChange).toHaveBeenCalledWith(run, 'api');
     expect(ports.persistLaunchStateSnapshot).toHaveBeenCalledWith(run, 'active');
+  });
+
+  it('reports rejected background persistence instead of leaking an unhandled rejection', async () => {
+    const run = createRun();
+    const ports = createPorts();
+    const persistenceError = new Error('launch publication failed');
+    vi.mocked(ports.persistLaunchStateSnapshot).mockRejectedValueOnce(persistenceError);
+
+    setMemberSpawnStatusForRun(
+      {
+        run,
+        memberName: 'api',
+        status: 'online',
+      },
+      ports
+    );
+
+    await vi.waitFor(() =>
+      expect(ports.reportBackgroundPersistenceError).toHaveBeenCalledWith(run, persistenceError)
+    );
   });
 });

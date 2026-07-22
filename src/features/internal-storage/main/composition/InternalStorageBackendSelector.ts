@@ -21,6 +21,7 @@ const logger = createLogger('Feature:InternalStorage');
 export class InternalStorageBackendSelector {
   private decision: Promise<InternalStorageBackendKind> | null = null;
   private backendKind: InternalStorageBackendKind = 'sqlite';
+  private backendInfo: InternalStorageBackendInfo | null = null;
 
   constructor(private readonly ping: () => Promise<InternalStorageBackendInfo>) {}
 
@@ -33,6 +34,10 @@ export class InternalStorageBackendSelector {
     return this.backendKind;
   }
 
+  getBackendInfo(): InternalStorageBackendInfo | null {
+    return this.backendInfo;
+  }
+
   async select<T>(sqliteBackend: T, jsonBackend: T): Promise<T> {
     const kind = await this.resolve();
     return kind === 'sqlite' ? sqliteBackend : jsonBackend;
@@ -42,6 +47,7 @@ export class InternalStorageBackendSelector {
     if (!this.decision) {
       this.decision = this.ping()
         .then((info): InternalStorageBackendKind => {
+          this.backendInfo = info;
           const message = `internal-storage backend=sqlite schemaVersion=${info.schemaVersion} integrity=${info.integrity} db=${info.databasePath}`;
           if (info.integrity === 'recovered') {
             logger.warn(message);

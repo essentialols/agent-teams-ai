@@ -19,6 +19,7 @@ import {
   type OpenCodeSecondaryEvidenceOverlayParams,
 } from './TeamProvisioningLaunchStateReconciliation';
 import {
+  type LaunchStateWriteOptions,
   type LaunchStateWriteResult,
   type PendingOpenCodePrimaryCleanup,
 } from './TeamProvisioningLaunchStateStoreBoundary';
@@ -101,12 +102,12 @@ export interface TeamProvisioningLaunchStateCompatibilityBoundary<
   writeLaunchStateSnapshot(
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
+    options?: LaunchStateWriteOptions
   ): Promise<PersistedTeamLaunchSnapshot>;
   writeLaunchStateSnapshotNow(
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
+    options?: LaunchStateWriteOptions
   ): Promise<LaunchStateWriteResult>;
   isLaunchStateNoopRefreshDue(snapshot: PersistedTeamLaunchSnapshot): boolean;
   readPendingOpenCodePrimaryCleanups(teamId: string): Promise<PendingOpenCodePrimaryCleanup[]>;
@@ -542,7 +543,7 @@ export abstract class TeamProvisioningLaunchStateCompatibilityFacade<
   protected writeLaunchStateSnapshot(
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
+    options?: LaunchStateWriteOptions
   ): Promise<PersistedTeamLaunchSnapshot> {
     return options === undefined
       ? this.launchStateCompatibilityBoundary.writeLaunchStateSnapshot(teamName, snapshot)
@@ -552,7 +553,7 @@ export abstract class TeamProvisioningLaunchStateCompatibilityFacade<
   protected writeLaunchStateSnapshotNow(
     teamName: string,
     snapshot: PersistedTeamLaunchSnapshot,
-    options?: { allowNoopSkip?: boolean; runId?: string }
+    options?: LaunchStateWriteOptions
   ): Promise<LaunchStateWriteResult> {
     return this.launchStateCompatibilityBoundary.writeLaunchStateSnapshotNow(
       teamName,

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 
 import {
+  isCodexAccountSnapshotPending,
   mergeCodexCliStatusWithSnapshot,
   useCodexAccountSnapshot,
 } from '@features/codex-account/renderer';
@@ -135,9 +136,13 @@ export function useEffectiveCliProviderStatus(
     scopedProviderStatus,
   ]);
   const codexSnapshotPending =
-    codexAccount.loading &&
+    isCodexAccountSnapshotPending(
+      codexAccount.loading,
+      codexAccount.snapshot,
+      codexAccount.error
+    ) &&
     Boolean(loadingCliStatus?.providers.some((provider) => provider.providerId === 'codex')) &&
-    !codexAccount.snapshot;
+    providerId === 'codex';
   const providerStatus = useMemo(
     () =>
       providerId

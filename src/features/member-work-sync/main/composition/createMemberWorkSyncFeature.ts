@@ -325,7 +325,13 @@ export function createMemberWorkSyncFeature(deps: {
           }),
           buildReportIntentId: buildPendingReportIntentId,
         }),
-        jsonStore
+        jsonStore,
+        {
+          gateway: deps.internalStorageBackend.gateway,
+          paths: storePaths,
+          fallbackRequiresReplica: deps.internalStorageBackend.fallbackRequiresReplica ?? false,
+          logger: deps.logger,
+        }
       )
     : jsonStore;
   const runtimeTurnSettledSpool = new RuntimeTurnSettledSpoolInitializer(deps.teamsBasePath);
@@ -564,22 +570,19 @@ export function createMemberWorkSyncFeature(deps: {
     },
     taskImpactResolver
   );
+  let acceptsRuntimeTurnSettledReconcile = true;
   const runtimeTurnSettledIngestor = new RuntimeTurnSettledIngestor({
     eventStore: runtimeTurnSettledStore,
     normalizer: runtimeTurnSettledNormalizer,
     targetResolver: runtimeTurnSettledTargetResolver,
     reconcileQueue: {
-      enqueueRuntimeTurnSettled: ({ teamName, memberName, event }) => {
-        router.noteTeamChange({
-          type: 'member-turn-settled',
+      enqueueRuntimeTurnSettled: ({ teamName, memberName }) =>
+        acceptsRuntimeTurnSettledReconcile &&
+        queue.enqueue({
           teamName,
-          detail: JSON.stringify({
-            memberName,
-            sourceId: event.sourceId,
-            provider: event.provider,
-          }),
-        });
-      },
+          memberName,
+          triggerReason: 'turn_settled',
+        }),
     },
     clock,
     auditJournal,
@@ -766,11 +769,16 @@ export function createMemberWorkSyncFeature(deps: {
     getQueueDiagnostics: () => queue.getDiagnostics(),
     dispose: () => {
       if (!disposePromise) {
+        // Close admission synchronously. An active drain may outlive the
+        // scheduler's bounded dispose wait, so it must not acknowledge a
+        // spool item after queue.stop() has discarded the accepted work.
+        acceptsRuntimeTurnSettledReconcile = false;
         disposePromise = Promise.allSettled([
           runtimeTurnSettledDrainScheduler.dispose(),
           nudgeDispatchScheduler?.dispose(),
-          queue.stop(),
-        ]).then(() => undefined);
+        ])
+          .then(() => queue.stop())
+          .then(() => undefined);
       }
       return disposePromise;
     },

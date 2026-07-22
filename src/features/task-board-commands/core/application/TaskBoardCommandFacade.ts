@@ -32,14 +32,33 @@ export interface TaskBoardCreateTaskCommandResult {
   createdInAttempt: boolean;
 }
 
+export interface TaskBoardCommandFacadeOptions {
+  /**
+   * Durable commands require the SQLite-backed application-command ledger.
+   * When internal storage selected its JSON fallback, preserve the legacy
+   * task-create path instead of calling the unavailable SQLite worker.
+   */
+  isDurableStorageAvailable?: () => Promise<boolean>;
+  hashPayload?: (payload: JsonObject) => string;
+}
+
 export class TaskBoardCommandFacade {
-  constructor(private readonly runner: ApplicationCommandRunner) {}
+  constructor(
+    private readonly runner: ApplicationCommandRunner | null,
+    private readonly options: TaskBoardCommandFacadeOptions = {}
+  ) {}
 
   async createTask(command: TaskBoardCreateTaskCommand): Promise<TaskBoardCreateTaskCommandResult> {
     if (!looksLikeCanonicalTaskId(command.identity.commandId)) {
       throw new TypeError('Task create commandId must be a UUID');
     }
     const payload = toJsonObject(command.payload);
+    if (
+      !this.runner ||
+      (this.options.isDurableStorageAvailable && !(await this.options.isDurableStorageAvailable()))
+    ) {
+      return this.createTaskWithoutDurableLedger(command, payload);
+    }
     const run = await this.runner.run<JsonObject, typeof CREATE_TASK_OPERATION>(
       {
         namespace: TASK_BOARD_COMMAND_NAMESPACE,
@@ -129,6 +148,53 @@ export class TaskBoardCommandFacade {
         (run.outcome === ApplicationCommandRunOutcome.Executed ||
           run.outcome === ApplicationCommandRunOutcome.Retried),
     };
+  }
+
+  private async createTaskWithoutDurableLedger(
+    command: TaskBoardCreateTaskCommand,
+    payload: JsonObject
+  ): Promise<TaskBoardCreateTaskCommandResult> {
+    if (!this.options.hashPayload) {
+      throw new Error('Non-durable task commands require a payload hasher');
+    }
+    const commandRecord = {
+      namespace: TASK_BOARD_COMMAND_NAMESPACE,
+      scopeKey: command.teamName,
+      operation: CREATE_TASK_OPERATION,
+      commandId: command.identity.commandId,
+      payloadHash: this.options.hashPayload(payload),
+    };
+    const destinationInput = makeDestinationInput(commandRecord, payload);
+    const existing = command.destination.findById(command.identity.commandId);
+    if (existing) {
+      const reconciled = await reconcileDestination(command.destination, commandRecord, payload);
+      return {
+        task: toExternalTask(reconciled),
+        outcome: ApplicationCommandRunOutcome.Replayed,
+        createdInAttempt: false,
+      };
+    }
+
+    try {
+      await command.destination.create(destinationInput);
+      const reconciled = await reconcileDestination(command.destination, commandRecord, payload);
+      return {
+        task: toExternalTask(reconciled),
+        outcome: ApplicationCommandRunOutcome.Executed,
+        createdInAttempt: true,
+      };
+    } catch (error) {
+      const recovered = command.destination.findById(command.identity.commandId);
+      if (!recovered) {
+        throw error;
+      }
+      const reconciled = await reconcileDestination(command.destination, commandRecord, payload);
+      return {
+        task: toExternalTask(reconciled),
+        outcome: ApplicationCommandRunOutcome.Executed,
+        createdInAttempt: true,
+      };
+    }
   }
 }
 

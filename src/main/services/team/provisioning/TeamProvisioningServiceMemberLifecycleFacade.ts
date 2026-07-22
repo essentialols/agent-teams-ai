@@ -184,6 +184,20 @@ function preserveAuthoritativeMembersMetaResolution(
 
 /** Owns lifecycle host construction and launch-preparation adaptation. */
 export abstract class TeamProvisioningServiceMemberLifecycleFacade extends TeamProvisioningServiceRuntimeStateFacade {
+  protected override getOpenCodeAggregatePrimaryRestartTeamNamesForShutdown(): Iterable<string> {
+    return Array.from(
+      this.openCodeAggregatePrimaryRestartByTeam.values(),
+      (restart) => restart.teamName
+    );
+  }
+
+  protected override getOpenCodeRuntimeAdapterStopInFlightTeamNamesForShutdown(): Iterable<string> {
+    return Array.from(
+      this.openCodeRuntimeAdapterStopInFlightByTeam.values(),
+      (stop) => stop.teamName
+    );
+  }
+
   private readonly preparedOpenCodeRuntimeLaunchMembersByTeam = new Map<
     string,
     TeamCreateRequest['members']

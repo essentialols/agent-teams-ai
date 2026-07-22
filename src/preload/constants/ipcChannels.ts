@@ -33,6 +33,9 @@ export const APP_GET_WINDOWS_ELEVATION_STATUS = 'app:getWindowsElevationStatus';
 /** Get Sentry-safe anonymous telemetry context */
 export const TELEMETRY_GET_SENTRY_CONTEXT = 'telemetry:getSentryContext';
 
+/** Get sanitized Sentry initialization health */
+export const TELEMETRY_GET_SENTRY_STATUS = 'telemetry:getSentryStatus';
+
 // =============================================================================
 // Config API Channels
 // =============================================================================

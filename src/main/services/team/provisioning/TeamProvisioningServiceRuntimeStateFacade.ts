@@ -151,6 +151,9 @@ export interface PrimaryRuntimeLaunchIntent {
  * orchestration live in the next focused layers.
  */
 export abstract class TeamProvisioningServiceRuntimeStateFacade extends TeamProvisioningServiceFacadeDelegates {
+  protected abstract getOpenCodeAggregatePrimaryRestartTeamNamesForShutdown(): Iterable<string>;
+  protected abstract getOpenCodeRuntimeAdapterStopInFlightTeamNamesForShutdown(): Iterable<string>;
+
   protected readonly runtimeLaneCoordinator = createTeamRuntimeLaneCoordinator();
   private readonly providerConnectionService = ProviderConnectionService.getInstance();
   protected readonly launchIdentityBoundary: TeamProvisioningLaunchIdentityBoundary =
@@ -310,6 +313,10 @@ export abstract class TeamProvisioningServiceRuntimeStateFacade extends TeamProv
     {
       isCancellableRuntimeAdapterProgress: (progress) =>
         this.cancellationBoundary.isCancellableRuntimeAdapterProgress(progress),
+      getOpenCodeAggregatePrimaryRestartTeamNames: () =>
+        this.getOpenCodeAggregatePrimaryRestartTeamNamesForShutdown(),
+      getOpenCodeRuntimeAdapterStopInFlightTeamNames: () =>
+        this.getOpenCodeRuntimeAdapterStopInFlightTeamNamesForShutdown(),
       stopTeam: (teamName) => this.stopTeam(teamName),
       cancelRuntimeAdapterProvisioning: (runId, progress) =>
         this.cancellationBoundary.cancelRuntimeAdapterProvisioning(runId, progress),
@@ -414,6 +421,10 @@ export abstract class TeamProvisioningServiceRuntimeStateFacade extends TeamProv
       {
         nowIso,
         buildLaunchDiagnostics: (run) => boundLaunchDiagnostics(buildLaunchDiagnosticsFromRun(run)),
+        reportBackgroundPersistenceError: (run, error) =>
+          logger.warn(
+            `[${run.teamName}] Failed to persist background member spawn status: ${getErrorMessage(error)}`
+          ),
       }
     );
   protected readonly memberSpawnStatusAuditPorts: MemberSpawnStatusAuditPorts<ProvisioningRun> =

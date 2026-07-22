@@ -1426,9 +1426,9 @@ describe('TeamModelSelector disabled Codex models', () => {
     expect(virtualizerOptions?.estimateSize?.(headingIndex ?? 0)).toBe(38);
     expect(virtualizerOptions?.estimateSize?.((headingIndex ?? 0) + 1)).toBe(74);
     expect(getActiveOpenCodeStickyHeadingIndex([headingIndex ?? 0], headingIndex ?? 0)).toBeNull();
-    expect(
-      getActiveOpenCodeStickyHeadingIndex([headingIndex ?? 0], (headingIndex ?? 0) + 1)
-    ).toBe(headingIndex);
+    expect(getActiveOpenCodeStickyHeadingIndex([headingIndex ?? 0], (headingIndex ?? 0) + 1)).toBe(
+      headingIndex
+    );
 
     const extractedIndexes = virtualizerOptions?.rangeExtractor?.({
       startIndex: (headingIndex ?? 0) + 4,
@@ -1869,6 +1869,65 @@ describe('TeamModelSelector disabled Codex models', () => {
     expect(host.textContent).toContain('5.3 Codex');
     expect(host.textContent).not.toContain('Explicit models load from the current runtime');
     expect(host.querySelector('[data-testid="team-model-selector-model-search"]')).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  it('does not normalize a selected Codex model while the account snapshot is pending', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    storeState.cliStatus = {
+      providers: [
+        {
+          providerId: 'codex',
+          supported: false,
+          authenticated: false,
+          verificationState: 'unknown',
+          statusMessage: 'Codex CLI not found',
+          models: [],
+          modelVerificationState: 'idle',
+          modelAvailability: [],
+        },
+      ],
+    };
+    codexAccountHookState.loading = true;
+    codexAccountHookState.snapshot = {
+      preferredAuthMode: 'chatgpt',
+      effectiveAuthMode: null,
+      launchAllowed: false,
+      launchIssueMessage: 'Codex CLI not found',
+      launchReadinessState: 'runtime_missing',
+      appServerState: 'runtime-missing',
+      appServerStatusMessage: 'Codex CLI not found',
+      managedAccount: null,
+      apiKey: { available: false, source: null, sourceLabel: null },
+      requiresOpenaiAuth: null,
+      login: { status: 'idle', error: null, startedAt: null },
+      rateLimits: null,
+      updatedAt: '2026-07-21T10:00:00.000Z',
+    };
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onValueChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        React.createElement(TeamModelSelector, {
+          providerId: 'codex',
+          onProviderChange: () => undefined,
+          value: 'gpt-5.4',
+          onValueChange,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    expect(onValueChange).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('Explicit models load from the current runtime');
 
     await act(async () => {
       root.unmount();

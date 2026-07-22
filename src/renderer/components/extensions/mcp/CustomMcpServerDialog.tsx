@@ -275,7 +275,7 @@ export const CustomMcpServerDialog = ({
     const request: McpCustomInstallRequest = {
       serverName,
       scope,
-      projectPath: isProjectScopedMcpScope(scope) ? (projectPath ?? undefined) : undefined,
+      projectPath: projectPath ?? undefined,
       installSpec,
       envValues,
       headers: headers.filter((h) => h.key.trim() && h.value.trim()),

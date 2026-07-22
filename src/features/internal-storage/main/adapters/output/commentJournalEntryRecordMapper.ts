@@ -71,3 +71,18 @@ export function areCommentJournalRecordSetsEquivalent(
 ): boolean {
   return normalizeForComparison(left) === normalizeForComparison(right);
 }
+
+export function resolveCommentJournalRecordConflict(
+  canonical: CommentJournalEntryRecord,
+  incoming: CommentJournalEntryRecord
+): CommentJournalEntryRecord {
+  const rank = (state: string): number => (state === 'sent' ? 2 : state === 'pending_send' ? 1 : 0);
+  const canonicalRank = rank(canonical.state);
+  const incomingRank = rank(incoming.state);
+  if (canonicalRank !== incomingRank) return incomingRank > canonicalRank ? incoming : canonical;
+  const incomingMs = Date.parse(incoming.updatedAt);
+  const canonicalMs = Date.parse(canonical.updatedAt);
+  return Number.isFinite(incomingMs) && (!Number.isFinite(canonicalMs) || incomingMs > canonicalMs)
+    ? incoming
+    : canonical;
+}

@@ -60,6 +60,7 @@ interface SkillImportDialogProps {
   projectPath: string | null;
   projectLabel: string | null;
   allowCodexRootKind: boolean;
+  codexRootKindPending?: boolean;
   onClose: () => void;
   onImported: (skillId: string | null) => void;
 }
@@ -69,6 +70,7 @@ export const SkillImportDialog = ({
   projectPath,
   projectLabel,
   allowCodexRootKind,
+  codexRootKindPending = false,
   onClose,
   onImported,
 }: SkillImportDialogProps): React.JSX.Element => {
@@ -127,13 +129,16 @@ export const SkillImportDialog = ({
   }, [open, projectPath, scope]);
 
   useEffect(() => {
-    if (open && rootKind === 'codex' && !allowCodexRootKind) {
+    if (open && rootKind === 'codex' && !allowCodexRootKind && !codexRootKindPending) {
       setRootKind('claude');
     }
-  }, [allowCodexRootKind, open, rootKind]);
+  }, [allowCodexRootKind, codexRootKindPending, open, rootKind]);
 
   const visibleRootDefinitions = SKILL_ROOT_DEFINITIONS.filter(
-    (definition) => definition.rootKind !== 'codex' || allowCodexRootKind
+    (definition) =>
+      definition.rootKind !== 'codex' ||
+      allowCodexRootKind ||
+      (codexRootKindPending && rootKind === 'codex')
   );
 
   async function handleChooseFolder(): Promise<void> {

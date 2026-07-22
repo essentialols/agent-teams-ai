@@ -18,6 +18,7 @@ import {
   type Sha256Hash,
 } from '@features/team-runtime-control';
 import * as teamRuntimeControlApi from '@features/team-runtime-control';
+import { credentialExposureSetsOverlap } from '@features/team-runtime-control/core/domain';
 import { planTeamRuntimeLanes, type TeamRuntimeLanePlanResult } from '@features/team-runtime-lanes';
 import {
   parseLegacyMemberKey,
@@ -475,6 +476,40 @@ describe('createCompositeRuntimePlan', () => {
       },
     ];
     expectPlanError(() => createCompositeRuntimePlan(mergedUnit), 'lane_plan_mismatch');
+  });
+
+  it('uses canonical credential identity when deriving execution-unit overlap', () => {
+    const apiKeyRef = secretRef('secret-shared-id', 'provider-api-key');
+    const accountRef = secretRef('secret-shared-id', 'provider-account');
+
+    expect(
+      credentialExposureSetsOverlap({ secretRefs: [apiKeyRef] }, { secretRefs: [accountRef] })
+    ).toBe(false);
+    expect(
+      credentialExposureSetsOverlap({ secretRefs: [apiKeyRef] }, { secretRefs: [{ ...apiKeyRef }] })
+    ).toBe(true);
+
+    const identicalRefInput = createInput();
+    identicalRefInput.laneCredentials = identicalRefInput.laneCredentials.map((credential) => ({
+      ...credential,
+      requiredCredentialExposureSet: { secretRefs: [apiKeyRef] },
+    }));
+    identicalRefInput.executionUnits = identicalRefInput.executionUnits.map((unit) => ({
+      ...unit,
+      credentialExposureSet: { secretRefs: [apiKeyRef] },
+      environmentPolicy: {
+        ...unit.environmentPolicy,
+        variables: unit.environmentPolicy.variables.map((variable) =>
+          variable.provenance === 'secret_ref' ? { ...variable, secretRef: apiKeyRef } : variable
+        ),
+      },
+    }));
+
+    expect(
+      createCompositeRuntimePlan(identicalRefInput).executionUnits.map(
+        (unit) => unit.credentialIsolation
+      )
+    ).toEqual(['shared_execution_unit', 'shared_execution_unit']);
   });
 
   it('rejects unstable ordering rather than sorting authoritative facts', () => {

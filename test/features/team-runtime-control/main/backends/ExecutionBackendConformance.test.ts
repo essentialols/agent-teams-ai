@@ -254,6 +254,41 @@ describe('lane execution backend conformance', () => {
     );
   });
 
+  it.each(cases)(
+    '$name preserves explicit unavailable outcomes with ready capability snapshots',
+    async (fixture) => {
+      const unavailable = { status: 'rejected', reason: 'unavailable' } as const;
+      const outcomes: MutableOutcomes = {
+        preflight: { status: 'ready' },
+        launch: unavailable,
+        observe: unavailable,
+        stop: unavailable,
+        recover: unavailable,
+      };
+      const backend = fixture.create(outcomes);
+      const scope = createScope(fixture.providerId);
+      const activeCancellation = cancellation();
+      const preflight = await backend.preflight({ scope, cancellation: activeCancellation });
+      if (preflight.status !== 'ready') throw new Error('expected ready conformance preflight');
+      const executionRef = parseLaneExecutionRef('conformance-run');
+
+      outcomes.preflight = unavailable;
+      await expect(backend.preflight({ scope, cancellation: activeCancellation })).resolves.toEqual(
+        unavailable
+      );
+      await expect(
+        backend.launch({ scope, cancellation: activeCancellation, readiness: preflight.readiness })
+      ).resolves.toEqual(unavailable);
+      await expect(backend.observe({ scope, executionRef })).resolves.toEqual(unavailable);
+      await expect(
+        backend.stop({ scope, executionRef, mode: 'graceful', cancellation: activeCancellation })
+      ).resolves.toEqual(unavailable);
+      await expect(backend.recover({ scope, cancellation: activeCancellation })).resolves.toEqual(
+        unavailable
+      );
+    }
+  );
+
   it('keeps product adapters free of alternate planners, process creation, and shell globals', () => {
     const productionPaths = [
       'src/features/team-runtime-control/main/adapters/output/backends/ProvisioningCliExecutionBackend.ts',

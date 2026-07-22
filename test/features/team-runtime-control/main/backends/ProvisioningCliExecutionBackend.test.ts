@@ -258,6 +258,16 @@ describe('ProvisioningCliExecutionBackend', () => {
     });
   });
 
+  it('preserves an explicit unavailable outcome when the capability snapshot is ready', async () => {
+    const ports = new FakeProvisioningPorts();
+    ports.preflightOutcome = { status: 'rejected', reason: 'unavailable' };
+    const backend = new ProvisioningCliExecutionBackend(ports);
+
+    await expect(
+      backend.preflight({ scope: createScope('anthropic'), cancellation: cancellation() })
+    ).resolves.toEqual({ status: 'rejected', reason: 'unavailable' });
+  });
+
   it('fails closed on unsupported plans, capability identity, readiness, and stale receipts', async () => {
     const ports = new FakeProvisioningPorts();
     const backend = new ProvisioningCliExecutionBackend(ports);

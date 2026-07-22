@@ -12,8 +12,8 @@ export function credentialExposureSetsOverlap(
   left: CredentialExposureSet,
   right: CredentialExposureSet
 ): boolean {
-  const leftIds = new Set(left.secretRefs.map((secretRef) => secretRef.secretRefId));
-  return right.secretRefs.some((secretRef) => leftIds.has(secretRef.secretRefId));
+  const leftKeys = new Set(left.secretRefs.map(credentialRefKey));
+  return right.secretRefs.some((secretRef) => leftKeys.has(credentialRefKey(secretRef)));
 }
 
 export function isDedicatedExecutionUnit(unit: ProcessExecutionUnit): boolean {

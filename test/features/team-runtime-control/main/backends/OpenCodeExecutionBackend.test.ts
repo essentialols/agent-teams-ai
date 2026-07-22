@@ -280,6 +280,16 @@ describe('OpenCodeExecutionBackend', () => {
     });
   });
 
+  it('preserves an explicit unavailable outcome when the capability snapshot is ready', async () => {
+    const ports = new FakeOpenCodePorts();
+    ports.preflightOutcome = { status: 'rejected', reason: 'unavailable' };
+    const backend = new OpenCodeExecutionBackend(ports);
+
+    await expect(
+      backend.preflight({ scope: createScope(), cancellation: cancellation() })
+    ).resolves.toEqual({ status: 'rejected', reason: 'unavailable' });
+  });
+
   it('fails closed when the registry is absent or returns the wrong provider adapter', async () => {
     const ports = new FakeOpenCodePorts();
     const backend = new OpenCodeExecutionBackend(ports);

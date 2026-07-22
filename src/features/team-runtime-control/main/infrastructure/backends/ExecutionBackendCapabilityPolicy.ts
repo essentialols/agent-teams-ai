@@ -355,12 +355,6 @@ function parseRejectedOutcome(
   if (value.reason === 'unsupported' && capabilities.every((capability) => capability.supported)) {
     return { status: 'rejected', reason: 'capability_mismatch' };
   }
-  if (
-    value.reason === 'unavailable' &&
-    capabilities.every((capability) => capability.readiness === 'ready')
-  ) {
-    return { status: 'rejected', reason: 'readiness_mismatch' };
-  }
   return { status: 'rejected', reason: value.reason };
 }
 

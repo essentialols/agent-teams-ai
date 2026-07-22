@@ -143,7 +143,7 @@ import type { TeamBackupService } from '../services/team/TeamBackupService';
 
 const logger = createLogger('IPC:handlers');
 const taskLogObservabilityLogger = createLogger('IPC:teams');
-const teamApprovalsLogger = createLogger('IPC:teams');
+const teamApprovalsLogger = createLogger('IPC:teamApprovals');
 
 /**
  * Initializes IPC handlers with service registry.

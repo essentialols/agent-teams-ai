@@ -1,2 +1,2 @@
 export * from './planning';
-export * from './ports';
+export type * from './ports';

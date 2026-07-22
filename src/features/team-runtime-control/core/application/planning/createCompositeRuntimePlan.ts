@@ -206,7 +206,7 @@ export function decodeCompositeRuntimePlan(value: unknown): CompositeRuntimePlan
     'persistedPlan',
     'persisted_plan_invalid'
   );
-  const record = value as Record<string, unknown>;
+  const record = value;
   if (record.planVersion !== COMPOSITE_RUNTIME_PLAN_VERSION) {
     fail('persisted_plan_invalid', 'runtime-plan-version-unsupported');
   }
@@ -232,11 +232,11 @@ export function decodeCompositeRuntimePlan(value: unknown): CompositeRuntimePlan
   const plan = buildRuntimePlan({
     teamId: record.teamId as CompositeRuntimePlan['teamId'],
     runId: record.runId as CompositeRuntimePlan['runId'],
-    generation: record.generation as number,
+    generation: record.generation,
     leadProviderId: record.leadProviderId,
     topologyMode,
     lanes,
-    rosterGeneration: record.rosterGeneration as number,
+    rosterGeneration: record.rosterGeneration,
     memberBindings,
     workspaceBinding,
     executionUnits,
@@ -292,7 +292,7 @@ function buildRuntimePlan(body: ValidatedPlanBody): CompositeRuntimePlan {
 
 function validateMemberBindings(value: unknown): readonly RuntimePlanMemberBinding[] {
   validateDenseArray(value, 'memberBindings');
-  const bindings = value as readonly unknown[];
+  const bindings = value;
   const memberIds = new Set<string>();
   const legacyKeys = new Set<string>();
   const foldedLegacyKeys = new Set<string>();
@@ -577,7 +577,7 @@ function attachLaneCredentials(
   value: unknown
 ): readonly RuntimePlanLaneBinding[] {
   validateDenseNonEmptyArray(value, 'laneCredentials');
-  const credentials = value as readonly unknown[];
+  const credentials = value;
   if (credentials.length !== lanes.length) {
     fail('lane_plan_mismatch', 'runtime-plan-lane-credential-count-mismatch');
   }
@@ -607,7 +607,7 @@ function validatePersistedLanes(
   members: readonly RuntimePlanMemberBinding[]
 ): readonly RuntimePlanLaneBinding[] {
   validateDenseNonEmptyArray(value, 'lanes');
-  const lanes = value as readonly unknown[];
+  const lanes = value;
   const laneIds = new Set<string>();
   const memberById = new Map(members.map((member) => [member.memberId, member]));
   const boundMemberIds = new Set<MemberId>();
@@ -757,7 +757,7 @@ function validateResolvedExecutionUnits(
   lanes: readonly RuntimePlanLaneBinding[]
 ): readonly ProcessExecutionUnit[] {
   validateDenseNonEmptyArray(value, 'executionUnits');
-  const facts = value as readonly unknown[];
+  const facts = value;
   if (facts.length !== lanes.length) {
     fail('lane_plan_mismatch', 'runtime-plan-execution-unit-lane-count-mismatch');
   }
@@ -830,7 +830,7 @@ function validatePersistedExecutionUnits(
   lanes: readonly RuntimePlanLaneBinding[]
 ): readonly ProcessExecutionUnit[] {
   validateDenseNonEmptyArray(value, 'executionUnits');
-  const persistedUnits = value as readonly unknown[];
+  const persistedUnits = value;
   const facts = persistedUnits.map((candidate) => {
     assertExactRecord(
       candidate,
@@ -1083,7 +1083,7 @@ function validatePersistedLaneOrder(
   lanes: readonly RuntimePlanLaneBinding[]
 ): void {
   validateDenseNonEmptyArray(value, 'orderedLaneIds');
-  const laneIds = value as readonly unknown[];
+  const laneIds = value;
   laneIds.forEach((laneId) => validateIdentifier(() => parseLaneId(laneId), 'orderedLaneId'));
   if (
     !sameStringArray(

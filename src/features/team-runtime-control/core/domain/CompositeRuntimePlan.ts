@@ -5,7 +5,7 @@ export type CompositeRuntimePlanHashBody = Omit<CompositeRuntimePlan, 'planHash'
 export function createCompositeRuntimePlanHash(
   plan: CompositeRuntimePlanHashBody
 ): CompositeRuntimePlanHash {
-  return `sha256:${sha256Hex(canonicalJson(plan))}`;
+  return `sha256:${sha256Hex(canonicalJson(plan))}` as CompositeRuntimePlanHash;
 }
 
 export function deepFreezeRuntimePlan<T>(value: T): Readonly<T> {

@@ -8,6 +8,7 @@ import type {
 import type { TeamProviderId } from '@shared/types';
 
 declare const runtimePlanIdBrand: unique symbol;
+declare const compositeRuntimePlanHashBrand: unique symbol;
 
 type RuntimePlanId<Name extends string> = string & {
   readonly [runtimePlanIdBrand]: Name;
@@ -47,7 +48,9 @@ export type RuntimeLaneKind = 'primary' | 'secondary';
 export type RuntimeMemberPolicy = 'required' | 'optional';
 export type CredentialIsolation = 'shared_execution_unit' | 'dedicated_execution_unit';
 export type Sha256Hash = `sha256:${string}`;
-export type CompositeRuntimePlanHash = Sha256Hash;
+export type CompositeRuntimePlanHash = Sha256Hash & {
+  readonly [compositeRuntimePlanHashBrand]: 'CompositeRuntimePlanHash';
+};
 
 /** Metadata only. Secret values are resolved by an owning output adapter. */
 export interface SecretRefMetadata {

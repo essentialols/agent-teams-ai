@@ -198,9 +198,9 @@ export interface CloseRuntimeIngressRelayRequest {
   readonly relayRef: RuntimeIngressRelayRef;
 }
 
-export type CloseRuntimeIngressRelayResult = {
+export interface CloseRuntimeIngressRelayResult {
   readonly status: 'closed' | 'already_closed' | 'unclassified_residual';
-};
+}
 
 /** Lane scope is fixed by the request; provider payloads cannot select another authority. */
 export interface RuntimeIngressRelayPort {

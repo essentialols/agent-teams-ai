@@ -965,7 +965,7 @@ export async function clearOpenCodeRuntimeLaneStorage(
         if (!laneEntry && !manifestExists) {
           return (await fileExists(laneDirectory)) ? 'owner_changed' : 'cleared';
         }
-        if (laneEntry?.runId !== params.expectedRunId) {
+        if (laneEntry?.runId !== undefined && laneEntry.runId !== params.expectedRunId) {
           return 'owner_changed';
         }
         if (manifestExists) {
@@ -977,6 +977,8 @@ export async function clearOpenCodeRuntimeLaneStorage(
           if (manifest?.activeRunId !== params.expectedRunId) {
             return 'owner_changed';
           }
+        } else if (laneEntry?.runId === undefined) {
+          return 'owner_changed';
         }
       }
 

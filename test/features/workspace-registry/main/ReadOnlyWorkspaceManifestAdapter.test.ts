@@ -463,6 +463,40 @@ describe('ReadOnlyWorkspaceManifestAdapter', () => {
     ).rejects.toThrow('workspace-manifest-mount-binding-predecessor-forbidden');
   });
 
+  it('re-registers a disabled workspace at a higher revision without a previous binding', async () => {
+    const root = await createOwnedRoot('re-enabled');
+    const disabled = await admittedAdapter(
+      root.path,
+      manifest({
+        registrations: [registration({ enabled: false, mountBinding: undefined })],
+      }),
+      root
+    );
+    const disabledSnapshot = await disabled.adapter.load(EMPTY_DEPLOYMENT);
+    expect(disabledSnapshot.bindings).toEqual([]);
+
+    const reEnabled = await admittedAdapter(
+      root.path,
+      manifest({ registrations: [registration({ registrationRevision: 2 })] }),
+      root
+    );
+    const reEnabledSnapshot = await reEnabled.adapter.load({
+      kind: 'previous-snapshot',
+      snapshot: disabledSnapshot,
+    });
+
+    expect(reEnabledSnapshot.registry.requireEnabled(parseWorkspaceId(WORKSPACE_ID))).toMatchObject(
+      {
+        registrationRevision: 2,
+        enabled: true,
+      }
+    );
+    expect(reEnabledSnapshot.bindings[0]).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      mountGeneration: 1,
+    });
+  });
+
   it('derives the predecessor from the previous snapshot, advances the mount, and rejects root drift', async () => {
     const root = await createOwnedRoot('restart');
     const first = await admittedAdapter(root.path, manifest(), root);

@@ -122,10 +122,10 @@ export class ReadOnlyWorkspaceManifestAdapter {
       }
       const registration = registry.requireEnabled(parseWorkspaceId(entry.workspaceId));
       const previousBinding = previousBindingsByWorkspaceId.get(registration.workspaceId);
-      if (
-        previousSnapshot?.registry.getByWorkspaceId(registration.workspaceId) &&
-        !previousBinding
-      ) {
+      const previousRegistration = previousSnapshot?.registry.getByWorkspaceId(
+        registration.workspaceId
+      );
+      if (previousRegistration?.enabled && !previousBinding) {
         throw new Error('workspace-manifest-previous-binding-missing');
       }
       return [

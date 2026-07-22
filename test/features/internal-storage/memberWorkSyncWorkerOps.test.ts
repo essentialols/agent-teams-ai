@@ -4,7 +4,10 @@ import Database from 'better-sqlite3-node';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { MemberWorkSyncOutboxItemRecord } from '@features/internal-storage/contracts/internalStorageContracts';
+import type {
+  MemberWorkSyncOutboxItemRecord,
+  MemberWorkSyncTeamSnapshotRecords,
+} from '@features/internal-storage/contracts/internalStorageContracts';
 
 const TEAM_NAME = 'team-a';
 const ITEM_ID = 'member-work-sync:team-a:bob:agenda:v1:abc';
@@ -134,5 +137,90 @@ describe('MemberWorkSyncWorkerOps.outboxMarkFailed', () => {
     });
 
     expect(readItem()).toEqual(revived.item);
+  });
+
+  it('treats importTeam as the exact routing identity for rows and nested JSON', () => {
+    const canonicalTeam = 'Team-A';
+    const legacyAlias = 'team-a';
+    const snapshot: MemberWorkSyncTeamSnapshotRecords = {
+      statuses: [
+        {
+          teamName: legacyAlias,
+          memberKey: 'bob',
+          memberName: 'bob',
+          state: 'still_working',
+          evaluatedAt: CREATED_AT,
+          providerId: null,
+          statusJson: JSON.stringify({
+            teamName: legacyAlias,
+            memberName: 'bob',
+            state: 'still_working',
+            agenda: { teamName: legacyAlias, memberName: 'bob' },
+            report: { teamName: legacyAlias, memberName: 'bob' },
+          }),
+        },
+      ],
+      reportIntents: [
+        {
+          teamName: legacyAlias,
+          id: 'intent-1',
+          memberKey: 'bob',
+          memberName: 'bob',
+          status: 'pending',
+          reason: 'test',
+          recordedAt: CREATED_AT,
+          processedAt: null,
+          resultCode: null,
+          requestJson: JSON.stringify({ teamName: legacyAlias, memberName: 'bob' }),
+        },
+      ],
+      outboxItems: [{ ...makeOutboxRecord(), teamName: legacyAlias }],
+      metricEvents: [
+        {
+          teamName: legacyAlias,
+          id: 'metric-1',
+          memberKey: 'bob',
+          memberName: 'bob',
+          kind: 'status_evaluated',
+          recordedAt: CREATED_AT,
+          eventJson: JSON.stringify({ teamName: legacyAlias, memberName: 'bob' }),
+        },
+      ],
+    };
+
+    ops.importTeam(canonicalTeam, snapshot);
+
+    expect(ops.statusRead(legacyAlias, 'bob')).toBeNull();
+    const status = ops.statusRead(canonicalTeam, 'bob');
+    expect(status?.teamName).toBe(canonicalTeam);
+    expect(JSON.parse(status?.statusJson ?? '{}')).toMatchObject({
+      teamName: canonicalTeam,
+      agenda: { teamName: canonicalTeam },
+      report: { teamName: canonicalTeam },
+    });
+    expect(ops.reportsListPending(legacyAlias)).toEqual([]);
+    expect(JSON.parse(ops.reportsListPending(canonicalTeam)[0].requestJson)).toMatchObject({
+      teamName: canonicalTeam,
+    });
+    expect(ops.metricEventsList(legacyAlias)).toEqual([]);
+    expect(JSON.parse(ops.metricEventsList(canonicalTeam)[0].eventJson)).toMatchObject({
+      teamName: canonicalTeam,
+    });
+    expect(
+      ops.outboxClaimDue({
+        teamName: legacyAlias,
+        claimedBy: 'wrong-route',
+        nowIso: CLAIMED_AT,
+        limit: 1,
+      })
+    ).toEqual([]);
+    expect(
+      ops.outboxClaimDue({
+        teamName: canonicalTeam,
+        claimedBy: 'canonical-route',
+        nowIso: CLAIMED_AT,
+        limit: 1,
+      })
+    ).toHaveLength(1);
   });
 });

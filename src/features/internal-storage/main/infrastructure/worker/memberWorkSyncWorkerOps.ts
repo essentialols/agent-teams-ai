@@ -1,6 +1,11 @@
 import { and, asc, desc, eq, gt, gte, inArray } from 'drizzle-orm';
 
 import {
+  isSameMemberWorkSyncTeam,
+  normalizeMemberWorkSyncSnapshotTeamIdentity,
+} from '../../../contracts/memberWorkSyncTeamIdentity';
+
+import {
   memberWorkSyncMetricEvents,
   memberWorkSyncOutbox,
   memberWorkSyncReportIntents,
@@ -84,6 +89,10 @@ function chunked<T>(values: T[]): T[][] {
     chunks.push(values.slice(start, start + INSERT_CHUNK_SIZE));
   }
   return chunks;
+}
+
+function rowsForTeam<T extends { teamName: string }>(rows: T[], teamName: string): T[] {
+  return rows.filter((row) => isSameMemberWorkSyncTeam(row.teamName, teamName));
 }
 
 /** Routes 'mws.*' worker requests to the ops instance. */
@@ -656,45 +665,62 @@ export class MemberWorkSyncWorkerOps {
   listTeamSnapshot(teamName: string): MemberWorkSyncTeamSnapshotRecords {
     const orm = this.getOrm();
     return {
-      statuses: this.statusList(teamName),
-      reportIntents: orm
-        .select()
-        .from(memberWorkSyncReportIntents)
-        .where(eq(memberWorkSyncReportIntents.teamName, teamName))
-        .all(),
-      outboxItems: orm
-        .select()
-        .from(memberWorkSyncOutbox)
-        .where(eq(memberWorkSyncOutbox.teamName, teamName))
-        .all(),
-      metricEvents: this.metricEventsList(teamName),
+      statuses: rowsForTeam(orm.select().from(memberWorkSyncStatus).all(), teamName).sort(
+        (left, right) => left.memberKey.localeCompare(right.memberKey)
+      ),
+      reportIntents: rowsForTeam(
+        orm.select().from(memberWorkSyncReportIntents).all(),
+        teamName
+      ).sort((left, right) => left.id.localeCompare(right.id)),
+      outboxItems: rowsForTeam(orm.select().from(memberWorkSyncOutbox).all(), teamName).sort(
+        (left, right) => left.id.localeCompare(right.id)
+      ),
+      metricEvents: rowsForTeam(orm.select().from(memberWorkSyncMetricEvents).all(), teamName).sort(
+        (left, right) => {
+          const byTime = left.recordedAt.localeCompare(right.recordedAt);
+          return byTime === 0 ? left.id.localeCompare(right.id) : byTime;
+        }
+      ),
     };
   }
 
-  /** One-transaction legacy import: replaces every team row in all tables. */
+  /** One-transaction import: folds every case alias into the routing argument. */
   importTeam(teamName: string, snapshot: MemberWorkSyncTeamSnapshotRecords): void {
     const orm = this.getOrm();
+    const normalizedSnapshot = normalizeMemberWorkSyncSnapshotTeamIdentity(teamName, snapshot);
     orm.transaction(() => {
-      orm.delete(memberWorkSyncStatus).where(eq(memberWorkSyncStatus.teamName, teamName)).run();
-      orm
-        .delete(memberWorkSyncReportIntents)
-        .where(eq(memberWorkSyncReportIntents.teamName, teamName))
-        .run();
-      orm.delete(memberWorkSyncOutbox).where(eq(memberWorkSyncOutbox.teamName, teamName)).run();
-      orm
-        .delete(memberWorkSyncMetricEvents)
-        .where(eq(memberWorkSyncMetricEvents.teamName, teamName))
-        .run();
-      for (const rows of chunked(snapshot.statuses)) {
+      const aliases = new Set<string>([teamName]);
+      const current = this.listTeamSnapshot(teamName);
+      for (const record of [
+        ...current.statuses,
+        ...current.reportIntents,
+        ...current.outboxItems,
+        ...current.metricEvents,
+      ]) {
+        aliases.add(record.teamName);
+      }
+      for (const alias of aliases) {
+        orm.delete(memberWorkSyncStatus).where(eq(memberWorkSyncStatus.teamName, alias)).run();
+        orm
+          .delete(memberWorkSyncReportIntents)
+          .where(eq(memberWorkSyncReportIntents.teamName, alias))
+          .run();
+        orm.delete(memberWorkSyncOutbox).where(eq(memberWorkSyncOutbox.teamName, alias)).run();
+        orm
+          .delete(memberWorkSyncMetricEvents)
+          .where(eq(memberWorkSyncMetricEvents.teamName, alias))
+          .run();
+      }
+      for (const rows of chunked(normalizedSnapshot.statuses)) {
         orm.insert(memberWorkSyncStatus).values(rows).run();
       }
-      for (const rows of chunked(snapshot.reportIntents)) {
+      for (const rows of chunked(normalizedSnapshot.reportIntents)) {
         orm.insert(memberWorkSyncReportIntents).values(rows).run();
       }
-      for (const rows of chunked(snapshot.outboxItems)) {
+      for (const rows of chunked(normalizedSnapshot.outboxItems)) {
         orm.insert(memberWorkSyncOutbox).values(rows).run();
       }
-      for (const rows of chunked(snapshot.metricEvents)) {
+      for (const rows of chunked(normalizedSnapshot.metricEvents)) {
         orm.insert(memberWorkSyncMetricEvents).values(rows).run();
       }
     });

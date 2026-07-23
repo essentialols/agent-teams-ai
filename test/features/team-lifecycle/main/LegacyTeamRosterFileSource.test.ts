@@ -1,8 +1,11 @@
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import * as nodeFs from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   parseDirectoryFingerprint,
@@ -21,6 +24,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TeamIdentityReadGateway } from '@features/internal-storage/contracts';
 
 const teamId = parseTeamId(`team_${'a'.repeat(32)}`);
+const execFileAsync = promisify(execFile);
 
 describe('LegacyTeamRosterFileSource', () => {
   let temporaryDirectory: string | null = null;
@@ -279,6 +283,62 @@ describe('LegacyTeamRosterFileSource', () => {
     expect(openFile).toHaveBeenCalledTimes(1);
     expect(path.basename(String(openFile.mock.calls[0]?.[0]))).toBe('team.identity.json');
   });
+
+  it.skipIf(process.platform === 'win32' || typeof nodeFs.constants.O_NONBLOCK !== 'number')(
+    'opens a raced FIFO non-blockingly and rejects it',
+    async () => {
+      const actualOpen = nodeFs.promises.open.bind(nodeFs.promises);
+      let configOpenDurationMs: number | null = null;
+      let configOpenFlags: number | null = null;
+      const { fileSource, teamDirectory } = await source(async (targetPath, flags) => {
+        if (path.basename(String(targetPath)) !== 'config.json') {
+          return actualOpen(targetPath, flags);
+        }
+
+        await fs.unlink(targetPath);
+        await execFileAsync('mkfifo', [String(targetPath)]);
+        const delayedWriter = spawn(
+          process.execPath,
+          [
+            '-e',
+            [
+              "const fs = require('node:fs');",
+              'setTimeout(() => {',
+              'const fd = fs.openSync(process.env.TEST_FIFO_PATH, fs.constants.O_WRONLY);',
+              'fs.closeSync(fd);',
+              '}, 1000);',
+            ].join(''),
+          ],
+          {
+            env: { ...process.env, TEST_FIFO_PATH: String(targetPath) },
+            stdio: 'ignore',
+          }
+        );
+        const writerExit = once(delayedWriter, 'exit');
+        const startedAt = Date.now();
+        const handle = await actualOpen(targetPath, flags);
+        configOpenDurationMs = Date.now() - startedAt;
+        configOpenFlags = Number(flags);
+        await writerExit;
+        return handle;
+      });
+      await fs.writeFile(
+        path.join(teamDirectory, 'config.json'),
+        JSON.stringify({ members: [{ name: 'builder', providerId: 'codex' }] })
+      );
+
+      await expect(fileSource.readLegacyTeamRosterEvidence(teamId)).resolves.toEqual({
+        status: 'blocked',
+        reason: 'legacy_evidence_invalid',
+      });
+      if (configOpenFlags === null || configOpenDurationMs === null) {
+        throw new Error('config FIFO was not opened');
+      }
+      expect(configOpenFlags & nodeFs.constants.O_NONBLOCK).toBe(nodeFs.constants.O_NONBLOCK);
+      expect(configOpenDurationMs).toBeLessThan(750);
+    },
+    10_000
+  );
 
   it('blocks a directory replacement instead of rebinding the TeamId', async () => {
     const { fileSource, teamDirectory } = await source();

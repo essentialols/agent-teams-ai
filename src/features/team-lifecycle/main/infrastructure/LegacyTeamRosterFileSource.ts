@@ -257,7 +257,7 @@ async function readBoundedJsonFile(
     ) {
       throw new Error('team-roster-evidence-file-unsafe');
     }
-    handle = await openFile(targetPath, fs.constants.O_RDONLY | NO_FOLLOW);
+    handle = await openFile(targetPath, safeReadOpenFlags());
     const before = await handle.stat();
     if (
       !before.isFile() ||
@@ -301,6 +301,17 @@ async function readBoundedJsonFile(
   } finally {
     await handle?.close().catch(() => undefined);
   }
+}
+
+function safeReadOpenFlags(): number {
+  const nonBlockingFlag: unknown = fs.constants.O_NONBLOCK;
+  if (typeof nonBlockingFlag === 'number') {
+    return fs.constants.O_RDONLY | NO_FOLLOW | nonBlockingFlag;
+  }
+  if (process.platform === 'win32') {
+    return fs.constants.O_RDONLY | NO_FOLLOW;
+  }
+  throw new Error('team-roster-nonblocking-open-unavailable');
 }
 
 const openNodeFile: LegacyTeamRosterFileOpen = (targetPath, flags) =>

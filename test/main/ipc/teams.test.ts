@@ -159,6 +159,11 @@ import {
   removeTeamRosterMutationIpc,
 } from '../../../src/features/team-roster-mutations/main';
 import {
+  createTeamRuntimeOperationsFeature,
+  registerTeamRuntimeOperationsIpc,
+  removeTeamRuntimeOperationsIpc,
+} from '../../../src/features/team-runtime-operations/main';
+import {
   createTeamTaskBoardFeature,
   registerTeamTaskBoardIpc,
   removeTeamTaskBoardIpc,
@@ -407,6 +412,23 @@ const TEAM_ROSTER_MUTATION_HANDLER_KEYS = [
   TEAM_UPDATE_MEMBER_ROLE,
 ] as const;
 const TEAM_ROSTER_MUTATION_HANDLER_KEY_SET = new Set<string>(TEAM_ROSTER_MUTATION_HANDLER_KEYS);
+const TEAM_RUNTIME_OPERATION_HANDLER_KEYS = [
+  TEAM_GET_CLAUDE_LOGS,
+  TEAM_GET_MEMBER_LOGS,
+  TEAM_GET_LOGS_FOR_TASK,
+  TEAM_GET_MEMBER_STATS,
+  TEAM_ALIVE_LIST,
+  TEAM_LEAD_ACTIVITY,
+  TEAM_LEAD_CONTEXT,
+  TEAM_MEMBER_SPAWN_STATUSES,
+  TEAM_GET_AGENT_RUNTIME,
+  TEAM_RESTART_MEMBER,
+  TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES,
+  TEAM_SKIP_MEMBER_FOR_LAUNCH,
+  TEAM_STOP,
+  TEAM_KILL_PROCESS,
+] as const;
+const TEAM_RUNTIME_OPERATION_HANDLER_KEY_SET = new Set<string>(TEAM_RUNTIME_OPERATION_HANDLER_KEYS);
 const TEAM_HANDLER_KEYS = ALL_TEAM_HANDLER_KEYS.filter(
   (channel) =>
     !TEAM_TASK_BOARD_HANDLER_KEY_SET.has(channel) &&
@@ -414,7 +436,8 @@ const TEAM_HANDLER_KEYS = ALL_TEAM_HANDLER_KEYS.filter(
     !TEAM_CONFIGURATION_HANDLER_KEY_SET.has(channel) &&
     !TEAM_MESSAGE_DELIVERY_HANDLER_KEY_SET.has(channel) &&
     !TEAM_PROVISIONING_HANDLER_KEY_SET.has(channel) &&
-    !TEAM_ROSTER_MUTATION_HANDLER_KEY_SET.has(channel)
+    !TEAM_ROSTER_MUTATION_HANDLER_KEY_SET.has(channel) &&
+    !TEAM_RUNTIME_OPERATION_HANDLER_KEY_SET.has(channel)
 );
 
 describe('ipc teams handlers', () => {
@@ -436,6 +459,7 @@ describe('ipc teams handlers', () => {
   const teamMessageDeliveryLogger = createLogger('IPC:teams');
   const teamProvisioningLogger = { error: vi.fn() };
   const teamRosterMutationLogger = { error: vi.fn(), warn: vi.fn() };
+  const teamRuntimeOperationsLogger = { error: vi.fn(), warn: vi.fn() };
   let launchIoGovernor: LaunchIoGovernor;
 
   const service = {
@@ -550,8 +574,16 @@ describe('ipc teams handlers', () => {
     replaceMembers: vi.fn(() => resolvedUndefined()),
     invalidateMessageFeed: vi.fn(() => undefined),
     invalidateTeamRuntimeAdvisories: vi.fn(() => undefined),
+    killProcess: vi.fn(() => resolvedUndefined()),
     createTeamConfig: vi.fn(() => resolvedUndefined()),
     getSavedRequest: vi.fn<() => Promise<TeamCreateRequest | null>>(() => resolved(null)),
+  };
+  const teamMemberLogsFinder = {
+    findMemberLogs: vi.fn(() => resolved([])),
+    findLogsForTask: vi.fn(() => resolved([])),
+  };
+  const memberStatsComputer = {
+    getStats: vi.fn(() => resolved({})),
   };
   const teamHandlerMocks = {
     getCliHelpOutput: vi.fn(() => resolved('Usage')),
@@ -731,6 +763,14 @@ describe('ipc teams handlers', () => {
     service.getTeamData.mockReset();
     service.getAllTasks.mockReset();
     service.restoreMember.mockReset();
+    service.killProcess.mockReset();
+    service.killProcess.mockResolvedValue(undefined);
+    teamMemberLogsFinder.findMemberLogs.mockReset();
+    teamMemberLogsFinder.findMemberLogs.mockResolvedValue([]);
+    teamMemberLogsFinder.findLogsForTask.mockReset();
+    teamMemberLogsFinder.findLogsForTask.mockResolvedValue([]);
+    memberStatsComputer.getStats.mockReset();
+    memberStatsComputer.getStats.mockResolvedValue({});
     service.listTeams.mockResolvedValue([{ teamName: 'my-team', displayName: 'My Team' }]);
     initializeTeamLifecycleReadHandler({
       listTeamLifecycle: vi.fn(() =>
@@ -800,9 +840,7 @@ describe('ipc teams handlers', () => {
     launchIoGovernor = new LaunchIoGovernor({ quietWindowMs: 100 });
     initializeTeamHandlers(
       service as never,
-      teamHandlerApis,
-      undefined,
-      undefined,
+      teamHandlerApis.runtime,
       undefined,
       undefined,
       undefined,
@@ -810,6 +848,18 @@ describe('ipc teams handlers', () => {
       launchIoGovernor
     );
     registerTeamHandlers(ipcMain as never);
+    const teamRuntimeOperationsFeature = createTeamRuntimeOperationsFeature({
+      data: service as never,
+      runtime: teamHandlerApis.runtime,
+      lifecycle: teamHandlerApis.memberLifecycle,
+      diagnostics: teamHandlerApis.diagnostics,
+      claudeLogs: teamHandlerApis.claudeLogs,
+      messaging: teamHandlerApis.messaging,
+      logsFinder: teamMemberLogsFinder as never,
+      statsComputer: memberStatsComputer as never,
+      logger: teamRuntimeOperationsLogger,
+    });
+    registerTeamRuntimeOperationsIpc(ipcMain as never, teamRuntimeOperationsFeature);
     const teamConfigurationFeature = createTeamConfigurationFeature({
       repository: service as never,
       runtime: teamHandlerApis.runtime,
@@ -899,6 +949,9 @@ describe('ipc teams handlers', () => {
     for (const channel of TEAM_ROSTER_MUTATION_HANDLER_KEYS) {
       expect(legacyChannels.has(channel)).toBe(false);
     }
+    for (const channel of TEAM_RUNTIME_OPERATION_HANDLER_KEYS) {
+      expect(legacyChannels.has(channel)).toBe(false);
+    }
   });
 
   it('preserves legacy TEAM_LIST and wraps canonical success and failure in the IPC result envelope', async () => {
@@ -973,7 +1026,7 @@ describe('ipc teams handlers', () => {
     });
   });
 
-  it('preserves narrow facade receivers when a team handler invokes its runtime dependency', async () => {
+  it('preserves the runtime receiver and adds the stop breadcrumb before stopping', async () => {
     const runtimeCalls: string[] = [];
     const runtimeFacade = {
       ...teamHandlerApis.runtime,
@@ -984,15 +1037,301 @@ describe('ipc teams handlers', () => {
       },
     };
 
-    initializeTeamHandlers(service as never, {
-      ...teamHandlerApis,
-      runtime: runtimeFacade,
-    });
+    registerTeamRuntimeOperationsIpc(
+      ipcMain as never,
+      createTeamRuntimeOperationsFeature({
+        data: service as never,
+        runtime: runtimeFacade,
+        lifecycle: teamHandlerApis.memberLifecycle,
+        diagnostics: teamHandlerApis.diagnostics,
+        claudeLogs: teamHandlerApis.claudeLogs,
+        messaging: teamHandlerApis.messaging,
+        logsFinder: teamMemberLogsFinder as never,
+        statsComputer: memberStatsComputer as never,
+        logger: teamRuntimeOperationsLogger,
+        effects: {
+          addStopBreadcrumb: () => runtimeCalls.push('breadcrumb'),
+        },
+      })
+    );
 
     const result = await handlers.get(TEAM_STOP)!({} as never, 'my-team');
 
     expect(result).toEqual({ success: true, data: undefined });
-    expect(runtimeCalls).toEqual(['stop:my-team']);
+    expect(runtimeCalls).toEqual(['breadcrumb', 'stop:my-team']);
+  });
+
+  it('preserves runtime-operation receivers across every dependency boundary', async () => {
+    const calls: string[] = [];
+    const dataFacade = {
+      ...service,
+      getTeamData(teamName: string) {
+        if (this !== dataFacade) throw new Error('data receiver lost');
+        calls.push(`data:${teamName}`);
+        return Promise.resolve({
+          teamName,
+          config: { name: teamName },
+          tasks: [],
+          members: [],
+          kanbanState: { teamName, reviewers: [], tasks: {} },
+          processes: [],
+        });
+      },
+      invalidateMessageFeed(teamName: string) {
+        if (this !== dataFacade) throw new Error('invalidation receiver lost');
+        calls.push(`invalidate:${teamName}`);
+      },
+      killProcess(teamName: string, pid: number) {
+        if (this !== dataFacade) throw new Error('kill receiver lost');
+        calls.push(`kill:${teamName}:${pid}`);
+        return Promise.resolve();
+      },
+    };
+    const runtimeFacade = {
+      ...teamHandlerApis.runtime,
+      getAliveTeams() {
+        if (this !== runtimeFacade) throw new Error('runtime receiver lost');
+        calls.push('alive');
+        return ['my-team'];
+      },
+      stopTeam(teamName: string) {
+        if (this !== runtimeFacade) throw new Error('runtime receiver lost');
+        calls.push(`stop:${teamName}`);
+        return Promise.resolve();
+      },
+      isTeamAlive(teamName: string) {
+        if (this !== runtimeFacade) throw new Error('runtime receiver lost');
+        calls.push(`isAlive:${teamName}`);
+        return false;
+      },
+    };
+    const lifecycleFacade = {
+      ...teamHandlerApis.memberLifecycle,
+      getMemberSpawnStatuses(teamName: string) {
+        if (this !== lifecycleFacade) throw new Error('lifecycle receiver lost');
+        calls.push(`spawn:${teamName}`);
+        return Promise.resolve({ statuses: {}, runId: null, updatedAt: '' });
+      },
+      restartMember(teamName: string, memberName: string) {
+        if (this !== lifecycleFacade) throw new Error('lifecycle receiver lost');
+        calls.push(`restart:${teamName}:${memberName}`);
+        return Promise.resolve();
+      },
+      retryFailedOpenCodeSecondaryLanes(teamName: string) {
+        if (this !== lifecycleFacade) throw new Error('lifecycle receiver lost');
+        calls.push(`retry:${teamName}`);
+        return Promise.resolve({
+          attempted: [],
+          confirmed: [],
+          pending: [],
+          failed: [],
+          skipped: [],
+        });
+      },
+      skipMemberForLaunch(teamName: string, memberName: string) {
+        if (this !== lifecycleFacade) throw new Error('lifecycle receiver lost');
+        calls.push(`skip:${teamName}:${memberName}`);
+        return Promise.resolve();
+      },
+    };
+    const diagnosticsFacade = {
+      getLeadActivityState(teamName: string) {
+        if (this !== diagnosticsFacade) throw new Error('diagnostics receiver lost');
+        calls.push(`activity:${teamName}`);
+        return { state: 'idle' as const, runId: null };
+      },
+      getLeadContextUsage(teamName: string) {
+        if (this !== diagnosticsFacade) throw new Error('diagnostics receiver lost');
+        calls.push(`context:${teamName}`);
+        return { usage: null, runId: null };
+      },
+      getTeamAgentRuntimeSnapshot(teamName: string) {
+        if (this !== diagnosticsFacade) throw new Error('diagnostics receiver lost');
+        calls.push(`agentRuntime:${teamName}`);
+        return Promise.resolve({
+          teamName,
+          runId: null,
+          updatedAt: '',
+          members: {},
+        });
+      },
+    };
+    const claudeLogsFacade = {
+      getClaudeLogs(teamName: string) {
+        if (this !== claudeLogsFacade) throw new Error('Claude logs receiver lost');
+        calls.push(`claudeLogs:${teamName}`);
+        return Promise.resolve({ lines: [], total: 0, hasMore: false });
+      },
+    };
+    const messagingFacade = {
+      ...teamHandlerApis.messaging,
+      sendMessageToTeam(teamName: string) {
+        if (this !== messagingFacade) throw new Error('messaging receiver lost');
+        calls.push(`message:${teamName}`);
+        return Promise.resolve();
+      },
+    };
+    const logsFacade = {
+      findMemberLogs(teamName: string, memberName: string) {
+        if (this !== logsFacade) throw new Error('logs receiver lost');
+        calls.push(`memberLogs:${teamName}:${memberName}`);
+        return Promise.resolve([]);
+      },
+      findLogsForTask(teamName: string, taskId: string) {
+        if (this !== logsFacade) throw new Error('logs receiver lost');
+        calls.push(`taskLogs:${teamName}:${taskId}`);
+        return Promise.resolve([]);
+      },
+    };
+    const statsFacade = {
+      getStats(teamName: string, memberName: string) {
+        if (this !== statsFacade) throw new Error('stats receiver lost');
+        calls.push(`stats:${teamName}:${memberName}`);
+        return Promise.resolve({});
+      },
+    };
+
+    registerTeamRuntimeOperationsIpc(
+      ipcMain as never,
+      createTeamRuntimeOperationsFeature({
+        data: dataFacade as never,
+        runtime: runtimeFacade,
+        lifecycle: lifecycleFacade,
+        diagnostics: diagnosticsFacade,
+        claudeLogs: claudeLogsFacade,
+        messaging: messagingFacade,
+        logsFinder: logsFacade as never,
+        statsComputer: statsFacade as never,
+        logger: teamRuntimeOperationsLogger,
+      })
+    );
+
+    await handlers.get(TEAM_GET_CLAUDE_LOGS)!({} as never, 'my-team');
+    await handlers.get(TEAM_GET_MEMBER_LOGS)!({} as never, 'my-team', 'alice');
+    await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1');
+    await handlers.get(TEAM_GET_MEMBER_STATS)!({} as never, 'my-team', 'alice');
+    await handlers.get(TEAM_ALIVE_LIST)!({} as never);
+    await handlers.get(TEAM_LEAD_ACTIVITY)!({} as never, 'my-team');
+    await handlers.get(TEAM_LEAD_CONTEXT)!({} as never, 'my-team');
+    await handlers.get(TEAM_MEMBER_SPAWN_STATUSES)!({} as never, 'my-team');
+    await handlers.get(TEAM_GET_AGENT_RUNTIME)!({} as never, 'my-team');
+    await handlers.get(TEAM_RESTART_MEMBER)!({} as never, 'my-team', 'alice');
+    await handlers.get(TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES)!({} as never, 'my-team');
+    await handlers.get(TEAM_SKIP_MEMBER_FOR_LAUNCH)!({} as never, 'my-team', 'alice');
+    await handlers.get(TEAM_STOP)!({} as never, 'my-team');
+    await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 123);
+
+    expect(calls).toEqual([
+      'claudeLogs:my-team',
+      'memberLogs:my-team:alice',
+      'taskLogs:my-team:task-1',
+      'stats:my-team:alice',
+      'alive',
+      'activity:my-team',
+      'context:my-team',
+      'spawn:my-team',
+      'agentRuntime:my-team',
+      'restart:my-team:alice',
+      'invalidate:my-team',
+      'retry:my-team',
+      'skip:my-team:alice',
+      'stop:my-team',
+      'data:my-team',
+      'kill:my-team:123',
+      'isAlive:my-team',
+    ]);
+  });
+
+  it('invalidates the message feed after restart success and failure', async () => {
+    const handler = handlers.get(TEAM_RESTART_MEMBER)!;
+
+    const success = await handler({} as never, 'my-team', 'alice');
+    expect(success).toEqual({ success: true, data: undefined });
+    expect(service.invalidateMessageFeed).toHaveBeenCalledWith('my-team');
+
+    service.invalidateMessageFeed.mockClear();
+    teamHandlerMocks.restartMember.mockRejectedValueOnce(new Error('restart failed'));
+    const failure = await handler({} as never, 'my-team', 'alice');
+
+    expect(failure).toEqual({ success: false, error: 'restart failed' });
+    expect(service.invalidateMessageFeed).toHaveBeenCalledWith('my-team');
+    vi.mocked(console.error).mockClear();
+  });
+
+  it('kills a process before checking liveness and notifying the lead', async () => {
+    const order: string[] = [];
+    service.getTeamData.mockImplementationOnce(async () => {
+      order.push('lookup');
+      return {
+        teamName: 'my-team',
+        config: { name: 'My Team' },
+        tasks: [],
+        members: [],
+        kanbanState: { teamName: 'my-team', reviewers: [], tasks: {} },
+        processes: [
+          {
+            id: 'process-321',
+            pid: 321,
+            label: 'Dev server',
+            port: 4173,
+            registeredAt: '2026-07-22T12:00:00.000Z',
+          },
+        ],
+      };
+    });
+    service.killProcess.mockImplementationOnce(async () => {
+      order.push('kill');
+    });
+    teamHandlerMocks.isTeamAlive.mockImplementationOnce(() => {
+      order.push('alive');
+      return true;
+    });
+    teamHandlerMocks.sendMessageToTeam.mockImplementationOnce(async () => {
+      order.push('notify');
+    });
+
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 321);
+
+    expect(result).toEqual({ success: true, data: undefined });
+    expect(order).toEqual(['lookup', 'kill', 'alive', 'notify']);
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
+      'my-team',
+      'Process "Dev server (:4173)" (PID 321) has been stopped by the user from the UI. You may need to restart it if it was still needed.'
+    );
+  });
+
+  it('rejects an invalid process id before reading or killing a process', async () => {
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 0);
+
+    expect(result).toEqual({ success: false, error: 'pid must be a positive integer' });
+    expect(service.getTeamData).not.toHaveBeenCalled();
+    expect(service.killProcess).not.toHaveBeenCalled();
+  });
+
+  it('keeps process label lookup and lead notification best-effort', async () => {
+    service.getTeamData.mockRejectedValueOnce(new Error('snapshot unavailable'));
+    teamHandlerMocks.sendMessageToTeam.mockRejectedValueOnce(new Error('notification unavailable'));
+
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 654);
+
+    expect(result).toEqual({ success: true, data: undefined });
+    expect(service.killProcess).toHaveBeenCalledWith('my-team', 654);
+    expect(teamHandlerMocks.sendMessageToTeam).toHaveBeenCalledWith(
+      'my-team',
+      'Process "PID 654" (PID 654) has been stopped by the user from the UI. You may need to restart it if it was still needed.'
+    );
+    vi.mocked(console.warn).mockClear();
+  });
+
+  it('does not check liveness or notify when killing a process fails', async () => {
+    service.killProcess.mockRejectedValueOnce(new Error('kill failed'));
+
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 777);
+
+    expect(result).toEqual({ success: false, error: 'kill failed' });
+    expect(teamHandlerMocks.isTeamAlive).not.toHaveBeenCalled();
+    expect(teamHandlerMocks.sendMessageToTeam).not.toHaveBeenCalled();
+    vi.mocked(console.error).mockClear();
   });
 
   it('forwards selected model checks with effort to prepareProvisioning', async () => {
@@ -2256,7 +2595,9 @@ describe('ipc teams handlers', () => {
         calls.push('help');
         return Promise.resolve('Usage\n  --max-turns <count>');
       },
-      prepareForProvisioning(...args: Parameters<TeamIpcHandlerApis['preflight']['prepareForProvisioning']>) {
+      prepareForProvisioning(
+        ...args: Parameters<TeamIpcHandlerApis['preflight']['prepareForProvisioning']>
+      ) {
         if (this !== preflight) throw new Error('preflight receiver lost');
         calls.push('prepare');
         expect(args[0]).toBe(os.tmpdir());
@@ -2409,24 +2750,27 @@ describe('ipc teams handlers', () => {
   it.each([
     { channel: TEAM_CREATE, api: 'createTeam' as const, teamName: 'failed-cache-create' },
     { channel: TEAM_LAUNCH, api: 'launchTeam' as const, teamName: 'failed-cache-launch' },
-  ])('does not invalidate roster snapshots after failed $channel', async ({ channel, api, teamName }) => {
-    teamHandlerMocks[api].mockRejectedValueOnce(new Error('provisioning failed'));
+  ])(
+    'does not invalidate roster snapshots after failed $channel',
+    async ({ channel, api, teamName }) => {
+      teamHandlerMocks[api].mockRejectedValueOnce(new Error('provisioning failed'));
 
-    const result = await handlers.get(channel)!({ sender: { send: vi.fn() } } as never, {
-      teamName,
-      members: [{ name: 'alice' }],
-      cwd: os.tmpdir(),
-    });
+      const result = await handlers.get(channel)!({ sender: { send: vi.fn() } } as never, {
+        teamName,
+        members: [{ name: 'alice' }],
+        cwd: os.tmpdir(),
+      });
 
-    expect(result).toEqual({ success: false, error: 'provisioning failed' });
-    expect(service.invalidateMessageFeed).not.toHaveBeenCalledWith(teamName);
-    expect(service.invalidateTeamRuntimeAdvisories).not.toHaveBeenCalledWith(teamName);
-    expect(mockTeamDataWorkerClient.invalidateTeamConfig).not.toHaveBeenCalledWith(teamName);
-    expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).not.toHaveBeenCalledWith(
-      teamName
-    );
-    vi.mocked(console.error).mockClear();
-  });
+      expect(result).toEqual({ success: false, error: 'provisioning failed' });
+      expect(service.invalidateMessageFeed).not.toHaveBeenCalledWith(teamName);
+      expect(service.invalidateTeamRuntimeAdvisories).not.toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateTeamConfig).not.toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).not.toHaveBeenCalledWith(
+        teamName
+      );
+      vi.mocked(console.error).mockClear();
+    }
+  );
 
   it('returns cached TEAM_LIST data under active launch pressure without starting another scan', async () => {
     const first = (await handlers.get(TEAM_LIST)!({} as never)) as {
@@ -3348,6 +3692,7 @@ describe('ipc teams handlers', () => {
 
   it('does not fall back TEAM_GET_LOGS_FOR_TASK to main after worker OOM', async () => {
     mockTeamDataWorkerClient.isAvailable.mockReturnValue(true);
+    teamRuntimeOperationsLogger.error.mockClear();
     mockTeamDataWorkerClient.findLogsForTask.mockRejectedValueOnce(
       new Error('Worker terminated due to reaching memory limit: JS heap out of memory')
     );
@@ -3361,6 +3706,149 @@ describe('ipc teams handlers', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('TEAM_DATA_WORKER_FAILED');
+    expect(teamMemberLogsFinder.findLogsForTask).not.toHaveBeenCalled();
+    expect(teamRuntimeOperationsLogger.error).not.toHaveBeenCalled();
+  });
+
+  it('returns TEAM_GET_LOGS_FOR_TASK worker results without a main-thread scan', async () => {
+    mockTeamDataWorkerClient.isAvailable.mockReturnValue(true);
+    mockTeamDataWorkerClient.findLogsForTask.mockResolvedValueOnce([
+      { memberName: 'worker-result' },
+    ]);
+
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1', {
+      owner: 'alice',
+      status: 'in_progress',
+      since: '2026-07-22T10:00:00.000Z',
+      intervals: [
+        { startedAt: '2026-07-22T09:00:00.000Z' },
+        {
+          startedAt: '2026-07-22T10:00:00.000Z',
+          completedAt: '2026-07-22T11:00:00.000Z',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: [{ memberName: 'worker-result' }],
+    });
+    expect(mockTeamDataWorkerClient.findLogsForTask).toHaveBeenCalledWith('my-team', 'task-1', {
+      owner: 'alice',
+      status: 'in_progress',
+      since: '2026-07-22T10:00:00.000Z',
+      intervals: [
+        { startedAt: '2026-07-22T09:00:00.000Z' },
+        {
+          startedAt: '2026-07-22T10:00:00.000Z',
+          completedAt: '2026-07-22T11:00:00.000Z',
+        },
+      ],
+    });
+    expect(teamMemberLogsFinder.findLogsForTask).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [[], 'options must be an object'],
+    [{ owner: 42 }, 'owner must be a string'],
+    [{ intervals: 'invalid' }, 'intervals must be an array'],
+    [
+      { intervals: [{ startedAt: '2026-07-22T09:00:00.000Z', completedAt: 42 }] },
+      'each interval must include startedAt and an optional completedAt string',
+    ],
+  ])('rejects malformed TEAM_GET_LOGS_FOR_TASK options %#', async (options, error) => {
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!(
+      {} as never,
+      'my-team',
+      'task-1',
+      options
+    );
+
+    expect(result).toEqual({ success: false, error });
+    expect(mockTeamDataWorkerClient.findLogsForTask).not.toHaveBeenCalled();
+    expect(teamMemberLogsFinder.findLogsForTask).not.toHaveBeenCalled();
+  });
+
+  it('falls back TEAM_GET_LOGS_FOR_TASK when the worker is unavailable', async () => {
+    mockTeamDataWorkerClient.isAvailable.mockReturnValue(false);
+    teamMemberLogsFinder.findLogsForTask.mockResolvedValueOnce([
+      { memberName: 'main-result' },
+    ] as never);
+
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1');
+
+    expect(result).toEqual({
+      success: true,
+      data: [{ memberName: 'main-result' }],
+    });
+    expect(mockTeamDataWorkerClient.findLogsForTask).not.toHaveBeenCalled();
+    expect(teamMemberLogsFinder.findLogsForTask).toHaveBeenCalledWith(
+      'my-team',
+      'task-1',
+      undefined
+    );
+  });
+
+  it('falls back TEAM_GET_LOGS_FOR_TASK after a nonfatal worker error', async () => {
+    mockTeamDataWorkerClient.isAvailable.mockReturnValue(true);
+    mockTeamDataWorkerClient.findLogsForTask.mockRejectedValueOnce(
+      new Error('temporary task-log failure')
+    );
+    teamMemberLogsFinder.findLogsForTask.mockResolvedValueOnce([
+      { memberName: 'fallback-result' },
+    ] as never);
+
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1');
+
+    expect(result).toEqual({
+      success: true,
+      data: [{ memberName: 'fallback-result' }],
+    });
+    expect(teamMemberLogsFinder.findLogsForTask).toHaveBeenCalledTimes(1);
+    vi.mocked(console.warn).mockClear();
+  });
+
+  it('projects TEAM_GET_CLAUDE_LOGS results onto the stable IPC response', async () => {
+    teamHandlerMocks.getClaudeLogs.mockResolvedValueOnce({
+      lines: ['line-1'],
+      total: 3,
+      hasMore: true,
+      updatedAt: '2026-07-22T12:00:00.000Z',
+      internalCursor: 'do-not-expose',
+    } as never);
+
+    const result = await handlers.get(TEAM_GET_CLAUDE_LOGS)!({} as never, 'my-team', {
+      offset: 2,
+      limit: 1,
+      ignored: true,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        lines: ['line-1'],
+        total: 3,
+        hasMore: true,
+        updatedAt: '2026-07-22T12:00:00.000Z',
+      },
+    });
+    expect(teamHandlerMocks.getClaudeLogs).toHaveBeenCalledWith('my-team', {
+      offset: 2,
+      limit: 1,
+    });
+  });
+
+  it.each([
+    [[], 'query must be an object'],
+    [{ offset: -1 }, 'offset must be a non-negative integer'],
+    [{ offset: Number.NaN }, 'offset must be a non-negative integer'],
+    [{ limit: Number.POSITIVE_INFINITY }, 'limit must be a non-negative integer'],
+    [{ limit: 1.5 }, 'limit must be a non-negative integer'],
+  ])('rejects malformed TEAM_GET_CLAUDE_LOGS queries %#', async (query, error) => {
+    const result = await handlers.get(TEAM_GET_CLAUDE_LOGS)!({} as never, 'my-team', query);
+
+    expect(result).toEqual({ success: false, error });
+    expect(teamHandlerMocks.getClaudeLogs).not.toHaveBeenCalled();
   });
 
   it('does not rebuild legacy auto-resume from persisted rate-limit history', async () => {
@@ -5912,6 +6400,7 @@ describe('ipc teams handlers', () => {
     removeTeamMessageDeliveryIpc(ipcMain as never);
     removeTeamProvisioningIpc(ipcMain as never);
     removeTeamRosterMutationIpc(ipcMain as never);
+    removeTeamRuntimeOperationsIpc(ipcMain as never);
     removeTeamViewReadModelIpc(ipcMain as never);
     removeTeamTaskBoardIpc(ipcMain as never);
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(ALL_TEAM_HANDLER_KEYS.length);
@@ -6429,10 +6918,10 @@ describe('ipc teams handlers', () => {
         });
         teamHandlerMocks.createTeam.mockRejectedValueOnce(new Error('draft launch failed'));
 
-        const result = (await handlers.get(TEAM_LAUNCH)!(
-          { sender: { send: vi.fn() } } as never,
-          { teamName: 'draft-error', cwd: os.tmpdir() }
-        )) as { success: boolean; error?: string };
+        const result = (await handlers.get(TEAM_LAUNCH)!({ sender: { send: vi.fn() } } as never, {
+          teamName: 'draft-error',
+          cwd: os.tmpdir(),
+        })) as { success: boolean; error?: string };
 
         expect(result).toEqual({ success: false, error: 'draft launch failed' });
         expect(teamProvisioningLogger.error).toHaveBeenCalledWith(

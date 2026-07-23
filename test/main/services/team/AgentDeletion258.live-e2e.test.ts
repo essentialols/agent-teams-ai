@@ -152,7 +152,7 @@ liveDescribe('issue #258 member deletion live e2e', () => {
       ipcMain = createIpcMainHarness(handlers);
       const teamDataService = new TeamDataService();
       const teamHandlerApis = bindTeamIpcHandlerApis(activeService);
-      initializeTeamHandlers(teamDataService, teamHandlerApis);
+      initializeTeamHandlers(teamDataService, teamHandlerApis.runtime);
       registerTeamHandlers(ipcMain);
       registerTeamRosterMutationIpc(
         ipcMain,
@@ -190,7 +190,10 @@ liveDescribe('issue #258 member deletion live e2e', () => {
         await activeService.stopTeam(teamName);
         terminateOwnedProcesses(lastSnapshot);
         activeService = createProvisioningService();
-        initializeTeamHandlers(new TeamDataService(), bindTeamIpcHandlerApis(activeService));
+        initializeTeamHandlers(
+          new TeamDataService(),
+          bindTeamIpcHandlerApis(activeService).runtime
+        );
         const relaunchProgress: TeamProvisioningProgress[] = [];
         await activeService.launchTeam(
           {

@@ -278,4 +278,50 @@ describe('useChangeReviewConflictInteractionController', () => {
     });
     expect(resolveDecisionCandidate).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps a reopened resolution busy when the previous operation finishes late', async () => {
+    const firstResolution = deferred<{ revision: number }>();
+    const secondResolution = deferred<{ revision: number }>();
+    const resolveDecisionCandidate = vi
+      .fn<ChangeReviewConflictCommandPort['resolveDecisionCandidate']>()
+      .mockImplementationOnce(() => firstResolution.promise)
+      .mockImplementationOnce(() => secondResolution.promise);
+    const props = baseProps({
+      port: { resolveDecisionCandidate },
+    });
+    const render = (active: boolean): void => {
+      act(() => root.render(<InteractionProbe {...props} active={active} />));
+    };
+    render(true);
+
+    let first!: Promise<void>;
+    act(() => {
+      first = latest!.resolveActiveCandidate('recover-candidate');
+    });
+    expect(latest!.resolvingCandidateId).toBe('decision-a');
+
+    props.currentOperation.value = null;
+    render(false);
+    props.currentOperation.value = createReviewOperationScopeToken('scope-a');
+    render(true);
+
+    let second!: Promise<void>;
+    act(() => {
+      second = latest!.resolveActiveCandidate('recover-candidate');
+    });
+    expect(resolveDecisionCandidate).toHaveBeenCalledTimes(2);
+    expect(latest!.resolvingCandidateId).toBe('decision-a');
+
+    await act(async () => {
+      firstResolution.resolve({ revision: 3 });
+      await first;
+    });
+    expect(latest!.resolvingCandidateId).toBe('decision-a');
+
+    await act(async () => {
+      secondResolution.resolve({ revision: 4 });
+      await second;
+    });
+    expect(latest!.resolvingCandidateId).toBeNull();
+  });
 });

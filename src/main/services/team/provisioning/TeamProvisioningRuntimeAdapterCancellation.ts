@@ -51,6 +51,110 @@ export interface PrimaryLaneOwnershipInput {
   runId: string;
 }
 
+type ConfirmedRuntimeAdapterStopResult = Awaited<ReturnType<TeamLaunchRuntimeAdapter['stop']>> & {
+  stopped: true;
+};
+
+interface RuntimeAdapterPrimaryStopEntry {
+  runId: string;
+  promise: Promise<ConfirmedRuntimeAdapterStopResult>;
+}
+
+const runtimeAdapterPrimaryStopByOwnerMap = new WeakMap<
+  Map<string, RuntimeAdapterRunEntry>,
+  Map<string, RuntimeAdapterPrimaryStopEntry>
+>();
+
+function getRuntimeAdapterPrimaryStopEntries(
+  ports: RuntimeAdapterCancellationPorts
+): Map<string, RuntimeAdapterPrimaryStopEntry> {
+  const existing = runtimeAdapterPrimaryStopByOwnerMap.get(ports.runtimeAdapterRunByTeam);
+  if (existing) {
+    return existing;
+  }
+  const entries = new Map<string, RuntimeAdapterPrimaryStopEntry>();
+  runtimeAdapterPrimaryStopByOwnerMap.set(ports.runtimeAdapterRunByTeam, entries);
+  return entries;
+}
+
+function getRuntimeAdapterPrimaryStopEntry(
+  ports: RuntimeAdapterCancellationPorts,
+  teamName: string,
+  runId: string
+): RuntimeAdapterPrimaryStopEntry | null {
+  const entry = getRuntimeAdapterPrimaryStopEntries(ports).get(teamName.trim().toLowerCase());
+  return entry?.runId === runId ? entry : null;
+}
+
+function assertRuntimeAdapterStopConfirmed(
+  result: Awaited<ReturnType<TeamLaunchRuntimeAdapter['stop']>>
+): asserts result is ConfirmedRuntimeAdapterStopResult {
+  if (result.stopped) {
+    return;
+  }
+  const detail = [...result.diagnostics, ...result.warnings]
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .join('; ');
+  throw new Error(
+    detail
+      ? `OpenCode runtime adapter launch did not confirm stop: ${detail}`
+      : 'OpenCode runtime adapter launch did not confirm stop'
+  );
+}
+
+function stopRuntimeAdapterPrimaryLaneExactly(input: {
+  teamName: string;
+  runId: string;
+  cwd: string | undefined;
+  ports: RuntimeAdapterCancellationPorts;
+}): Promise<ConfirmedRuntimeAdapterStopResult> {
+  const { ports, runId, teamName } = input;
+  const teamKey = teamName.trim().toLowerCase();
+  const entries = getRuntimeAdapterPrimaryStopEntries(ports);
+  const existing = entries.get(teamKey);
+  if (existing?.runId === runId) {
+    return existing.promise;
+  }
+  if (existing) {
+    // Preserve per-team stop ordering without inheriting another run's
+    // outcome. A failed stale-generation stop must still release the exact
+    // replacement generation to perform and observe its own stop.
+    return existing.promise
+      .catch(() => undefined)
+      .then(() => stopRuntimeAdapterPrimaryLaneExactly(input));
+  }
+
+  const promise = (async (): Promise<ConfirmedRuntimeAdapterStopResult> => {
+    const previousLaunchState = await ports.readLaunchState(teamName);
+    const adapter = ports.getOpenCodeRuntimeAdapter();
+    if (!adapter) {
+      throw new Error('OpenCode runtime adapter is unavailable');
+    }
+    const result = await adapter.stop({
+      runId,
+      laneId: 'primary',
+      teamName,
+      cwd: input.cwd,
+      providerId: 'opencode',
+      reason: 'user_requested',
+      previousLaunchState,
+      force: true,
+    });
+    assertRuntimeAdapterStopConfirmed(result);
+    return result;
+  })();
+  const entry = { runId, promise };
+  entries.set(teamKey, entry);
+  const clearExactEntry = (): void => {
+    if (entries.get(teamKey) === entry) {
+      entries.delete(teamKey);
+    }
+  };
+  void promise.then(clearExactEntry, clearExactEntry);
+  return promise;
+}
+
 export function isCancellableRuntimeAdapterProgress(
   progress: Pick<TeamProvisioningProgress, 'state'>
 ): boolean {
@@ -117,43 +221,20 @@ export async function cancelRuntimeAdapterProvisioning(input: {
   });
   ports.invalidateRuntimeSnapshotCaches(teamName);
 
-  const previousLaunchState = await ports.readLaunchState(teamName);
-  const adapter = ports.getOpenCodeRuntimeAdapter();
   let stopConfirmed = false;
-  if (adapter) {
-    try {
-      const result = await adapter.stop({
-        runId,
-        laneId: 'primary',
-        teamName,
-        cwd: runtimeRun?.cwd ?? ports.readPersistedTeamProjectPath(teamName) ?? undefined,
-        providerId: 'opencode',
-        reason: 'user_requested',
-        previousLaunchState,
-        force: true,
-      });
-      if (!result.stopped) {
-        const detail = [...result.diagnostics, ...result.warnings]
-          .map((entry) => entry.trim())
-          .filter(Boolean)
-          .join('; ');
-        throw new Error(
-          detail
-            ? `OpenCode runtime adapter launch did not confirm stop: ${detail}`
-            : 'OpenCode runtime adapter launch did not confirm stop'
-        );
-      }
-      stopConfirmed = true;
-    } catch (error) {
-      ports.logWarning(
-        `[${teamName}] Failed to stop OpenCode runtime adapter launch during cancel: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  } else {
+  try {
+    await stopRuntimeAdapterPrimaryLaneExactly({
+      teamName,
+      runId,
+      cwd: runtimeRun?.cwd ?? ports.readPersistedTeamProjectPath(teamName) ?? undefined,
+      ports,
+    });
+    stopConfirmed = true;
+  } catch (error) {
     ports.logWarning(
-      `[${teamName}] Failed to stop OpenCode runtime adapter launch during cancel: OpenCode runtime adapter is unavailable`
+      `[${teamName}] Failed to stop OpenCode runtime adapter launch during cancel: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   }
 
@@ -237,6 +318,14 @@ export async function stopAndClearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(input
   ports: RuntimeAdapterCancellationPorts;
 }): Promise<boolean> {
   const { ports, runId, teamName } = input;
+  const existingStop = getRuntimeAdapterPrimaryStopEntry(ports, teamName, runId);
+  if (existingStop) {
+    // The operation that installed the exact stop owns confirmation and
+    // cleanup. Late launch completion must not block on the same slow stop or
+    // issue a duplicate stop; its rollback obligation is delegated to that
+    // already-running exact-identity operation.
+    return true;
+  }
   const previousRuntimeOwner = ports.runtimeAdapterRunByTeam.get(teamName);
   const runtimeRun = previousRuntimeOwner?.runId === runId ? previousRuntimeOwner : undefined;
   const cwd = runtimeRun?.cwd ?? ports.readPersistedTeamProjectPath(teamName) ?? undefined;
@@ -304,32 +393,12 @@ export async function stopAndClearOpenCodeRuntimeAdapterPrimaryLaneIfOwned(input
 
   let stopConfirmed = false;
   try {
-    const adapter = ports.getOpenCodeRuntimeAdapter();
-    if (!adapter) {
-      throw new Error('OpenCode runtime adapter is unavailable');
-    }
-    const previousLaunchState = await ports.readLaunchState(teamName);
-    const result = await adapter.stop({
-      runId,
-      laneId: 'primary',
+    await stopRuntimeAdapterPrimaryLaneExactly({
       teamName,
+      runId,
       cwd,
-      providerId: 'opencode',
-      reason: 'user_requested',
-      previousLaunchState,
-      force: true,
+      ports,
     });
-    if (!result.stopped) {
-      const detail = [...result.diagnostics, ...result.warnings]
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-        .join('; ');
-      throw new Error(
-        detail
-          ? `OpenCode runtime adapter launch did not confirm stop: ${detail}`
-          : 'OpenCode runtime adapter launch did not confirm stop'
-      );
-    }
     stopConfirmed = true;
 
     ports.clearOpenCodeRuntimeToolApprovals(teamName, {

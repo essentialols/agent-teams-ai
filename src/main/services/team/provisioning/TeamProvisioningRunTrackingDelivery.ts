@@ -53,7 +53,7 @@ function isTerminalRuntimeProgressState(state: RuntimeProgressState): boolean {
   return TERMINAL_RUNTIME_PROGRESS_STATES.has(state);
 }
 
-function isNonEmptyRunId(runId: string | undefined): runId is string {
+function isNonEmptyRunId(runId: string | null | undefined): runId is string {
   return typeof runId === 'string' && runId.trim() !== '';
 }
 
@@ -122,6 +122,21 @@ export class TeamProvisioningRunTrackingDeliveryHelper<
     return this.getProvisioningRunId(teamName) ?? this.getAliveRunId(teamName);
   }
 
+  private getProvisioningDeliveryRunId(teamName: string): string | null {
+    const runId = this.getProvisioningRunId(teamName);
+    if (!runId) {
+      return null;
+    }
+    // An in-memory run remains an authoritative delivery fence even after it
+    // publishes terminal rollback/stop progress. Launch idempotency may clear
+    // that terminal owner separately; persisted recovery must not be blocked
+    // by a terminal progress record whose in-memory run no longer exists.
+    if (this.options.state.runs.has(runId)) {
+      return runId;
+    }
+    return this.getResolvableProvisioningRunId(teamName);
+  }
+
   getAgentRuntimeSnapshotCacheTtlMs(teamName: string, runId: string | null): number {
     if (runId || this.options.state.runtimeAdapterRunByTeam.has(teamName)) {
       return this.options.liveRuntimeSnapshotCacheTtlMs;
@@ -155,10 +170,11 @@ export class TeamProvisioningRunTrackingDeliveryHelper<
   }
 
   resolveDeliverableTrackedRuntimeRunId(teamName: string): string | null {
+    const provisioningRunId = this.getProvisioningDeliveryRunId(teamName);
     const candidates = Array.from(
       new Set(
         [
-          this.options.state.provisioningRunByTeam.get(teamName),
+          provisioningRunId,
           this.options.state.aliveRunByTeam.get(teamName),
           this.options.state.runtimeAdapterRunByTeam.get(teamName)?.runId,
         ].filter(isNonEmptyRunId)
@@ -173,10 +189,11 @@ export class TeamProvisioningRunTrackingDeliveryHelper<
   }
 
   canDeliverToOpenCodeRuntimeForTeam(teamName: string): boolean {
+    const provisioningRunId = this.getProvisioningDeliveryRunId(teamName);
     const trackedCandidates = Array.from(
       new Set(
         [
-          this.options.state.provisioningRunByTeam.get(teamName),
+          provisioningRunId,
           this.options.state.aliveRunByTeam.get(teamName),
           this.options.state.runtimeAdapterRunByTeam.get(teamName)?.runId,
         ].filter(isNonEmptyRunId)

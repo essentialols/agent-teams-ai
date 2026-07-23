@@ -770,6 +770,9 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
       } catch (error) {
         if (restart.lease.cancelRequested) {
           await this.clearCancelledOpenCodeAggregateRestartState(teamName, restart.lease.runId);
+          if (getErrorMessage(error).includes('owning run is no longer active')) {
+            throw error;
+          }
           throw this.getCancelledOpenCodeAggregateRestartError(teamName, memberName);
         }
         throw error;
@@ -880,14 +883,21 @@ export abstract class TeamProvisioningOpenCodeAggregatePrimaryFacade extends Tea
     return run.child != null && !run.processKilled && !run.cancelRequested;
   }
 
+  override getAliveTeams(): string[] {
+    return super.getAliveTeams().filter((teamName) => this.isTeamAlive(teamName));
+  }
+
   protected override async sendOpenCodeMemberMessageToRuntimeSerialized(input: {
     teamName: string;
     laneId: string;
     memberName?: string;
     send: () => Promise<OpenCodeTeamRuntimeMessageResult>;
   }): Promise<OpenCodeTeamRuntimeMessageResult> {
+    const hasTrackedRuntimeOwner =
+      Boolean(this.runTracking.getTrackedRunId(input.teamName)) ||
+      this.runtimeAdapterRunByTeam.has(input.teamName);
     if (
-      this.runTracking.getTrackedRunId(input.teamName) &&
+      hasTrackedRuntimeOwner &&
       !this.runTracking.resolveDeliverableTrackedRuntimeRunId(input.teamName)
     ) {
       return {

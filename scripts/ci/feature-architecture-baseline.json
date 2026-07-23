@@ -198,8 +198,33 @@
     },
     {
       "rule": "core-application-dependencies",
+      "source": "src/features/team-task-board/core/application/createTeamTaskBoardActions.ts",
+      "specifier": "@shared/types"
+    },
+    {
+      "rule": "core-application-dependencies",
+      "source": "src/features/team-task-board/core/application/ports/TeamTaskBoardInteractionPorts.ts",
+      "specifier": "@shared/types"
+    },
+    {
+      "rule": "core-application-dependencies",
       "source": "src/features/team-task-board/core/application/ports/TeamTaskBoardPorts.ts",
       "specifier": "@shared/types"
+    },
+    {
+      "rule": "core-application-dependencies",
+      "source": "src/features/team-task-board/core/application/TaskLifecycleAnalyticsTracker.ts",
+      "specifier": "@shared/types"
+    },
+    {
+      "rule": "core-application-dependencies",
+      "source": "src/features/team-task-board/core/application/TaskLifecycleAnalyticsTracker.ts",
+      "specifier": "@shared/utils/leadDetection"
+    },
+    {
+      "rule": "core-application-dependencies",
+      "source": "src/features/team-task-board/core/application/TaskLifecycleAnalyticsTracker.ts",
+      "specifier": "@shared/utils/taskWorkDuration"
     },
     {
       "rule": "core-application-dependencies",
@@ -536,6 +561,18 @@
       "source": "src/features/team-task-board/main/index.ts",
       "specifier": "./adapters/input/ipc/TeamTaskBoardIpcDependencies",
       "publicEntrypoint": "src/features/team-task-board/main/index.ts"
+    },
+    {
+      "rule": "public-api-implementation-export",
+      "source": "src/features/team-task-board/renderer/index.ts",
+      "specifier": "./adapters/createTeamTaskBoardRendererSlice",
+      "publicEntrypoint": "src/features/team-task-board/renderer/index.ts"
+    },
+    {
+      "rule": "public-api-implementation-export",
+      "source": "src/features/team-task-board/renderer/index.ts",
+      "specifier": "./adapters/taskLifecycleAnalytics",
+      "publicEntrypoint": "src/features/team-task-board/renderer/index.ts"
     },
     {
       "rule": "public-api-implementation-export",

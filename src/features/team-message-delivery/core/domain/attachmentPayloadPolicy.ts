@@ -42,7 +42,11 @@ export function validateAttachments(attachments: unknown): AttachmentValidationR
     if (typeof attachment.data !== 'string' || typeof attachment.mimeType !== 'string') {
       return { valid: false, error: 'Attachment must have data and mimeType' };
     }
-    if (typeof attachment.size !== 'number' || attachment.size <= 0) {
+    if (
+      typeof attachment.size !== 'number' ||
+      !Number.isFinite(attachment.size) ||
+      attachment.size <= 0
+    ) {
       return { valid: false, error: 'Attachment must have a positive size' };
     }
     if (!ALLOWED_ATTACHMENT_TYPES.has(attachment.mimeType)) {

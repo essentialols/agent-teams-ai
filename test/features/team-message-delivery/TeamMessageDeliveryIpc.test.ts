@@ -221,7 +221,7 @@ describe('team message delivery IPC', () => {
   });
 });
 
-describe('legacy attachment normalization compatibility', () => {
+describe('attachment normalization compatibility', () => {
   it.each([
     ['a non-array value', 'legacy-attachment'],
     ['an empty array', []],
@@ -237,7 +237,7 @@ describe('legacy attachment normalization compatibility', () => {
     expect(result.value.attachments).toBeUndefined();
   });
 
-  it('preserves the legacy acceptance of NaN attachment size', () => {
+  it('rejects a non-finite attachment size before it can bypass the aggregate limit', () => {
     const result = normalizeSendTeamMessageCommand('demo-team', {
       member: 'team-lead',
       text: 'hello',
@@ -252,9 +252,9 @@ describe('legacy attachment normalization compatibility', () => {
       ],
     });
 
-    expect(result.valid).toBe(true);
-    if (!result.valid) throw new Error(result.error);
-    expect(result.value.attachments).toHaveLength(1);
-    expect(result.value.attachments?.[0]?.size).toBeNaN();
+    expect(result).toEqual({
+      valid: false,
+      error: 'Attachment must have a positive size',
+    });
   });
 });

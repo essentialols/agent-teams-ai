@@ -10,6 +10,8 @@ import type {
   SendMessageResult,
 } from '@shared/types';
 
+type ExecutionResult<T> = { success: true; data: T } | { success: false; error: string };
+
 export function createTeamMessageDeliveryIpcHandlers(
   dependencies: TeamMessageDeliveryIpcDependencies
 ): {
@@ -34,7 +36,7 @@ export function createTeamMessageDeliveryIpcHandlers(
   const execute = async <T>(
     operation: string,
     handler: () => Promise<T>
-  ): Promise<IpcResult<T>> => {
+  ): Promise<ExecutionResult<T>> => {
     try {
       return { success: true, data: await handler() };
     } catch (error) {
@@ -49,14 +51,11 @@ export function createTeamMessageDeliveryIpcHandlers(
       const normalized = normalizeSendTeamMessageCommand(teamName, request);
       if (!normalized.valid) return { success: false, error: normalized.error };
 
-      let prevalidatedDelegate = null;
-      try {
-        prevalidatedDelegate = await dependencies.sendMessage.prevalidateDelegate(normalized.value);
-      } catch (error) {
-        return execute('sendMessage', async () => {
-          throw error;
-        });
-      }
+      const prevalidation = await execute('sendMessage', () =>
+        dependencies.sendMessage.prevalidateDelegate(normalized.value)
+      );
+      if (!prevalidation.success) return prevalidation;
+      const prevalidatedDelegate = prevalidation.data;
       if (prevalidatedDelegate && !prevalidatedDelegate.isLeadRecipient) {
         return {
           success: false,
@@ -69,7 +68,7 @@ export function createTeamMessageDeliveryIpcHandlers(
     },
 
     getOpenCodeRuntimeDeliveryStatus: async (_event, teamName, messageId) => {
-      const validatedTeamName = validateTeamName(teamName);
+      const validatedTeamName = validateRequiredTeamName(teamName);
       if (!validatedTeamName.valid) {
         return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
       }
@@ -79,14 +78,14 @@ export function createTeamMessageDeliveryIpcHandlers(
       }
       return execute('getOpenCodeRuntimeDeliveryStatus', () =>
         dependencies.getOpenCodeRuntimeDeliveryStatus.execute(
-          validatedTeamName.value!,
+          validatedTeamName.value,
           validatedMessageId.value
         )
       );
     },
 
     processSend: async (_event, teamName, message) => {
-      const validatedTeamName = validateTeamName(teamName);
+      const validatedTeamName = validateRequiredTeamName(teamName);
       if (!validatedTeamName.valid) {
         return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
       }
@@ -94,22 +93,22 @@ export function createTeamMessageDeliveryIpcHandlers(
         return { success: false, error: 'message must be a non-empty string' };
       }
       return execute('processSend', () =>
-        dependencies.sendProcessMessage.execute(validatedTeamName.value!, message)
+        dependencies.sendProcessMessage.execute(validatedTeamName.value, message)
       );
     },
 
     processAlive: async (_event, teamName) => {
-      const validatedTeamName = validateTeamName(teamName);
+      const validatedTeamName = validateRequiredTeamName(teamName);
       if (!validatedTeamName.valid) {
         return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
       }
       return execute('processAlive', async () =>
-        dependencies.getProcessAlive.execute(validatedTeamName.value!)
+        dependencies.getProcessAlive.execute(validatedTeamName.value)
       );
     },
 
     getAttachments: async (_event, teamName, messageId) => {
-      const validatedTeamName = validateTeamName(teamName);
+      const validatedTeamName = validateRequiredTeamName(teamName);
       if (!validatedTeamName.valid) {
         return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
       }
@@ -118,10 +117,20 @@ export function createTeamMessageDeliveryIpcHandlers(
         return { success: false, error: validatedMessageId.error };
       }
       return execute('getAttachments', () =>
-        dependencies.getAttachments.execute(validatedTeamName.value!, validatedMessageId.value)
+        dependencies.getAttachments.execute(validatedTeamName.value, validatedMessageId.value)
       );
     },
   };
+}
+
+function validateRequiredTeamName(
+  teamName: unknown
+): { valid: true; value: string } | { valid: false; error: string } {
+  const validated = validateTeamName(teamName);
+  if (!validated.valid || typeof validated.value !== 'string') {
+    return { valid: false, error: validated.error ?? 'Invalid teamName' };
+  }
+  return { valid: true, value: validated.value };
 }
 
 function validateMessageId(

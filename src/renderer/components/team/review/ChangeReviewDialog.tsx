@@ -18,9 +18,7 @@ import {
   buildReviewFileLabels,
   buildReviewStats,
   buildWatchedReviewFilePathsKey,
-  canAcceptAllReviewFiles,
   findActiveReviewFile,
-  getRejectablePendingReviewFiles,
   resolveReviewFileLabel as resolveReviewFileLabelFromMap,
   shouldShowTaskScopeBanner,
   sortChangeReviewFiles,
@@ -1732,24 +1730,39 @@ export const ChangeReviewDialog = ({
 
   const rejectablePendingFiles = useMemo(
     () =>
-      getRejectablePendingReviewFiles({
-        files: sortedFiles,
-        editedContents,
-        fileChunkCounts,
-        fileContents,
-        fileDecisions,
-        hunkDecisions,
+      sortedFiles.filter((file) => {
+        const reviewKey = getFileReviewKey(file);
+        const fileDecision = fileDecisions[reviewKey] ?? fileDecisions[file.filePath] ?? 'pending';
+        if (fileDecision !== 'pending') return false;
+        if (file.filePath in editedContents) return false;
+        const count = getFileHunkCount(file.filePath, file.snippets.length, fileChunkCounts);
+        if (
+          isReviewFileFullyRejected(file, count, {
+            hunkDecisions,
+            fileDecisions,
+          })
+        ) {
+          return false;
+        }
+        return isReviewRejectable(file, fileContents[file.filePath] ?? null);
       }),
     [editedContents, fileChunkCounts, fileContents, fileDecisions, hunkDecisions, sortedFiles]
   );
   const canRejectAll = rejectablePendingFiles.length > 0;
   const canAcceptAll = useMemo(
     () =>
-      canAcceptAllReviewFiles({
-        files: sortedFiles,
-        editedContents,
-        fileContents,
-        fileDecisions,
+      sortedFiles.length > 0 &&
+      sortedFiles.every((file) => {
+        if (!(file.filePath in fileContents) || file.filePath in editedContents) return false;
+        const content = fileContents[file.filePath] ?? null;
+        const reviewKey = getFileReviewKey(file);
+        const fileDecision = fileDecisions[reviewKey] ?? fileDecisions[file.filePath];
+        return !isReviewAcceptDisabled({
+          hasEdits: false,
+          isMissingOnDisk: isReviewFileMissingOnDisk(content),
+          isContentUnavailable: isReviewTextContentUnavailable(file, content),
+          fileDecision,
+        });
       }),
     [editedContents, fileContents, fileDecisions, sortedFiles]
   );

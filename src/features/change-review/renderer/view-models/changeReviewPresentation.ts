@@ -1,11 +1,3 @@
-import { isReviewFileFullyRejected } from '@renderer/components/team/review/reviewActionState';
-import {
-  isReviewAcceptDisabled,
-  isReviewFileMissingOnDisk,
-  isReviewRejectable,
-  isReviewTextContentUnavailable,
-} from '@renderer/components/team/review/reviewContentPreview';
-import { getFileHunkCount } from '@renderer/store/slices/changeReviewSlice';
 import { sortItemsAsTree } from '@renderer/utils/fileTreeBuilder';
 import { displayMemberName } from '@renderer/utils/memberHelpers';
 import { buildHunkDecisionKey, getFileReviewKey } from '@renderer/utils/reviewKey';
@@ -15,7 +7,6 @@ import { classifyTaskChangeReviewability } from '@shared/utils/taskChangeReviewa
 import type {
   AgentChangeSet,
   FileChangeSummary,
-  FileChangeWithContent,
   GlobalTask,
   HunkDecision,
   TaskChangeSet,
@@ -93,7 +84,7 @@ export function buildGlobalDiffLoadingState(input: {
   files: readonly FileChangeSummary[];
   activeFilePath: string | null;
   fileContentsLoading: Readonly<Record<string, boolean>>;
-  fileContents: Readonly<Record<string, FileChangeWithContent>>;
+  fileContents: Readonly<Record<string, unknown>>;
 }): GlobalDiffLoadingState | null {
   const loadingFiles = input.files.filter((file) => input.fileContentsLoading[file.filePath]);
   if (loadingFiles.length === 0) return null;
@@ -115,58 +106,6 @@ export function buildGlobalDiffLoadingState(input: {
   };
 }
 
-export function getRejectablePendingReviewFiles(input: {
-  files: readonly FileChangeSummary[];
-  editedContents: Readonly<Record<string, string>>;
-  fileChunkCounts: Readonly<Record<string, number>>;
-  fileContents: Readonly<Record<string, FileChangeWithContent>>;
-  fileDecisions: Readonly<Record<string, HunkDecision>>;
-  hunkDecisions: Readonly<Record<string, HunkDecision>>;
-}): FileChangeSummary[] {
-  return input.files.filter((file) => {
-    const reviewKey = getFileReviewKey(file);
-    const fileDecision =
-      input.fileDecisions[reviewKey] ?? input.fileDecisions[file.filePath] ?? 'pending';
-    if (fileDecision !== 'pending') return false;
-    if (file.filePath in input.editedContents) return false;
-    const count = getFileHunkCount(file.filePath, file.snippets.length, input.fileChunkCounts);
-    if (
-      isReviewFileFullyRejected(file, count, {
-        hunkDecisions: input.hunkDecisions,
-        fileDecisions: input.fileDecisions,
-      })
-    ) {
-      return false;
-    }
-    return isReviewRejectable(file, input.fileContents[file.filePath] ?? null);
-  });
-}
-
-export function canAcceptAllReviewFiles(input: {
-  files: readonly FileChangeSummary[];
-  editedContents: Readonly<Record<string, string>>;
-  fileContents: Readonly<Record<string, FileChangeWithContent>>;
-  fileDecisions: Readonly<Record<string, HunkDecision>>;
-}): boolean {
-  return (
-    input.files.length > 0 &&
-    input.files.every((file) => {
-      if (!(file.filePath in input.fileContents) || file.filePath in input.editedContents) {
-        return false;
-      }
-      const content = input.fileContents[file.filePath] ?? null;
-      const reviewKey = getFileReviewKey(file);
-      const fileDecision = input.fileDecisions[reviewKey] ?? input.fileDecisions[file.filePath];
-      return !isReviewAcceptDisabled({
-        hasEdits: false,
-        isMissingOnDisk: isReviewFileMissingOnDisk(content),
-        isContentUnavailable: isReviewTextContentUnavailable(file, content),
-        fileDecision,
-      });
-    })
-  );
-}
-
 export function buildReviewStats(input: {
   changeSet: ChangeReviewChangeSet | null;
   hunkDecisions: Readonly<Record<string, HunkDecision>>;
@@ -179,7 +118,7 @@ export function buildReviewStats(input: {
   for (const file of input.changeSet.files) {
     const reviewKey = getFileReviewKey(file);
     const fileDecision = input.fileDecisions[reviewKey] ?? input.fileDecisions[file.filePath];
-    const count = getFileHunkCount(file.filePath, file.snippets.length, input.fileChunkCounts);
+    const count = input.fileChunkCounts[file.filePath] ?? file.snippets.length;
 
     if (fileDecision === 'accepted' || fileDecision === 'rejected') {
       stats[fileDecision] += count;

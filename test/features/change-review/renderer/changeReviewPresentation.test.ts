@@ -6,9 +6,7 @@ import {
   buildReviewStats,
   buildTaskChangesEmptyStatePresentation,
   buildWatchedReviewFilePathsKey,
-  canAcceptAllReviewFiles,
   findActiveReviewFile,
-  getRejectablePendingReviewFiles,
   resolveReviewFileLabel,
   shouldShowTaskScopeBanner,
   sortChangeReviewFiles,
@@ -152,57 +150,6 @@ describe('changeReviewPresentation', () => {
         fileContents: {},
       })
     ).toBeNull();
-  });
-
-  it('selects only pending, unedited, rejectable files', () => {
-    const eligible = makeFile('eligible.ts');
-    const edited = makeFile('edited.ts');
-    const accepted = makeFile('accepted.ts', { changeKey: 'change:accepted' });
-    const rejectedByHunk = makeFile('rejected.ts');
-    const files = [eligible, edited, accepted, rejectedByHunk];
-    const fileContents = Object.fromEntries(
-      files.map((file) => [file.filePath, makeContent(file)])
-    );
-
-    expect(
-      getRejectablePendingReviewFiles({
-        files,
-        editedContents: { [edited.filePath]: 'manual edit' },
-        fileChunkCounts: { [rejectedByHunk.filePath]: 1 },
-        fileContents,
-        fileDecisions: { 'change:accepted': 'accepted' },
-        hunkDecisions: { [`${rejectedByHunk.filePath}:0`]: 'rejected' },
-      })
-    ).toEqual([eligible]);
-  });
-
-  it('requires every file to be ready, available, and unedited before Accept All', () => {
-    const file = makeFile('src/a.ts');
-    const content = makeContent(file);
-    const base = {
-      files: [file],
-      editedContents: {},
-      fileContents: { [file.filePath]: content },
-      fileDecisions: {},
-    };
-
-    expect(canAcceptAllReviewFiles(base)).toBe(true);
-    expect(canAcceptAllReviewFiles({ ...base, editedContents: { [file.filePath]: 'draft' } })).toBe(
-      false
-    );
-    expect(canAcceptAllReviewFiles({ ...base, fileContents: {} })).toBe(false);
-    expect(
-      canAcceptAllReviewFiles({
-        ...base,
-        fileContents: {
-          [file.filePath]: makeContent(file, {
-            originalFullContent: null,
-            modifiedFullContent: null,
-            contentSource: 'unavailable',
-          }),
-        },
-      })
-    ).toBe(false);
   });
 
   it('gives file decisions priority and uses CodeMirror chunk counts for stats', () => {

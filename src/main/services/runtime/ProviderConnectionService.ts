@@ -81,6 +81,13 @@ const PROVIDER_CAPABILITIES: Record<
     supportsApiKey: false,
     configurableAuthModes: [],
   },
+  omniroute: {
+    // OmniRoute is a local router pinned to a fixed Anthropic-compatible
+    // endpoint; there is no cloud auth to configure from the UI.
+    supportsOAuth: false,
+    supportsApiKey: false,
+    configurableAuthModes: [],
+  },
 };
 
 const PROVIDER_API_KEY_ENV_VARS: Partial<Record<CliProviderId, string>> = {

@@ -6,6 +6,8 @@ import {
 
 import { ConfigManager } from '../infrastructure/ConfigManager';
 
+import { applyOmniRouteRuntimeEnv } from './omniRouteRuntime';
+
 import type { CliProviderId, TeamProviderId } from '@shared/types';
 
 type RuntimeEnvProviderId = CliProviderId | TeamProviderId;
@@ -123,6 +125,23 @@ export function applyProviderRuntimeEnv(
     .providerConnections.anthropic
 ): NodeJS.ProcessEnv {
   const resolvedProvider = resolveRuntimeProviderId(providerId);
+
+  // OmniRoute reuses the Anthropic runtime pinned at OmniRoute's local
+  // Anthropic-compatible ingress (like the user's `www` launcher). Clear any
+  // inherited provider routing, force the anthropic entry provider in
+  // compatible mode, and inject the fixed local endpoint/model/telemetry env.
+  if (resolvedProvider === 'omniroute') {
+    for (const key of PROVIDER_ROUTING_ENV_KEYS) {
+      env[key] = undefined;
+    }
+    clearExplicitAnthropicRouteEnv(env, 'compatible');
+    applyOmniRouteRuntimeEnv(env);
+    env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1';
+    env.CLAUDE_CODE_ENTRY_PROVIDER = 'anthropic';
+    env[AGENT_TEAMS_ANTHROPIC_CONNECTION_MODE_ENV] = 'compatible';
+    return env;
+  }
+
   const anthropicConnectionMode = resolveAnthropicConnectionMode(anthropicPreference);
   const anthropicBackend =
     resolvedProvider === 'anthropic' && anthropicConnectionMode === 'auto'
@@ -160,7 +179,12 @@ export function applyProviderRuntimeEnv(
 export function resolveRuntimeProviderId(
   providerId: RuntimeEnvProviderId | undefined
 ): CliProviderId {
-  if (providerId === 'codex' || providerId === 'gemini' || providerId === 'opencode') {
+  if (
+    providerId === 'codex' ||
+    providerId === 'gemini' ||
+    providerId === 'opencode' ||
+    providerId === 'omniroute'
+  ) {
     return providerId;
   }
 
@@ -168,7 +192,10 @@ export function resolveRuntimeProviderId(
 }
 
 export function resolveTeamProviderId(providerId: TeamProviderId | undefined): TeamProviderId {
-  return providerId === 'codex' || providerId === 'gemini' || providerId === 'opencode'
+  return providerId === 'codex' ||
+    providerId === 'gemini' ||
+    providerId === 'opencode' ||
+    providerId === 'omniroute'
     ? providerId
     : 'anthropic';
 }

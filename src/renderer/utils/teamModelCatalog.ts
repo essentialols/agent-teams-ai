@@ -48,6 +48,7 @@ const TEAM_PROVIDER_LABELS: Record<SupportedProviderId, string> = {
   codex: 'Codex',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  omniroute: 'OmniRoute',
 };
 
 const ANTHROPIC_ALIAS_LABELS = {
@@ -171,6 +172,9 @@ const TEAM_PROVIDER_MODEL_OPTIONS: Record<SupportedProviderId, readonly TeamProv
       },
     ],
     opencode: [{ value: '', label: 'Default', badgeLabel: 'Default' }],
+    // OmniRoute's default routes to the local model pinned by the runtime env
+    // (ANTHROPIC_MODEL); a single Default option mirrors the OpenCode shape.
+    omniroute: [{ value: '', label: 'Default', badgeLabel: 'Default' }],
   };
 
 type AnthropicAliasFamily = keyof typeof ANTHROPIC_ALIAS_LABELS;
@@ -181,6 +185,9 @@ const TEAM_PROVIDER_MODEL_ORDER: Record<SupportedProviderId, Map<string, number>
   gemini: new Map(TEAM_PROVIDER_MODEL_OPTIONS.gemini.map((option, index) => [option.value, index])),
   opencode: new Map(
     TEAM_PROVIDER_MODEL_OPTIONS.opencode.map((option, index) => [option.value, index])
+  ),
+  omniroute: new Map(
+    TEAM_PROVIDER_MODEL_OPTIONS.omniroute.map((option, index) => [option.value, index])
   ),
 };
 

@@ -3,7 +3,13 @@ import { parseOpenCodeQualifiedModelRef } from './opencodeModelRef';
 import type { TeamProviderId } from '@shared/types';
 
 export function isTeamProviderId(value: unknown): value is TeamProviderId {
-  return value === 'anthropic' || value === 'codex' || value === 'gemini' || value === 'opencode';
+  return (
+    value === 'anthropic' ||
+    value === 'codex' ||
+    value === 'gemini' ||
+    value === 'opencode' ||
+    value === 'omniroute'
+  );
 }
 
 export function normalizeOptionalTeamProviderId(value: unknown): TeamProviderId | undefined {
@@ -25,6 +31,13 @@ export function inferTeamProviderIdFromModel(
     return undefined;
   }
   const normalizedWithoutExtendedContextSuffix = normalized.replace(/(?:\[1m\])+$/, '');
+
+  if (
+    normalized.startsWith('omniroute/') ||
+    normalizedWithoutExtendedContextSuffix.startsWith('omniroute/')
+  ) {
+    return 'omniroute';
+  }
 
   if (
     normalized.startsWith('opencode/') ||

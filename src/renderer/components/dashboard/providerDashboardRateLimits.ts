@@ -292,6 +292,7 @@ export function getDashboardRateLimitsForProvider(
       return getAnthropicDashboardRateLimits(provider);
     case 'gemini':
     case 'opencode':
+    case 'omniroute':
       return null;
   }
 }

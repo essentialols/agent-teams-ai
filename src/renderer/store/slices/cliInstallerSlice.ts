@@ -44,8 +44,8 @@ const CODEX_CATALOG_LOADING_REFRESH_RETRY_DELAY_MS = 2_000;
 export const CLI_PROVIDER_STATUS_SCOPE_CACHE_LIMIT = 12;
 
 export const MULTIMODEL_PROVIDER_IDS: CliProviderId[] = isGeminiUiFrozen()
-  ? ['anthropic', 'codex', 'opencode']
-  : ['anthropic', 'codex', 'gemini', 'opencode'];
+  ? ['anthropic', 'codex', 'opencode', 'omniroute']
+  : ['anthropic', 'codex', 'gemini', 'opencode', 'omniroute'];
 const MULTIMODEL_PROVIDER_ID_SET = new Set<CliProviderId>(MULTIMODEL_PROVIDER_IDS);
 
 export interface CliProviderStatusFetchOptions {
@@ -821,6 +821,8 @@ function getProviderDisplayName(providerId: CliProviderId): string {
       return 'Gemini';
     case 'opencode':
       return 'OpenCode (200+ models)';
+    case 'omniroute':
+      return 'OmniRoute (local)';
   }
 }
 

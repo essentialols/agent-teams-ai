@@ -146,7 +146,9 @@ export function parseProviderId(value: unknown): TeamLaunchRequest['providerId']
   if (isTeamProviderId(value)) {
     return value;
   }
-  throw new HttpBadRequestError('providerId must be anthropic, codex, gemini, or opencode');
+  throw new HttpBadRequestError(
+    'providerId must be anthropic, codex, gemini, opencode, or omniroute'
+  );
 }
 
 export function parseProviderBackendId(

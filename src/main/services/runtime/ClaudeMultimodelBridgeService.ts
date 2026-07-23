@@ -12,6 +12,11 @@ import path from 'path';
 
 import { resolveGeminiRuntimeAuth } from './geminiRuntimeAuth';
 import {
+  OMNIROUTE_BASE_URL,
+  OMNIROUTE_DEFAULT_MODEL,
+  OMNIROUTE_DISPLAY_NAME,
+} from './omniRouteRuntime';
+import {
   buildProviderAwareCliEnv,
   getAggregateProviderStatusStoredCredentialAllowlist,
   getProviderStatusStoredCredentialAllowlist,
@@ -355,7 +360,87 @@ function getProviderDisplayName(providerId: CliProviderId): string {
       return 'Gemini';
     case 'opencode':
       return 'OpenCode (200+ models)';
+    case 'omniroute':
+      return OMNIROUTE_DISPLAY_NAME;
   }
+}
+
+/**
+ * OmniRoute is a local Anthropic-compatible router, not a claude-orchestrator
+ * runtime provider, so it is never returned by the CLI's `runtime status`
+ * probe. Build a ready, authenticated synthetic status pinned at the fixed
+ * local endpoint/model so it appears as a selectable peer in the provider list.
+ * If OmniRoute's daemon is down, launch fails at runtime like any other
+ * provider whose backend is unreachable.
+ */
+function createOmniRouteProviderStatus(): CliProviderStatus {
+  const now = new Date();
+  const staleAt = new Date(now.getTime() + 10 * 60_000);
+  const reasoningEfforts: CliProviderReasoningEffort[] = ['low', 'medium', 'high'];
+  return {
+    ...createDefaultProviderStatus('omniroute'),
+    supported: true,
+    authenticated: true,
+    authMethod: 'local',
+    verificationState: 'verified',
+    statusMessage: 'Local OmniRoute endpoint',
+    detailMessage: `Anthropic-compatible ingress at ${OMNIROUTE_BASE_URL}`,
+    models: [OMNIROUTE_DEFAULT_MODEL],
+    canLoginFromUi: false,
+    capabilities: {
+      teamLaunch: true,
+      oneShot: true,
+      extensions: createDefaultCliExtensionCapabilities(),
+    },
+    backend: {
+      kind: 'anthropic-compatible',
+      label: OMNIROUTE_DISPLAY_NAME,
+      endpointLabel: OMNIROUTE_BASE_URL,
+    },
+    modelCatalog: {
+      schemaVersion: 1,
+      providerId: 'omniroute',
+      source: 'static-fallback',
+      status: 'ready',
+      fetchedAt: now.toISOString(),
+      staleAt: staleAt.toISOString(),
+      defaultModelId: OMNIROUTE_DEFAULT_MODEL,
+      defaultLaunchModel: OMNIROUTE_DEFAULT_MODEL,
+      models: [
+        {
+          id: OMNIROUTE_DEFAULT_MODEL,
+          launchModel: OMNIROUTE_DEFAULT_MODEL,
+          displayName: OMNIROUTE_DEFAULT_MODEL,
+          hidden: false,
+          supportedReasoningEfforts: reasoningEfforts,
+          defaultReasoningEffort: 'medium',
+          supportsFastMode: false,
+          inputModalities: ['text'],
+          supportsPersonality: false,
+          isDefault: true,
+          upgrade: false,
+          source: 'static-fallback',
+          badgeLabel: 'local',
+          statusMessage: `Routed through OmniRoute (${OMNIROUTE_BASE_URL})`,
+        },
+      ],
+      diagnostics: {
+        configReadState: 'skipped',
+        appServerState: 'healthy',
+        message: 'OmniRoute local router. Reachability is verified at launch time.',
+        code: 'omniroute-local-endpoint',
+      },
+    },
+    modelCatalogRefreshState: 'ready',
+    runtimeCapabilities: {
+      modelCatalog: { dynamic: false, source: 'static-fallback' },
+      reasoningEffort: {
+        supported: true,
+        values: reasoningEfforts,
+        configPassthrough: true,
+      },
+    },
+  };
 }
 
 function extractJsonObject<T>(raw: string): T {
@@ -1573,6 +1658,10 @@ export class ClaudeMultimodelBridgeService {
     onCatalogUpdate?: (provider: CliProviderStatus) => void,
     options: CliProviderStatusRequestOptions = {}
   ): Promise<CliProviderStatus> {
+    if (providerId === 'omniroute') {
+      return createOmniRouteProviderStatus();
+    }
+
     await resolveInteractiveShellEnvBestEffort({
       timeoutMs: 1_500,
       fallbackEnv: process.env,
@@ -1899,6 +1988,21 @@ export class ClaudeMultimodelBridgeService {
   }
 
   async getProviderStatuses(
+    binaryPath: string,
+    onUpdate?: (providers: CliProviderStatus[]) => void
+  ): Promise<CliProviderStatus[]> {
+    // OmniRoute is a synthetic local provider that the CLI runtime probe never
+    // returns. Append it to every snapshot (intermediate + final) so it shows
+    // in the provider list alongside the runtime-discovered providers.
+    const wrappedOnUpdate = onUpdate
+      ? (providers: CliProviderStatus[]): void =>
+          onUpdate([...providers, createOmniRouteProviderStatus()])
+      : undefined;
+    const baseProviders = await this.getRuntimeProviderStatuses(binaryPath, wrappedOnUpdate);
+    return [...baseProviders, createOmniRouteProviderStatus()];
+  }
+
+  private async getRuntimeProviderStatuses(
     binaryPath: string,
     onUpdate?: (providers: CliProviderStatus[]) => void
   ): Promise<CliProviderStatus[]> {

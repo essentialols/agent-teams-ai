@@ -181,7 +181,7 @@ export function migrateLegacyCreateTeamPreferences(): void {
   );
   copyLegacyPreferenceIfMissing(CREATE_TEAM_EFFORT_KEY, `${LEGACY_TEAM_PREFIX}lastSelectedEffort`);
 
-  for (const providerId of ['anthropic', 'codex', 'gemini', 'opencode'] as const) {
+  for (const providerId of ['anthropic', 'codex', 'gemini', 'opencode', 'omniroute'] as const) {
     copyLegacyPreferenceIfMissing(
       getCreateTeamModelKey(providerId),
       getLegacyTeamModelKey(providerId)

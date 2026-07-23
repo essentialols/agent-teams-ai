@@ -122,7 +122,9 @@ export interface PrepareWorkspaceTrustForDeterministicRunPorts<
 }
 
 export function toWorkspaceTrustProvider(providerId: TeamProviderId): WorkspaceTrustProvider {
-  return providerId === 'anthropic' ? 'claude' : providerId;
+  // OmniRoute launches the Claude runtime, so it shares the `claude` workspace
+  // trust identity with anthropic.
+  return providerId === 'anthropic' || providerId === 'omniroute' ? 'claude' : providerId;
 }
 
 export function collectWorkspaceTrustProviders(input: {

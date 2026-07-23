@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { selectLatestReviewConflictCandidate } from '../utils/changeReviewConflicts';
 
@@ -83,14 +83,11 @@ export function useChangeReviewConflictInteractionController({
   useLayoutEffect(() => {
     resolutionOperationRef.current = null;
     setResolvingCandidateId(null);
+    setPendingDiscard(null);
     return () => {
       resolutionOperationRef.current = null;
     };
   }, [active, hydrationKey]);
-
-  useEffect(() => {
-    setPendingDiscard(null);
-  }, [hydrationKey]);
 
   const resolveActiveCandidate = useCallback(
     async (resolution: ReviewConflictResolution, expectedCandidateId?: string): Promise<void> => {

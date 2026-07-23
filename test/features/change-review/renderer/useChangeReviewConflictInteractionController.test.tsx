@@ -299,9 +299,12 @@ describe('useChangeReviewConflictInteractionController', () => {
       first = latest!.resolveActiveCandidate('recover-candidate');
     });
     expect(latest!.resolvingCandidateId).toBe('decision-a');
+    act(() => latest!.requestDiscard(latest!.activeCandidate!));
+    expect(latest!.pendingDiscard?.value.id).toBe('decision-a');
 
     props.currentOperation.value = null;
     render(false);
+    expect(latest!.pendingDiscard).toBeNull();
     props.currentOperation.value = createReviewOperationScopeToken('scope-a');
     render(true);
 

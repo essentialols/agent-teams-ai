@@ -59,5 +59,14 @@ export function applyOmniRouteRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.Process
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
   env.CLAUDE_CODE_SKIP_AUTH = '1';
 
+  // First-token latency: force adaptive-reasoning effort so CC actually sends the
+  // effort/thinking param on this CUSTOM endpoint. Without forcing it, CC omits
+  // the param and the model defaults to HIGH reasoning -> the slow 35B thinking
+  // path (the "takes forever" symptom). 'low' = snappy default; the serving stack
+  // already maps the Anthropic thinking param -> Qwen enable_thinking (verified),
+  // and a teammate can bump per-session with /effort <low|medium|high|xhigh>.
+  env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = '1';
+  env.CLAUDE_CODE_EFFORT_LEVEL = 'low';
+
   return env;
 }

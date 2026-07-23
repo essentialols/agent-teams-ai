@@ -467,10 +467,11 @@ function firstForbiddenVariableKey(
 }
 
 function firstDuplicateSecretRef(secretRefs: readonly SecretRefMetadata[]): boolean {
-  const seenIds = new Set<string>();
+  const seenRefs = new Set<string>();
   for (const secretRef of secretRefs) {
-    if (seenIds.has(secretRef.secretRefId)) return true;
-    seenIds.add(secretRef.secretRefId);
+    const key = secretRefKey(secretRef);
+    if (seenRefs.has(key)) return true;
+    seenRefs.add(key);
   }
   return false;
 }

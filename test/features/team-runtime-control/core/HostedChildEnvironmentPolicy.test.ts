@@ -237,7 +237,7 @@ describe('HostedChildEnvironmentPolicy', () => {
     }
   });
 
-  it('rejects duplicate environment keys and SecretRefs', () => {
+  it('rejects duplicate environment keys and identical SecretRef identities', () => {
     expect(
       createHostedChildEnvironmentPolicy(
         input({ requestedVariables: [pathVariable, { ...pathVariable, name: 'path' }] })
@@ -253,6 +253,62 @@ describe('HostedChildEnvironmentPolicy', () => {
         input({ acceptedCredentialExposureSet: { secretRefs: [secretA, secretA] } })
       )
     ).toEqual({ status: 'rejected', error: { code: 'duplicate_secret_ref' } });
+  });
+
+  it('accepts the same SecretRef id for distinct classes across policy semantics', () => {
+    const sharedApiKey = providerSecret('anthropic-shared', 'provider-api-key');
+    const sharedOauth = providerSecret('anthropic-shared', 'provider-oauth');
+    const sharedApiKeyVariable = {
+      name: 'ANTHROPIC_SHARED_API_KEY',
+      provenance: 'secret_ref',
+      secretRef: sharedApiKey,
+    } as const;
+    const sharedOauthVariable = {
+      name: 'ANTHROPIC_SHARED_OAUTH_TOKEN',
+      provenance: 'secret_ref',
+      secretRef: sharedOauth,
+    } as const;
+    const policyInput = input({
+      providerDeclaration: declaration({
+        secretRefs: [sharedApiKey, sharedOauth],
+        variables: [sharedApiKeyVariable, sharedOauthVariable],
+      }),
+      requestedVariables: [sharedApiKeyVariable, sharedOauthVariable],
+      acceptedCredentialExposureSet: { secretRefs: [sharedApiKey, sharedOauth] },
+    });
+    const policy = acceptedPolicy(policyInput);
+    const reversed = acceptedPolicy({
+      ...policyInput,
+      providerDeclaration: declaration({
+        secretRefs: [sharedOauth, sharedApiKey],
+        variables: [sharedOauthVariable, sharedApiKeyVariable],
+      }),
+      requestedVariables: [sharedOauthVariable, sharedApiKeyVariable],
+      acceptedCredentialExposureSet: { secretRefs: [sharedOauth, sharedApiKey] },
+    });
+    const singleClassHash = (secretRef: SecretRefMetadata) => {
+      const variable = { ...sharedApiKeyVariable, secretRef };
+      return acceptedPolicy(
+        input({
+          providerDeclaration: declaration({ secretRefs: [secretRef], variables: [variable] }),
+          requestedVariables: [variable],
+          acceptedCredentialExposureSet: { secretRefs: [secretRef] },
+        })
+      ).keyProvenanceHash;
+    };
+
+    expect(policy.acceptedCredentialExposureSet.secretRefs).toEqual([sharedApiKey, sharedOauth]);
+    expect(reversed.keyProvenanceHash).toBe(policy.keyProvenanceHash);
+    expect(singleClassHash(sharedApiKey)).not.toBe(singleClassHash(sharedOauth));
+    expect(
+      validateHostedChildCredentialExposureSet(policy, {
+        secretRefs: [sharedOauth, sharedApiKey],
+      })
+    ).toEqual({
+      status: 'accepted',
+      exposureSet: { secretRefs: [sharedApiKey, sharedOauth] },
+    });
+    expect(admitHostedChildEnvironmentPolicy(policy)).toEqual({ status: 'accepted', policy });
   });
 
   it('rejects unknown keys', () => {

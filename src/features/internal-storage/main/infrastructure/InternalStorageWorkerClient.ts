@@ -107,7 +107,7 @@ interface PendingEntry {
   reject: (error: Error) => void;
   op: InternalStorageWorkerRequest['op'];
   createdAt: number;
-  timeoutAtMs: number;
+  timeoutAtMs?: number;
 }
 
 interface QueuedEntry extends PendingEntry {
@@ -849,7 +849,11 @@ export class InternalStorageWorkerClient
 
     this.pending.set(entry.id, entry);
     this.activeCallId = entry.id;
-    const timeoutMs = Math.max(1, entry.timeoutAtMs - Date.now());
+    const dispatchedAt = Date.now();
+    const timeoutMs =
+      entry.timeoutAtMs === undefined
+        ? WORKER_CALL_TIMEOUT_MS
+        : Math.max(1, entry.timeoutAtMs - dispatchedAt);
     this.activeTimeout = setTimeout(() => {
       if (this.activeCallId !== entry.id) {
         return;
@@ -891,14 +895,13 @@ export class InternalStorageWorkerClient
     }
     const id = makeId();
     const createdAt = Date.now();
-    const timeoutAtMs = options.timeoutAtMs ?? createdAt + WORKER_CALL_TIMEOUT_MS;
     return new Promise((resolve, reject) => {
       this.queue.push({
         id,
         op,
         payload,
         createdAt,
-        timeoutAtMs,
+        timeoutAtMs: options.timeoutAtMs,
         resolve: (value) => {
           const ms = Date.now() - createdAt;
           if (ms >= 1500) {

@@ -136,6 +136,11 @@ import {
   type CanonicalListTeamLifecycleResult,
   TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
 } from '../../../src/features/team-lifecycle';
+import {
+  createTeamTaskBoardFeature,
+  registerTeamTaskBoardIpc,
+  removeTeamTaskBoardIpc,
+} from '../../../src/features/team-task-board/main';
 import { createUnavailableTeamLifecycleReadHost } from '../../../src/main/composition/hosted/teamLifecycleReadComposition';
 import {
   handleListTeamLifecycle,
@@ -235,7 +240,7 @@ type CreateTeamMock = (
   onProgress: (progress: TeamProvisioningProgress) => void
 ) => Promise<{ runId: string }>;
 
-const TEAM_HANDLER_KEYS = [
+const ALL_TEAM_HANDLER_KEYS = [
   TEAM_ADD_MEMBER,
   TEAM_ADD_TASK_COMMENT,
   TEAM_ADD_TASK_RELATIONSHIP,
@@ -311,6 +316,34 @@ const TEAM_HANDLER_KEYS = [
   TEAM_VALIDATE_CLI_ARGS,
 ] as const;
 
+const TEAM_TASK_BOARD_HANDLER_KEYS = [
+  TEAM_ADD_TASK_COMMENT,
+  TEAM_ADD_TASK_RELATIONSHIP,
+  TEAM_CREATE_TASK,
+  TEAM_GET_ALL_TASKS,
+  TEAM_GET_DELETED_TASKS,
+  TEAM_GET_TASK,
+  TEAM_GET_TASK_CHANGE_PRESENCE,
+  TEAM_REMOVE_TASK_RELATIONSHIP,
+  TEAM_REQUEST_REVIEW,
+  TEAM_RESTORE_TASK,
+  TEAM_SET_CHANGE_PRESENCE_TRACKING,
+  TEAM_SET_TASK_CLARIFICATION,
+  TEAM_SOFT_DELETE_TASK,
+  TEAM_START_TASK,
+  TEAM_START_TASK_BY_USER,
+  TEAM_UPDATE_KANBAN,
+  TEAM_UPDATE_KANBAN_COLUMN_ORDER,
+  TEAM_UPDATE_TASK_FIELDS,
+  TEAM_UPDATE_TASK_OWNER,
+  TEAM_UPDATE_TASK_STATUS,
+] as const;
+
+const TEAM_TASK_BOARD_HANDLER_KEY_SET = new Set<string>(TEAM_TASK_BOARD_HANDLER_KEYS);
+const TEAM_HANDLER_KEYS = ALL_TEAM_HANDLER_KEYS.filter(
+  (channel) => !TEAM_TASK_BOARD_HANDLER_KEY_SET.has(channel)
+);
+
 describe('ipc teams handlers', () => {
   const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>();
   const ipcMain = {
@@ -320,6 +353,10 @@ describe('ipc teams handlers', () => {
     removeHandler: vi.fn((channel: string) => {
       handlers.delete(channel);
     }),
+  };
+  const teamTaskBoardLogger = {
+    error: vi.fn(),
+    warn: vi.fn(),
   };
   let launchIoGovernor: LaunchIoGovernor;
 
@@ -695,6 +732,14 @@ describe('ipc teams handlers', () => {
       launchIoGovernor
     );
     registerTeamHandlers(ipcMain as never);
+    const teamTaskBoardFeature = createTeamTaskBoardFeature({
+      taskBoardApi: service as never,
+      runtimeApi: teamHandlerApis.runtime,
+      notificationApi: teamHandlerApis.messaging,
+      launchIoGovernor,
+      logger: teamTaskBoardLogger,
+    });
+    registerTeamTaskBoardIpc(ipcMain as never, teamTaskBoardFeature);
   });
 
   afterEach(() => {
@@ -705,8 +750,21 @@ describe('ipc teams handlers', () => {
   });
 
   it('registers all expected handlers', () => {
-    expect(ipcMain.handle).toHaveBeenCalledTimes(TEAM_HANDLER_KEYS.length);
-    expect(new Set(handlers.keys())).toEqual(new Set(TEAM_HANDLER_KEYS));
+    expect(ipcMain.handle).toHaveBeenCalledTimes(ALL_TEAM_HANDLER_KEYS.length);
+    expect(new Set(handlers.keys())).toEqual(new Set(ALL_TEAM_HANDLER_KEYS));
+  });
+
+  it('keeps extracted task-board channels out of the legacy teams registrar', () => {
+    const legacyChannels = new Set<string>();
+    registerTeamHandlers({
+      handle: (channel: string) => legacyChannels.add(channel),
+      removeHandler: vi.fn(),
+    } as never);
+
+    expect(legacyChannels).toEqual(new Set(TEAM_HANDLER_KEYS));
+    for (const channel of TEAM_TASK_BOARD_HANDLER_KEYS) {
+      expect(legacyChannels.has(channel)).toBe(false);
+    }
   });
 
   it('preserves legacy TEAM_LIST and wraps canonical success and failure in the IPC result envelope', async () => {
@@ -5191,9 +5249,10 @@ describe('ipc teams handlers', () => {
 
   it('removes all expected handlers', () => {
     removeTeamHandlers(ipcMain as never);
-    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(TEAM_HANDLER_KEYS.length);
+    removeTeamTaskBoardIpc(ipcMain as never);
+    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(ALL_TEAM_HANDLER_KEYS.length);
     expect(new Set(ipcMain.removeHandler.mock.calls.map(([channel]) => channel))).toEqual(
-      new Set(TEAM_HANDLER_KEYS)
+      new Set(ALL_TEAM_HANDLER_KEYS)
     );
     expect(handlers.size).toBe(0);
   });

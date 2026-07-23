@@ -6,7 +6,12 @@ import type {
 
 export type TeamRuntimeRecoveryTargetKind = 'lead' | 'member';
 
-export type TeamRuntimeRecoveryProviderId = 'anthropic' | 'codex' | 'gemini' | 'opencode';
+export type TeamRuntimeRecoveryProviderId =
+  | 'anthropic'
+  | 'codex'
+  | 'gemini'
+  | 'opencode'
+  | 'omniroute';
 
 export type RuntimeFailurePhase = 'sdk_retrying' | 'terminal';
 

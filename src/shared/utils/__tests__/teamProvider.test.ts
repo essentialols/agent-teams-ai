@@ -27,6 +27,15 @@ describe('inferTeamProviderIdFromModel', () => {
     expect(normalizeOptionalTeamProviderId('opencode')).toBe('opencode');
   });
 
+  it('treats OmniRoute as a valid explicit team provider id', () => {
+    expect(isTeamProviderId('omniroute')).toBe(true);
+    expect(normalizeOptionalTeamProviderId('omniroute')).toBe('omniroute');
+  });
+
+  it('routes omniroute-namespaced models through OmniRoute', () => {
+    expect(inferTeamProviderIdFromModel('omniroute/m2/ornith-35b-c')).toBe('omniroute');
+  });
+
   it('routes Kiro and Cursor models through OpenCode', () => {
     expect(inferTeamProviderIdFromModel('kiro/auto')).toBe('opencode');
     expect(inferTeamProviderIdFromModel('cursor-acp/auto')).toBe('opencode');

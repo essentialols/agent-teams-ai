@@ -17,6 +17,8 @@ export function getProviderRuntimeFailureLabel(providerId: TeamProviderId): stri
       return 'Gemini runtime';
     case 'opencode':
       return 'OpenCode runtime';
+    case 'omniroute':
+      return 'OmniRoute runtime';
   }
 }
 

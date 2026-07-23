@@ -227,6 +227,7 @@ const PROVIDERS: ProviderDef[] = [
   { id: 'anthropic', label: 'Anthropic', comingSoon: false },
   { id: 'codex', label: 'Codex', comingSoon: false },
   { id: 'opencode', label: 'OpenCode', comingSoon: false },
+  { id: 'omniroute', label: 'OmniRoute', comingSoon: false },
 ];
 
 const CURATED_OPENCODE_PROVIDER_TABS = [

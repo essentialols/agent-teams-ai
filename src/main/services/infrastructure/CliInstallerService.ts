@@ -45,6 +45,7 @@ import {
   type ProviderModelAvailabilityContext,
   type ProviderModelAvailabilitySnapshot,
 } from '../runtime/CliProviderModelAvailabilityService';
+import { OMNIROUTE_DISPLAY_NAME } from '../runtime/omniRouteRuntime';
 import { ClaudeBinaryResolver } from '../team/ClaudeBinaryResolver';
 import { getCliFlavorUiOptions, getConfiguredCliFlavor } from '../team/cliFlavor';
 
@@ -72,7 +73,12 @@ const GCS_BASE =
   'https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases';
 
 const CLI_INSTALLER_PROGRESS_CHANNEL = 'cliInstaller:progress';
-const FRONTEND_MULTIMODEL_PROVIDER_IDS: CliProviderId[] = ['anthropic', 'codex', 'opencode'];
+const FRONTEND_MULTIMODEL_PROVIDER_IDS: CliProviderId[] = [
+  'anthropic',
+  'codex',
+  'opencode',
+  'omniroute',
+];
 const FRONTEND_MULTIMODEL_PROVIDER_ID_SET = new Set<CliProviderId>(
   FRONTEND_MULTIMODEL_PROVIDER_IDS
 );
@@ -87,6 +93,8 @@ function getProviderDisplayName(providerId: CliProviderId): string {
       return 'Gemini';
     case 'opencode':
       return 'OpenCode (200+ models)';
+    case 'omniroute':
+      return OMNIROUTE_DISPLAY_NAME;
   }
 }
 
@@ -637,7 +645,7 @@ export class CliInstallerService {
             statusMessage: 'Checking...',
             models: [],
             modelAvailability: [],
-            canLoginFromUi: providerId !== 'opencode',
+            canLoginFromUi: providerId !== 'opencode' && providerId !== 'omniroute',
             capabilities: {
               teamLaunch: false,
               oneShot: false,

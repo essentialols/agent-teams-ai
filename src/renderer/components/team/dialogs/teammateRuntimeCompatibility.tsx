@@ -65,6 +65,7 @@ const PROVIDER_LABELS: Record<TeamProviderId, string> = {
   codex: 'Codex',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  omniroute: 'OmniRoute',
 };
 
 function getProviderLabel(providerId: TeamProviderId): string {

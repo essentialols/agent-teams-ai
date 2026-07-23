@@ -316,6 +316,8 @@ function getConnectionDescription(
       return t('providerRuntime.connection.descriptions.gemini');
     case 'opencode':
       return t('providerRuntime.connection.descriptions.opencode');
+    case 'omniroute':
+      return 'Routes through the local OmniRoute Anthropic-compatible endpoint. No cloud auth required.';
   }
 }
 
@@ -332,6 +334,8 @@ function getRuntimeDescription(
       return t('providerRuntime.runtime.descriptions.gemini');
     case 'opencode':
       return t('providerRuntime.runtime.descriptions.opencode');
+    case 'omniroute':
+      return 'OmniRoute local router (Claude runtime pinned at the OmniRoute endpoint).';
   }
 }
 

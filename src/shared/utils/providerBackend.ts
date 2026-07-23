@@ -49,7 +49,7 @@ export function migrateProviderBackendId(
   providerBackendId: string | null | undefined
 ): TeamProviderBackendId | undefined {
   const normalizedBackendId = normalizeOptionalBackendId(providerBackendId);
-  if (providerId === undefined || providerId === 'anthropic') {
+  if (providerId === undefined || providerId === 'anthropic' || providerId === 'omniroute') {
     return undefined;
   }
 

@@ -189,6 +189,21 @@ const OpenCodeBrandLogo = ({ className }: BrandLogoProps): React.JSX.Element => 
   );
 };
 
+const OmniRouteBrandLogo = ({ className }: BrandLogoProps): React.JSX.Element => {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <g fill="none" stroke="#2DD4BF" strokeWidth="1.6" strokeLinecap="round">
+        <circle cx="12" cy="12" r="2.4" fill="#2DD4BF" stroke="none" />
+        <circle cx="5" cy="5" r="1.8" />
+        <circle cx="19" cy="5" r="1.8" />
+        <circle cx="5" cy="19" r="1.8" />
+        <circle cx="19" cy="19" r="1.8" />
+        <path d="M10.3 10.3 6.2 6.2M13.7 10.3l4.1-4.1M10.3 13.7l-4.1 4.1M13.7 13.7l4.1 4.1" />
+      </g>
+    </svg>
+  );
+};
+
 export const ProviderBrandLogo = ({
   providerId,
   className,
@@ -202,5 +217,7 @@ export const ProviderBrandLogo = ({
       return <GeminiBrandLogo className={className} />;
     case 'opencode':
       return <OpenCodeBrandLogo className={className} />;
+    case 'omniroute':
+      return <OmniRouteBrandLogo className={className} />;
   }
 };

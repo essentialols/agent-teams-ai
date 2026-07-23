@@ -394,6 +394,11 @@ function buildProviderAuthenticationHint(
         'OpenCode provider is not authenticated for runtime use. ' +
         `Authenticate the selected OpenCode provider and retry.${attemptsSuffix}`
       );
+    case 'omniroute':
+      return (
+        'OmniRoute is a local Anthropic-compatible endpoint that needs no cloud auth. ' +
+        `Ensure the OmniRoute router is running and retry.${attemptsSuffix}`
+      );
   }
 }
 

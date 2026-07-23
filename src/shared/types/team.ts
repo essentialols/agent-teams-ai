@@ -1022,7 +1022,7 @@ export type EffortLevel =
   | 'xhigh'
   | 'max'
   | 'ultra';
-export type TeamProviderId = 'anthropic' | 'codex' | 'gemini' | 'opencode';
+export type TeamProviderId = 'anthropic' | 'codex' | 'gemini' | 'opencode' | 'omniroute';
 export type TeamProviderBackendId =
   | 'auto'
   | 'adapter'

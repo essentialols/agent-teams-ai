@@ -450,38 +450,66 @@ describe('TeamDataService task projection cache invalidation', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(14);
   });
 
-  it('invalidates config and global task caches after permanent team deletion', async () => {
+  it('removes detached trees, never recursively removes public paths, and stays idempotent', async () => {
     const claudeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team-data-delete-cache-'));
     tempPaths.push(claudeRoot);
     setClaudeBasePathOverride(claudeRoot);
 
-    await fs.mkdir(path.join(claudeRoot, 'teams', 'gone-team'), { recursive: true });
-    await fs.mkdir(path.join(claudeRoot, 'tasks', 'gone-team'), { recursive: true });
+    const teamPath = path.join(claudeRoot, 'teams', 'gone-team');
+    const taskPath = path.join(claudeRoot, 'tasks', 'gone-team');
+    await fs.mkdir(teamPath, { recursive: true });
+    await fs.mkdir(taskPath, { recursive: true });
 
     const configInvalidateSpy = vi.spyOn(TeamConfigReader, 'invalidateTeam');
     const taskInvalidateSpy = vi.spyOn(TeamTaskReader, 'invalidateAllTasksCache');
     const removeSpy = vi.spyOn(nodeFs.promises, 'rm');
 
     const service = new TeamDataService();
-    await service.permanentlyDeleteTeam('gone-team');
+    await expect(service.permanentlyDeleteTeam('gone-team')).resolves.toBe(true);
+    const firstRemovalCallCount = removeSpy.mock.calls.length;
+    expect(firstRemovalCallCount).toBeGreaterThan(0);
+    await expect(service.permanentlyDeleteTeam('gone-team')).resolves.toBe(true);
+    expect(removeSpy).toHaveBeenCalledTimes(firstRemovalCallCount);
 
-    await expect(fs.access(path.join(claudeRoot, 'teams', 'gone-team'))).rejects.toThrow();
-    await expect(fs.access(path.join(claudeRoot, 'tasks', 'gone-team'))).rejects.toThrow();
+    await expect(fs.access(teamPath)).rejects.toThrow();
+    await expect(fs.access(taskPath)).rejects.toThrow();
     expect(configInvalidateSpy).toHaveBeenCalledWith('gone-team');
-    expect(taskInvalidateSpy).toHaveBeenCalledTimes(1);
-    expect(removeSpy).toHaveBeenCalledWith(
-      path.join(claudeRoot, 'teams', 'gone-team'),
-      expect.objectContaining({
+    expect(taskInvalidateSpy).toHaveBeenCalledTimes(2);
+    const removeCalls = removeSpy.mock.calls.map(([removedPath, options]) => ({
+      removedPath: path.resolve(String(removedPath)),
+      options,
+    }));
+    expect(
+      removeCalls.some(({ removedPath }) =>
+        removedPath.startsWith(path.join(claudeRoot, 'teams', '.gone-team.deleting.'))
+      )
+    ).toBe(true);
+    expect(
+      removeCalls.some(({ removedPath }) =>
+        removedPath.startsWith(path.join(claudeRoot, 'tasks', '.gone-team.deleting.'))
+      )
+    ).toBe(true);
+    expect(
+      removeCalls.every(
+        ({ removedPath }) =>
+          removedPath.startsWith(path.join(claudeRoot, 'teams', '.gone-team.deleting.')) ||
+          removedPath.startsWith(path.join(claudeRoot, 'tasks', '.gone-team.deleting.'))
+      )
+    ).toBe(true);
+    expect(removeCalls.every(({ removedPath }) => removedPath !== path.resolve(teamPath))).toBe(
+      true
+    );
+    expect(removeCalls.every(({ removedPath }) => removedPath !== path.resolve(taskPath))).toBe(
+      true
+    );
+    for (const { options } of removeCalls) {
+      expect(options).toEqual({
         recursive: true,
         force: true,
         maxRetries: 5,
         retryDelay: 50,
-      })
-    );
-    expect(removeSpy).toHaveBeenCalledWith(
-      path.join(claudeRoot, 'tasks', 'gone-team'),
-      expect.objectContaining({ maxRetries: 5, retryDelay: 50 })
-    );
+      });
+    }
   });
 
   it('keeps team deletion mutations on verified config reads', async () => {

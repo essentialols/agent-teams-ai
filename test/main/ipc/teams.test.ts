@@ -3,6 +3,7 @@ import { createLogger } from '@shared/utils/logger';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { BrowserWindow } from 'electron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -220,6 +221,7 @@ import {
   TEAM_PREPARE_PROVISIONING,
   TEAM_PROCESS_ALIVE,
   TEAM_PROCESS_SEND,
+  TEAM_PROVISIONING_PROGRESS,
   TEAM_PROVISIONING_STATUS,
   TEAM_REMOVE_MEMBER,
   TEAM_REMOVE_TASK_RELATIONSHIP,
@@ -2131,6 +2133,141 @@ describe('ipc teams handlers', () => {
     expect(result.success).toBe(true);
     expect(computeTeamWatchScope()?.has(createTeam)).toBe(true);
   });
+
+  it.each([
+    { channel: TEAM_CREATE, api: 'createTeam' as const, teamName: 'progress-create' },
+    { channel: TEAM_LAUNCH, api: 'launchTeam' as const, teamName: 'progress-launch' },
+  ])(
+    'records provisioning progress before notifying the invoking renderer for $channel',
+    async ({ channel, api, teamName }) => {
+      const calls: string[] = [];
+      const sender = { send: vi.fn() };
+      const targetWindow = {
+        isDestroyed: () => false,
+        webContents: {
+          isDestroyed: () => false,
+          send: vi.fn(() => calls.push('renderer')),
+        },
+      };
+      vi.mocked(BrowserWindow.fromWebContents).mockReturnValueOnce(targetWindow as never);
+      vi.spyOn(launchIoGovernor, 'noteProvisioningProgress').mockImplementationOnce(() => {
+        calls.push('governor');
+      });
+
+      const result = (await handlers.get(channel)!({ sender } as never, {
+        teamName,
+        members: [{ name: 'alice' }],
+        cwd: os.tmpdir(),
+      })) as { success: boolean };
+      expect(result.success).toBe(true);
+
+      const progress: TeamProvisioningProgress = {
+        runId: `${teamName}-run`,
+        teamName,
+        state: 'spawning',
+        message: 'Starting',
+        startedAt: '2026-07-23T00:00:00.000Z',
+        updatedAt: '2026-07-23T00:00:00.000Z',
+      };
+      const progressCallback = teamHandlerMocks[api].mock.calls.at(-1)?.[1] as
+        | ((value: TeamProvisioningProgress) => void)
+        | undefined;
+      expect(progressCallback).toBeTypeOf('function');
+      progressCallback!(progress);
+
+      expect(calls).toEqual(['governor', 'renderer']);
+      expect(targetWindow.webContents.send).toHaveBeenCalledWith(
+        TEAM_PROVISIONING_PROGRESS,
+        progress
+      );
+      expect(BrowserWindow.fromWebContents).toHaveBeenCalledWith(sender);
+    }
+  );
+
+  it('deduplicates unknown CLI flags and still rejects protected known flags', async () => {
+    teamHandlerMocks.getCliHelpOutput.mockResolvedValueOnce(
+      'Usage\n  --max-turns <count>\n  --model <model>'
+    );
+
+    const result = (await handlers.get(TEAM_VALIDATE_CLI_ARGS)!(
+      {} as never,
+      '--max-turns=5 --unknown 1 --model=sonnet --unknown=again'
+    )) as { success: boolean; data?: { valid: boolean; invalidFlags?: string[] } };
+
+    expect(result).toEqual({
+      success: true,
+      data: { valid: false, invalidFlags: ['--unknown', '--model'] },
+    });
+  });
+
+  it('keeps the CLI validation length boundary and avoids preflight for rejected input', async () => {
+    teamHandlerMocks.getCliHelpOutput.mockResolvedValue('Usage');
+
+    const accepted = await handlers.get(TEAM_VALIDATE_CLI_ARGS)!({} as never, ' '.repeat(2048));
+    const rejected = await handlers.get(TEAM_VALIDATE_CLI_ARGS)!({} as never, ' '.repeat(2049));
+    const wrongType = await handlers.get(TEAM_VALIDATE_CLI_ARGS)!({} as never, 42);
+
+    expect(accepted).toEqual({ success: true, data: { valid: true, invalidFlags: undefined } });
+    expect(rejected).toEqual({ success: false, error: 'rawArgs too long (max 2048)' });
+    expect(wrongType).toEqual({ success: false, error: 'rawArgs must be a string' });
+    expect(teamHandlerMocks.getCliHelpOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, null, 42, '', '   '])(
+    'rejects invalid provisioning run id %j without dispatching',
+    async (runId) => {
+      const status = await handlers.get(TEAM_PROVISIONING_STATUS)!({} as never, runId);
+      const cancel = await handlers.get(TEAM_CANCEL_PROVISIONING)!({} as never, runId);
+
+      expect(status).toEqual({ success: false, error: 'runId is required' });
+      expect(cancel).toEqual({ success: false, error: 'runId is required' });
+      expect(teamHandlerMocks.getProvisioningStatus).not.toHaveBeenCalled();
+      expect(teamHandlerMocks.cancelProvisioning).not.toHaveBeenCalled();
+    }
+  );
+
+  it('trims provisioning run ids before status and cancel dispatch', async () => {
+    const status = await handlers.get(TEAM_PROVISIONING_STATUS)!({} as never, '  run-1  ');
+    const cancel = await handlers.get(TEAM_CANCEL_PROVISIONING)!({} as never, '  run-1  ');
+
+    expect(status).toMatchObject({ success: true });
+    expect(cancel).toMatchObject({ success: true });
+    expect(teamHandlerMocks.getProvisioningStatus).toHaveBeenCalledWith('run-1');
+    expect(teamHandlerMocks.cancelProvisioning).toHaveBeenCalledWith('run-1');
+  });
+
+  it.each([
+    { channel: TEAM_CREATE, api: 'createTeam' as const, teamName: 'cache-create' },
+    { channel: TEAM_LAUNCH, api: 'launchTeam' as const, teamName: 'cache-launch' },
+  ])(
+    'invalidates roster snapshots only after successful $channel completion',
+    async ({ channel, api, teamName }) => {
+      const deferred = createDeferred<{ runId: string }>();
+      teamHandlerMocks[api].mockReturnValueOnce(deferred.promise);
+
+      const pending = handlers.get(channel)!({ sender: { send: vi.fn() } } as never, {
+        teamName,
+        members: [{ name: 'alice' }],
+        cwd: os.tmpdir(),
+      });
+      await flushMicrotasks();
+      expect(service.invalidateMessageFeed).not.toHaveBeenCalledWith(teamName);
+      expect(service.invalidateTeamRuntimeAdvisories).not.toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateTeamConfig).not.toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).not.toHaveBeenCalledWith(
+        teamName
+      );
+
+      deferred.resolve({ runId: `${teamName}-run` });
+      await expect(pending).resolves.toMatchObject({ success: true });
+      expect(service.invalidateMessageFeed).toHaveBeenCalledWith(teamName);
+      expect(service.invalidateTeamRuntimeAdvisories).toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateTeamConfig).toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).toHaveBeenCalledWith(
+        teamName
+      );
+    }
+  );
 
   it('returns cached TEAM_LIST data under active launch pressure without starting another scan', async () => {
     const first = (await handlers.get(TEAM_LIST)!({} as never)) as {

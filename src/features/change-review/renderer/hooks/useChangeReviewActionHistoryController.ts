@@ -10,13 +10,14 @@ import {
 
 import type { ChangeReviewActionHistoryStorePort } from '../ports/changeReviewActionHistoryPorts';
 import type { ReviewUndoActionInput } from '../utils/changeReviewActionHistory';
+import type { ReviewDecisionHydrationStatus } from '../utils/changeReviewScope';
 import type { ReviewRedoAction, ReviewUndoAction } from '@shared/types';
 
 interface UseChangeReviewActionHistoryControllerInput {
   resetKey: string;
   hydrationKey: string | null;
   hydrationScopeKey: string | null;
-  hydrationStatus: 'idle' | 'loading' | 'loaded' | 'error';
+  hydrationStatus: ReviewDecisionHydrationStatus;
   hydratedUndoHistory: ReviewUndoAction[];
   hydratedRedoHistory: ReviewRedoAction[];
   store: ChangeReviewActionHistoryStorePort;
@@ -164,12 +165,14 @@ export function useChangeReviewActionHistoryController({
 
   const discardLatestAction = useCallback(
     (action: ReviewUndoAction): boolean => {
-      const result = popOrderedReviewAction(undoHistoryRef.current, action);
+      const latest = undoHistoryRef.current.at(-1);
+      if (latest?.id !== action.id) return false;
+      const result = popOrderedReviewAction(undoHistoryRef.current, latest);
       if (!result.popped) return false;
       undoHistoryRef.current = result.stack;
       store.publishUndoHistory(result.stack);
       const redoBackup = redoBeforePreparedActionRef.current;
-      if (redoBackup?.actionId === action.id && redoBackup.action === action) {
+      if (redoBackup?.actionId === action.id) {
         redoHistoryRef.current = redoBackup.history;
         store.publishRedoHistory(redoBackup.history);
         setRedoDepth(redoBackup.history.length);

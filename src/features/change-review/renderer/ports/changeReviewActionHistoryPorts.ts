@@ -1,4 +1,10 @@
-import type { ReviewRedoAction, ReviewUndoAction } from '@shared/types';
+import type { ReviewDecisionHydrationStatus } from '../utils/changeReviewScope';
+import type {
+  FileChangeWithContent,
+  HunkDecision,
+  ReviewRedoAction,
+  ReviewUndoAction,
+} from '@shared/types';
 
 export interface ChangeReviewActionHistoryStorePort {
   publishUndoHistory(history: ReviewUndoAction[]): void;
@@ -13,14 +19,14 @@ export interface ChangeReviewDecisionPersistenceScope {
 }
 
 export interface ChangeReviewDecisionPersistenceSnapshot {
-  hunkDecisions: object;
-  fileDecisions: object;
-  reviewActionHistory: object;
-  reviewRedoHistory: object;
-  fileContents: object;
-  fileChunkCounts: object;
+  hunkDecisions: Record<string, HunkDecision>;
+  fileDecisions: Record<string, HunkDecision>;
+  reviewActionHistory: ReviewUndoAction[];
+  reviewRedoHistory: ReviewRedoAction[];
+  fileContents: Record<string, FileChangeWithContent>;
+  fileChunkCounts: Record<string, number>;
   decisionHydrationScopeKey: string | null;
-  decisionHydrationStatus: 'idle' | 'loading' | 'loaded' | 'error';
+  decisionHydrationStatus: ReviewDecisionHydrationStatus;
   applyError: string | null;
 }
 

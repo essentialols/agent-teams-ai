@@ -91,17 +91,20 @@ export function toRollbackReplaceMembersRequest(members: RuntimeRosterMutationMe
   return {
     members: members
       .filter((member) => !member.removedAt && !isLeadRosterMutationMember(member))
-      .map((member) => ({
-        name: member.name.trim(),
-        role: member.role?.trim() || undefined,
-        workflow: member.workflow?.trim() || undefined,
-        isolation: member.isolation === 'worktree' ? ('worktree' as const) : undefined,
-        providerId: normalizeOptionalTeamProviderId(member.providerId),
-        providerBackendId: migrateProviderBackendId(member.providerId, member.providerBackendId),
-        model: member.model?.trim() || undefined,
-        effort: member.effort,
-        fastMode: member.fastMode,
-        mcpPolicy: normalizeTeamMemberMcpPolicy(member.mcpPolicy),
-      })),
+      .map((member) => {
+        const providerId = normalizeOptionalTeamProviderId(member.providerId);
+        return {
+          name: member.name.trim(),
+          role: member.role?.trim() || undefined,
+          workflow: member.workflow?.trim() || undefined,
+          isolation: member.isolation === 'worktree' ? ('worktree' as const) : undefined,
+          providerId,
+          providerBackendId: migrateProviderBackendId(providerId, member.providerBackendId),
+          model: member.model?.trim() || undefined,
+          effort: member.effort,
+          fastMode: member.fastMode,
+          mcpPolicy: normalizeTeamMemberMcpPolicy(member.mcpPolicy),
+        };
+      }),
   };
 }

@@ -1,4 +1,8 @@
 import { migrateProviderBackendId } from '@shared/utils/providerBackend';
+import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy';
+import { normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
+
+import { isLeadRosterMutationMember } from './liveRosterPolicy';
 
 import type { ReplaceMembersDiff, RosterMemberInput } from './rosterMutationModels';
 import type {
@@ -95,12 +99,12 @@ export function buildReplaceMembersDiff(
 ): ReplaceMembersDiff {
   const previousByName = new Map(
     previousMembers
-      .filter((member) => !member.removedAt && member.name.trim().toLowerCase() !== 'team-lead')
+      .filter((member) => !member.removedAt && !isLeadRosterMutationMember(member))
       .map((member) => [member.name.trim().toLowerCase(), normalizeDiffMember(member)])
   );
   const nextByName = new Map(
     nextMembers
-      .filter((member) => member.name.trim().toLowerCase() !== 'team-lead')
+      .filter((member) => !isLeadRosterMutationMember(member))
       .map((member) => [member.name.trim().toLowerCase(), normalizeDiffMember(member)])
   );
 
@@ -163,16 +167,17 @@ export function buildReplaceMembersSummaryMessage(diff: ReplaceMembersDiff): str
 }
 
 function normalizeDiffMember(member: RosterMemberInput): RosterMemberInput {
+  const providerId = normalizeOptionalTeamProviderId(member.providerId);
   return {
     name: member.name.trim(),
     role: normalizeOptionalText(member.role),
     workflow: normalizeOptionalText(member.workflow),
     isolation: member.isolation === 'worktree' ? 'worktree' : undefined,
-    providerId: member.providerId,
-    providerBackendId: migrateProviderBackendId(member.providerId, member.providerBackendId),
+    providerId,
+    providerBackendId: migrateProviderBackendId(providerId, member.providerBackendId),
     model: normalizeOptionalText(member.model),
     effort: member.effort,
     fastMode: member.fastMode,
-    mcpPolicy: member.mcpPolicy,
+    mcpPolicy: normalizeTeamMemberMcpPolicy(member.mcpPolicy),
   };
 }

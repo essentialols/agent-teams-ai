@@ -67,4 +67,22 @@ describe('member update notifications', () => {
       },
     ]);
   });
+
+  it('uses the shared lead policy when excluding roster owners from the diff', () => {
+    const diff = buildReplaceMembersDiff(
+      [{ name: 'lead', role: 'Team Lead', providerId: 'codex' }],
+      [{ name: 'orchestrator', role: 'Lead coordinator', providerId: 'codex' }]
+    );
+
+    expect(diff).toEqual({ added: [], removed: [], updated: [] });
+  });
+
+  it('normalizes semantically equivalent MCP policies before comparing members', () => {
+    const diff = buildReplaceMembersDiff(
+      [{ name: 'alice', providerId: 'codex', mcpPolicy: { mode: 'inheritLead' } }],
+      [{ name: 'alice', providerId: 'codex' }]
+    );
+
+    expect(diff.updated).toEqual([]);
+  });
 });

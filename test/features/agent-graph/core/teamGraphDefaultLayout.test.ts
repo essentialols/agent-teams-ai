@@ -1,8 +1,11 @@
-import { buildTeamGraphDefaultLayoutSeed } from '@shared/utils/teamGraphDefaultLayout';
+import {
+  buildOrderedVisibleTeamGraphOwnerIds,
+  buildTeamGraphDefaultLayoutSeed,
+} from '@features/agent-graph';
 import { describe, expect, it } from 'vitest';
 
 describe('team graph default layout', () => {
-  function members(count: number): Array<{ name: string; agentId: string }> {
+  function members(count: number): { name: string; agentId: string }[] {
     return Array.from({ length: count }, (_, index) => ({
       name: `member-${index}`,
       agentId: `agent-${index}`,
@@ -74,6 +77,22 @@ describe('team graph default layout', () => {
       'agent-11': { ringIndex: 4, sectorIndex: 0 },
       'agent-12': { ringIndex: 4, sectorIndex: 1 },
       'agent-13': { ringIndex: 4, sectorIndex: 2 },
+    });
+  });
+
+  it('fails closed instead of merging duplicate stable owner identities', () => {
+    const duplicateMembers = [
+      { name: 'alice', agentId: 'shared-agent' },
+      { name: 'bob', agentId: 'shared-agent' },
+      { name: 'tom', agentId: 'agent-tom' },
+    ];
+
+    expect(buildOrderedVisibleTeamGraphOwnerIds(duplicateMembers)).toEqual([]);
+    expect(buildTeamGraphDefaultLayoutSeed(duplicateMembers)).toEqual({
+      orderedVisibleOwnerIds: [],
+      signature: null,
+      assignments: {},
+      duplicateStableOwnerIds: ['shared-agent'],
     });
   });
 });

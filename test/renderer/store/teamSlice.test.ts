@@ -1200,6 +1200,14 @@ describe('teamSlice actions', () => {
 
   it('commits owner slot drops in the current session while persistence is disabled', () => {
     const store = createSliceStore();
+    store.setState({
+      slotAssignmentsByTeam: {
+        'my-team': {
+          'agent-alice': { ringIndex: 0, sectorIndex: 1 },
+          'agent-bob': { ringIndex: 0, sectorIndex: 2 },
+        },
+      },
+    });
 
     store
       .getState()

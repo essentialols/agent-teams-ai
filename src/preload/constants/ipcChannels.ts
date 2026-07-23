@@ -229,15 +229,6 @@ export const TEAM_LIST = 'team:list';
 /** Get detailed team data */
 export const TEAM_GET_DATA = 'team:getData';
 
-/** Get one full task by id */
-export const TEAM_GET_TASK = 'team:getTask';
-
-/** Get lightweight task change presence map for the currently viewed team */
-export const TEAM_GET_TASK_CHANGE_PRESENCE = 'team:getTaskChangePresence';
-
-/** Enable or disable task change presence tracking for a visible team tab */
-export const TEAM_SET_CHANGE_PRESENCE_TRACKING = 'team:setChangePresenceTracking';
-
 /** Enable or disable live teammate tool activity tracking for a visible team tab */
 export const TEAM_SET_TOOL_ACTIVITY_TRACKING = 'team:setToolActivityTracking';
 
@@ -246,12 +237,6 @@ export const TEAM_SET_TASK_LOG_STREAM_TRACKING = 'team:setTaskLogStreamTracking'
 
 /** Get buffered Claude CLI logs (paged, newest-first) */
 export const TEAM_GET_CLAUDE_LOGS = 'team:getClaudeLogs';
-
-/** Update team kanban state */
-export const TEAM_UPDATE_KANBAN = 'team:updateKanban';
-
-/** Update kanban column task order (drag-and-drop within column) */
-export const TEAM_UPDATE_KANBAN_COLUMN_ORDER = 'team:updateKanbanColumnOrder';
 
 /** Send inbox message to team member */
 export const TEAM_SEND_MESSAGE = 'team:sendMessage';
@@ -264,9 +249,6 @@ export const TEAM_GET_MESSAGES_PAGE = 'team:getMessagesPage';
 
 /** Lightweight message-derived member activity facts */
 export const TEAM_GET_MEMBER_ACTIVITY_META = 'team:getMemberActivityMeta';
-
-/** Request review for task */
-export const TEAM_REQUEST_REVIEW = 'team:requestReview';
 
 /** Team change events (main -> renderer) */
 export const TEAM_CHANGE = 'team:change';
@@ -307,18 +289,6 @@ export const TEAM_PROCESS_SEND = 'team:processSend';
 /** Check if team has a live CLI process */
 export const TEAM_PROCESS_ALIVE = 'team:processAlive';
 
-/** Create a task in team's task directory */
-export const TEAM_CREATE_TASK = 'team:createTask';
-
-/** Update task status directly (pending/in_progress/completed) */
-export const TEAM_UPDATE_TASK_STATUS = 'team:updateTaskStatus';
-
-/** Update task owner (reassign) */
-export const TEAM_UPDATE_TASK_OWNER = 'team:updateTaskOwner';
-
-/** Update task fields (subject, description) */
-export const TEAM_UPDATE_TASK_FIELDS = 'team:updateTaskFields';
-
 /** Soft-delete a team (sets deletedAt in config) */
 export const TEAM_DELETE_TEAM = 'team:deleteTeam';
 
@@ -327,9 +297,6 @@ export const TEAM_RESTORE = 'team:restoreTeam';
 
 /** Permanently delete a team and its associated task directory */
 export const TEAM_PERMANENTLY_DELETE = 'team:permanentlyDeleteTeam';
-
-/** Restore a soft-deleted task (removes deletedAt, sets status back to pending) */
-export const TEAM_RESTORE_TASK = 'team:restoreTask';
 
 /** Get list of teams with live CLI processes */
 export const TEAM_ALIVE_LIST = 'team:aliveList';
@@ -358,18 +325,6 @@ export const TEAM_UPDATE_CONFIG = 'team:updateConfig';
 
 /** Get aggregated member stats */
 export const TEAM_GET_MEMBER_STATS = 'team:getMemberStats';
-
-/** Start a pending task (transition to in_progress + notify agent) */
-export const TEAM_START_TASK = 'team:startTask';
-
-/** Start a pending task from UI — always notifies owner (including lead in solo teams) */
-export const TEAM_START_TASK_BY_USER = 'team:startTaskByUser';
-
-/** Get all tasks across all teams */
-export const TEAM_GET_ALL_TASKS = 'team:getAllTasks';
-
-/** Add a comment to a task */
-export const TEAM_ADD_TASK_COMMENT = 'team:addTaskComment';
 
 /** Get current git branch for a project path (live read from .git/HEAD) */
 export const TEAM_GET_PROJECT_BRANCH = 'team:getProjectBranch';
@@ -422,23 +377,8 @@ export const TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES = 'team:retryFailedOpenC
 /** Skip a failed teammate for the current launch */
 export const TEAM_SKIP_MEMBER_FOR_LAUNCH = 'team:skipMemberForLaunch';
 
-/** Soft-delete a task (set status to 'deleted' with deletedAt timestamp) */
-export const TEAM_SOFT_DELETE_TASK = 'team:softDeleteTask';
-
-/** Get all soft-deleted tasks for a team */
-export const TEAM_GET_DELETED_TASKS = 'team:getDeletedTasks';
-
-/** Set needsClarification flag on a task */
-export const TEAM_SET_TASK_CLARIFICATION = 'team:setTaskClarification';
-
 /** Show native OS notification for a team message */
 export const TEAM_SHOW_MESSAGE_NOTIFICATION = 'team:showMessageNotification';
-
-/** Add a relationship (blockedBy/blocks/related) between two tasks */
-export const TEAM_ADD_TASK_RELATIONSHIP = 'team:addTaskRelationship';
-
-/** Remove a relationship (blockedBy/blocks/related) between two tasks */
-export const TEAM_REMOVE_TASK_RELATIONSHIP = 'team:removeTaskRelationship';
 
 /** Save an image attachment to a task */
 export const TEAM_SAVE_TASK_ATTACHMENT = 'team:saveTaskAttachment';
@@ -455,6 +395,28 @@ export {
   TEAM_TOOL_APPROVAL_RESPOND,
   TEAM_TOOL_APPROVAL_SETTINGS,
 } from '@features/team-approvals/contracts';
+export {
+  TEAM_ADD_TASK_COMMENT,
+  TEAM_ADD_TASK_RELATIONSHIP,
+  TEAM_CREATE_TASK,
+  TEAM_GET_ALL_TASKS,
+  TEAM_GET_DELETED_TASKS,
+  TEAM_GET_TASK,
+  TEAM_GET_TASK_CHANGE_PRESENCE,
+  TEAM_REMOVE_TASK_RELATIONSHIP,
+  TEAM_REQUEST_REVIEW,
+  TEAM_RESTORE_TASK,
+  TEAM_SET_CHANGE_PRESENCE_TRACKING,
+  TEAM_SET_TASK_CLARIFICATION,
+  TEAM_SOFT_DELETE_TASK,
+  TEAM_START_TASK,
+  TEAM_START_TASK_BY_USER,
+  TEAM_UPDATE_KANBAN,
+  TEAM_UPDATE_KANBAN_COLUMN_ORDER,
+  TEAM_UPDATE_TASK_FIELDS,
+  TEAM_UPDATE_TASK_OWNER,
+  TEAM_UPDATE_TASK_STATUS,
+} from '@features/team-task-board/contracts';
 
 /** Validate custom CLI args against `claude --help` output */
 export const TEAM_VALIDATE_CLI_ARGS = 'team:validateCliArgs';

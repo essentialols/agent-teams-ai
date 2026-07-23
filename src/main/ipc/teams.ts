@@ -20,23 +20,18 @@ import { safeSendToRenderer } from '@main/utils/safeWebContentsSend';
 import { stripMarkdown } from '@main/utils/textFormatting';
 import {
   TEAM_ADD_MEMBER,
-  TEAM_ADD_TASK_COMMENT,
-  TEAM_ADD_TASK_RELATIONSHIP,
   TEAM_ALIVE_LIST,
   TEAM_CANCEL_PROVISIONING,
   TEAM_CREATE,
   TEAM_CREATE_CONFIG,
   TEAM_CREATE_INITIAL_GIT_COMMIT,
-  TEAM_CREATE_TASK,
   TEAM_DELETE_DRAFT,
   TEAM_DELETE_TASK_ATTACHMENT,
   TEAM_DELETE_TEAM,
   TEAM_GET_AGENT_RUNTIME,
-  TEAM_GET_ALL_TASKS,
   TEAM_GET_ATTACHMENTS,
   TEAM_GET_CLAUDE_LOGS,
   TEAM_GET_DATA,
-  TEAM_GET_DELETED_TASKS,
   TEAM_GET_LOGS_FOR_TASK,
   TEAM_GET_MEMBER_ACTIVITY_META,
   TEAM_GET_MEMBER_LOGS,
@@ -45,9 +40,7 @@ import {
   TEAM_GET_OPENCODE_RUNTIME_DELIVERY_STATUS,
   TEAM_GET_PROJECT_BRANCH,
   TEAM_GET_SAVED_REQUEST,
-  TEAM_GET_TASK,
   TEAM_GET_TASK_ATTACHMENT,
-  TEAM_GET_TASK_CHANGE_PRESENCE,
   TEAM_GET_WORKTREE_GIT_STATUS,
   TEAM_INITIALIZE_GIT_REPOSITORY,
   TEAM_KILL_PROCESS,
@@ -64,40 +57,25 @@ import {
   TEAM_PROVISIONING_PROGRESS,
   TEAM_PROVISIONING_STATUS,
   TEAM_REMOVE_MEMBER,
-  TEAM_REMOVE_TASK_RELATIONSHIP,
   TEAM_REPLACE_MEMBERS,
-  TEAM_REQUEST_REVIEW,
   TEAM_RESTART_MEMBER,
   TEAM_RESTORE,
   TEAM_RESTORE_MEMBER,
-  TEAM_RESTORE_TASK,
   TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES,
   TEAM_SAVE_TASK_ATTACHMENT,
   TEAM_SEND_MESSAGE,
-  TEAM_SET_CHANGE_PRESENCE_TRACKING,
   TEAM_SET_PROJECT_BRANCH_TRACKING,
-  TEAM_SET_TASK_CLARIFICATION,
   TEAM_SET_TASK_LOG_STREAM_TRACKING,
   TEAM_SET_TOOL_ACTIVITY_TRACKING,
   TEAM_SHOW_MESSAGE_NOTIFICATION,
   TEAM_SKIP_MEMBER_FOR_LAUNCH,
-  TEAM_SOFT_DELETE_TASK,
-  TEAM_START_TASK,
-  TEAM_START_TASK_BY_USER,
   TEAM_STOP,
   TEAM_UPDATE_CONFIG,
-  TEAM_UPDATE_KANBAN,
-  TEAM_UPDATE_KANBAN_COLUMN_ORDER,
   TEAM_UPDATE_MEMBER_ROLE,
-  TEAM_UPDATE_TASK_FIELDS,
-  TEAM_UPDATE_TASK_OWNER,
-  TEAM_UPDATE_TASK_STATUS,
   TEAM_VALIDATE_CLI_ARGS,
   // eslint-disable-next-line boundaries/element-types -- IPC channel constants are shared between main and preload by design
 } from '@preload/constants/ipcChannels';
 import { wrapAgentBlock } from '@shared/constants/agentBlocks';
-import { KANBAN_COLUMN_IDS } from '@shared/constants/kanban';
-import { MAX_TEXT_LENGTH } from '@shared/constants/teamLimits';
 import { createSafeAppError } from '@shared/contracts/hosted';
 import {
   extractFlagsFromHelp,
@@ -116,7 +94,6 @@ import {
   buildStandaloneSlashCommandMeta,
   parseStandaloneSlashCommand,
 } from '@shared/utils/slashCommands';
-import { looksLikeCanonicalTaskId } from '@shared/utils/taskIdentity';
 import { normalizeTeamMemberMcpPolicy } from '@shared/utils/teamMemberMcpPolicy';
 import { isTeamProviderId, normalizeOptionalTeamProviderId } from '@shared/utils/teamProvider';
 import crypto from 'crypto';
@@ -153,6 +130,7 @@ import { TeamTaskAttachmentStore } from '../services/team/TeamTaskAttachmentStor
 import { TeamWorktreeGitService } from '../services/team/TeamWorktreeGitService';
 
 import { teamMessageNotificationScanner } from './teams/teamMessageNotificationScanner';
+import { validateTaskRefs } from './validation/taskRefs';
 import {
   validateFromField,
   validateMemberName,
@@ -187,17 +165,13 @@ import type { TeamBackupService } from '../services/team/TeamBackupService';
 import type { TeamMembersMetaFile } from '../services/team/TeamMembersMetaStore';
 import type { TeamLifecycleReadHost } from '@main/composition/hosted/teamLifecycleReadComposition';
 import type {
-  AddTaskCommentRequest,
   AgentActionMode,
   AttachmentFileData,
   AttachmentMeta,
   AttachmentPayload,
-  CreateTaskRequest,
   EffortLevel,
-  GlobalTask,
   InboxMessage,
   IpcResult,
-  KanbanColumnId,
   LeadActivitySnapshot,
   LeadContextUsageSnapshot,
   MemberFullStats,
@@ -209,9 +183,6 @@ import type {
   SendMessageRequest,
   SendMessageResult,
   TaskAttachmentMeta,
-  TaskChangePresenceState,
-  TaskComment,
-  TaskRef,
   TeamAgentRuntimeSnapshot,
   TeamClaudeLogsQuery,
   TeamClaudeLogsResponse,
@@ -233,13 +204,9 @@ import type {
   TeamProvisioningPrepareResult,
   TeamProvisioningProgress,
   TeamSummary,
-  TeamTask,
-  TeamTaskStatus,
-  TeamTaskWithKanban,
   TeamUpdateConfigRequest,
   TeamViewSnapshot,
   TeamWorktreeGitStatus,
-  UpdateKanbanPatch,
 } from '@shared/types';
 import type { CliArgsValidationResult } from '@shared/utils/cliArgsParser';
 
@@ -845,8 +812,6 @@ export function initializeTeamHandlers(
 export function registerTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(TEAM_LIST, handleListTeams);
   ipcMain.handle(TEAM_GET_DATA, handleGetData);
-  ipcMain.handle(TEAM_GET_TASK_CHANGE_PRESENCE, handleGetTaskChangePresence);
-  ipcMain.handle(TEAM_SET_CHANGE_PRESENCE_TRACKING, handleSetChangePresenceTracking);
   ipcMain.handle(TEAM_SET_PROJECT_BRANCH_TRACKING, handleSetProjectBranchTracking);
   ipcMain.handle(TEAM_SET_TASK_LOG_STREAM_TRACKING, handleSetTaskLogStreamTracking);
   ipcMain.handle(TEAM_SET_TOOL_ACTIVITY_TRACKING, handleSetToolActivityTracking);
@@ -864,14 +829,6 @@ export function registerTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(TEAM_GET_OPENCODE_RUNTIME_DELIVERY_STATUS, handleGetOpenCodeRuntimeDeliveryStatus);
   ipcMain.handle(TEAM_GET_MESSAGES_PAGE, handleGetMessagesPage);
   ipcMain.handle(TEAM_GET_MEMBER_ACTIVITY_META, handleGetMemberActivityMeta);
-  ipcMain.handle(TEAM_CREATE_TASK, handleCreateTask);
-  ipcMain.handle(TEAM_GET_TASK, handleGetTask);
-  ipcMain.handle(TEAM_REQUEST_REVIEW, handleRequestReview);
-  ipcMain.handle(TEAM_UPDATE_KANBAN, handleUpdateKanban);
-  ipcMain.handle(TEAM_UPDATE_KANBAN_COLUMN_ORDER, handleUpdateKanbanColumnOrder);
-  ipcMain.handle(TEAM_UPDATE_TASK_STATUS, handleUpdateTaskStatus);
-  ipcMain.handle(TEAM_UPDATE_TASK_OWNER, handleUpdateTaskOwner);
-  ipcMain.handle(TEAM_UPDATE_TASK_FIELDS, handleUpdateTaskFields);
   ipcMain.handle(TEAM_DELETE_TEAM, handleDeleteTeam);
   ipcMain.handle(TEAM_RESTORE, handleRestoreTeam);
   ipcMain.handle(TEAM_PERMANENTLY_DELETE, handlePermanentlyDeleteTeam);
@@ -884,10 +841,6 @@ export function registerTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(TEAM_GET_LOGS_FOR_TASK, handleGetLogsForTask);
   ipcMain.handle(TEAM_GET_MEMBER_STATS, handleGetMemberStats);
   ipcMain.handle(TEAM_UPDATE_CONFIG, handleUpdateConfig);
-  ipcMain.handle(TEAM_START_TASK, handleStartTask);
-  ipcMain.handle(TEAM_START_TASK_BY_USER, handleStartTaskByUser);
-  ipcMain.handle(TEAM_GET_ALL_TASKS, handleGetAllTasks);
-  ipcMain.handle(TEAM_ADD_TASK_COMMENT, handleAddTaskComment);
   ipcMain.handle(TEAM_ADD_MEMBER, handleAddMember);
   ipcMain.handle(TEAM_REPLACE_MEMBERS, handleReplaceMembers);
   ipcMain.handle(TEAM_REMOVE_MEMBER, handleRemoveMember);
@@ -906,13 +859,7 @@ export function registerTeamHandlers(ipcMain: IpcMain): void {
   );
   ipcMain.handle(TEAM_RESTART_MEMBER, handleRestartMember);
   ipcMain.handle(TEAM_SKIP_MEMBER_FOR_LAUNCH, handleSkipMemberForLaunch);
-  ipcMain.handle(TEAM_SOFT_DELETE_TASK, handleSoftDeleteTask);
-  ipcMain.handle(TEAM_RESTORE_TASK, handleRestoreTask);
-  ipcMain.handle(TEAM_GET_DELETED_TASKS, handleGetDeletedTasks);
-  ipcMain.handle(TEAM_SET_TASK_CLARIFICATION, handleSetTaskClarification);
   ipcMain.handle(TEAM_SHOW_MESSAGE_NOTIFICATION, handleShowMessageNotification);
-  ipcMain.handle(TEAM_ADD_TASK_RELATIONSHIP, handleAddTaskRelationship);
-  ipcMain.handle(TEAM_REMOVE_TASK_RELATIONSHIP, handleRemoveTaskRelationship);
   ipcMain.handle(TEAM_SAVE_TASK_ATTACHMENT, handleSaveTaskAttachment);
   ipcMain.handle(TEAM_GET_TASK_ATTACHMENT, handleGetTaskAttachment);
   ipcMain.handle(TEAM_DELETE_TASK_ATTACHMENT, handleDeleteTaskAttachment);
@@ -925,8 +872,6 @@ export function registerTeamHandlers(ipcMain: IpcMain): void {
 export function removeTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(TEAM_LIST);
   ipcMain.removeHandler(TEAM_GET_DATA);
-  ipcMain.removeHandler(TEAM_GET_TASK_CHANGE_PRESENCE);
-  ipcMain.removeHandler(TEAM_SET_CHANGE_PRESENCE_TRACKING);
   ipcMain.removeHandler(TEAM_SET_PROJECT_BRANCH_TRACKING);
   ipcMain.removeHandler(TEAM_SET_TASK_LOG_STREAM_TRACKING);
   ipcMain.removeHandler(TEAM_SET_TOOL_ACTIVITY_TRACKING);
@@ -944,14 +889,6 @@ export function removeTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(TEAM_GET_OPENCODE_RUNTIME_DELIVERY_STATUS);
   ipcMain.removeHandler(TEAM_GET_MESSAGES_PAGE);
   ipcMain.removeHandler(TEAM_GET_MEMBER_ACTIVITY_META);
-  ipcMain.removeHandler(TEAM_CREATE_TASK);
-  ipcMain.removeHandler(TEAM_GET_TASK);
-  ipcMain.removeHandler(TEAM_REQUEST_REVIEW);
-  ipcMain.removeHandler(TEAM_UPDATE_KANBAN);
-  ipcMain.removeHandler(TEAM_UPDATE_KANBAN_COLUMN_ORDER);
-  ipcMain.removeHandler(TEAM_UPDATE_TASK_STATUS);
-  ipcMain.removeHandler(TEAM_UPDATE_TASK_OWNER);
-  ipcMain.removeHandler(TEAM_UPDATE_TASK_FIELDS);
   ipcMain.removeHandler(TEAM_DELETE_TEAM);
   ipcMain.removeHandler(TEAM_RESTORE);
   ipcMain.removeHandler(TEAM_PERMANENTLY_DELETE);
@@ -964,10 +901,6 @@ export function removeTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(TEAM_GET_LOGS_FOR_TASK);
   ipcMain.removeHandler(TEAM_GET_MEMBER_STATS);
   ipcMain.removeHandler(TEAM_UPDATE_CONFIG);
-  ipcMain.removeHandler(TEAM_START_TASK);
-  ipcMain.removeHandler(TEAM_START_TASK_BY_USER);
-  ipcMain.removeHandler(TEAM_GET_ALL_TASKS);
-  ipcMain.removeHandler(TEAM_ADD_TASK_COMMENT);
   ipcMain.removeHandler(TEAM_ADD_MEMBER);
   ipcMain.removeHandler(TEAM_REPLACE_MEMBERS);
   ipcMain.removeHandler(TEAM_REMOVE_MEMBER);
@@ -983,13 +916,7 @@ export function removeTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES);
   ipcMain.removeHandler(TEAM_RESTART_MEMBER);
   ipcMain.removeHandler(TEAM_SKIP_MEMBER_FOR_LAUNCH);
-  ipcMain.removeHandler(TEAM_SOFT_DELETE_TASK);
-  ipcMain.removeHandler(TEAM_RESTORE_TASK);
-  ipcMain.removeHandler(TEAM_GET_DELETED_TASKS);
-  ipcMain.removeHandler(TEAM_SET_TASK_CLARIFICATION);
   ipcMain.removeHandler(TEAM_SHOW_MESSAGE_NOTIFICATION);
-  ipcMain.removeHandler(TEAM_ADD_TASK_RELATIONSHIP);
-  ipcMain.removeHandler(TEAM_REMOVE_TASK_RELATIONSHIP);
   ipcMain.removeHandler(TEAM_SAVE_TASK_ATTACHMENT);
   ipcMain.removeHandler(TEAM_GET_TASK_ATTACHMENT);
   ipcMain.removeHandler(TEAM_DELETE_TASK_ATTACHMENT);
@@ -1396,38 +1323,6 @@ async function classifyMissingTeamData(teamName: string): Promise<'provisioning'
     null
   );
   return meta ? 'draft' : null;
-}
-
-async function handleGetTaskChangePresence(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<Record<string, TaskChangePresenceState>>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-
-  return wrapTeamHandler('getTaskChangePresence', () =>
-    getTeamDataService().getTaskChangePresence(validated.value!)
-  );
-}
-
-async function handleSetChangePresenceTracking(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  enabled: unknown
-): Promise<IpcResult<void>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  if (typeof enabled !== 'boolean') {
-    return { success: false, error: 'enabled must be a boolean' };
-  }
-
-  return wrapTeamHandler('setChangePresenceTracking', async () => {
-    getTeamDataService().setTaskChangePresenceTracking(validated.value!, enabled);
-  });
 }
 
 async function handleSetProjectBranchTracking(
@@ -2761,66 +2656,6 @@ async function handleCancelProvisioning(
   );
 }
 
-function isUpdateKanbanPatch(value: unknown): value is UpdateKanbanPatch {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const patch = value as Partial<UpdateKanbanPatch> & { op?: unknown; column?: unknown };
-  if (patch.op === 'remove') {
-    return true;
-  }
-
-  if (patch.op === 'request_changes') {
-    return (
-      (patch.comment === undefined || typeof patch.comment === 'string') &&
-      validateTaskRefs((patch as { taskRefs?: unknown }).taskRefs).valid
-    );
-  }
-
-  return patch.op === 'set_column' && (patch.column === 'review' || patch.column === 'approved');
-}
-
-function validateTaskRefs(
-  value: unknown
-): { valid: true; value: TaskRef[] | undefined } | { valid: false; error: string } {
-  if (value === undefined) {
-    return { valid: true, value: undefined };
-  }
-  if (!Array.isArray(value)) {
-    return { valid: false, error: 'taskRefs must be an array' };
-  }
-
-  const taskRefs: TaskRef[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== 'object') {
-      return { valid: false, error: 'taskRefs entries must be objects' };
-    }
-    const row = entry as Partial<TaskRef>;
-    const taskId = typeof row.taskId === 'string' ? row.taskId.trim() : '';
-    const displayId = typeof row.displayId === 'string' ? row.displayId.trim() : '';
-    const teamName = typeof row.teamName === 'string' ? row.teamName.trim() : '';
-    if (!taskId || !displayId || !teamName) {
-      return { valid: false, error: 'Each taskRef must include taskId, displayId, and teamName' };
-    }
-    const validatedTaskId = validateTaskId(taskId);
-    if (!validatedTaskId.valid) {
-      return { valid: false, error: validatedTaskId.error ?? 'Invalid taskRef taskId' };
-    }
-    const validatedTeamName = validateTeamName(teamName);
-    if (!validatedTeamName.valid) {
-      return { valid: false, error: validatedTeamName.error ?? 'Invalid taskRef teamName' };
-    }
-    taskRefs.push({
-      taskId: validatedTaskId.value!,
-      displayId,
-      teamName: validatedTeamName.value!,
-    });
-  }
-
-  return { valid: true, value: taskRefs };
-}
-
 async function handleGetAttachments(
   _event: IpcMainInvokeEvent,
   teamName: unknown,
@@ -3526,377 +3361,6 @@ async function handleGetOpenCodeRuntimeDeliveryStatus(
   );
 }
 
-async function handleCreateTask(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  request: unknown
-): Promise<IpcResult<TeamTask>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  if (!request || typeof request !== 'object') {
-    return { success: false, error: 'Invalid create task request' };
-  }
-
-  const payload = request as Partial<CreateTaskRequest>;
-  let command: CreateTaskRequest['command'];
-  if (payload.command !== undefined) {
-    if (!payload.command || typeof payload.command !== 'object') {
-      return { success: false, error: 'command must be an object' };
-    }
-    const commandId = payload.command.commandId;
-    const idempotencyKey = payload.command.idempotencyKey;
-    if (typeof commandId !== 'string' || !looksLikeCanonicalTaskId(commandId)) {
-      return { success: false, error: 'command.commandId must be a UUID' };
-    }
-    if (
-      typeof idempotencyKey !== 'string' ||
-      idempotencyKey.trim().length === 0 ||
-      idempotencyKey.trim().length > 200
-    ) {
-      return {
-        success: false,
-        error: 'command.idempotencyKey must be a non-empty string up to 200 characters',
-      };
-    }
-    command = {
-      commandId: commandId.trim(),
-      idempotencyKey: idempotencyKey.trim(),
-    };
-  }
-  if (typeof payload.subject !== 'string' || payload.subject.trim().length === 0) {
-    return { success: false, error: 'subject must be a non-empty string' };
-  }
-  if (payload.subject.trim().length > 500) {
-    return { success: false, error: 'subject exceeds max length (500)' };
-  }
-  if (payload.description !== undefined && typeof payload.description !== 'string') {
-    return { success: false, error: 'description must be string' };
-  }
-  const validatedDescriptionTaskRefs = validateTaskRefs(payload.descriptionTaskRefs);
-  if (!validatedDescriptionTaskRefs.valid) {
-    return { success: false, error: validatedDescriptionTaskRefs.error };
-  }
-  if (payload.owner !== undefined) {
-    const validatedOwner = validateMemberName(payload.owner);
-    if (!validatedOwner.valid) {
-      return { success: false, error: validatedOwner.error ?? 'Invalid owner' };
-    }
-  }
-  if (payload.blockedBy !== undefined) {
-    if (
-      !Array.isArray(payload.blockedBy) ||
-      payload.blockedBy.some((id) => typeof id !== 'string')
-    ) {
-      return { success: false, error: 'blockedBy must be an array of task ID strings' };
-    }
-  }
-  if (payload.related !== undefined) {
-    if (!Array.isArray(payload.related) || payload.related.some((id) => typeof id !== 'string')) {
-      return { success: false, error: 'related must be an array of task ID strings' };
-    }
-    for (const id of payload.related) {
-      const validated = validateTaskId(id);
-      if (!validated.valid) {
-        return { success: false, error: validated.error ?? 'Invalid related task id' };
-      }
-    }
-  }
-  if (payload.prompt !== undefined) {
-    if (typeof payload.prompt !== 'string') {
-      return { success: false, error: 'prompt must be a string' };
-    }
-    if (payload.prompt.length > 5000) {
-      return { success: false, error: 'prompt exceeds max length (5000)' };
-    }
-  }
-  const validatedPromptTaskRefs = validateTaskRefs(payload.promptTaskRefs);
-  if (!validatedPromptTaskRefs.valid) {
-    return { success: false, error: validatedPromptTaskRefs.error };
-  }
-  if (payload.startImmediately !== undefined && typeof payload.startImmediately !== 'boolean') {
-    return { success: false, error: 'startImmediately must be a boolean' };
-  }
-
-  return wrapTeamHandler('createTask', () =>
-    getTeamDataService().createTask(validatedTeamName.value!, {
-      ...(command ? { command } : {}),
-      subject: payload.subject!.trim(),
-      description: payload.description?.trim(),
-      owner: payload.owner?.trim() || undefined,
-      blockedBy: payload.blockedBy,
-      related: payload.related,
-      descriptionTaskRefs: validatedDescriptionTaskRefs.value,
-      prompt: payload.prompt?.trim() || undefined,
-      promptTaskRefs: validatedPromptTaskRefs.value,
-      startImmediately: payload.startImmediately,
-    })
-  );
-}
-
-async function handleRequestReview(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  return wrapTeamHandler('requestReview', () =>
-    getTeamDataService().requestReview(validatedTeamName.value!, validatedTaskId.value!)
-  );
-}
-
-async function handleGetTask(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown
-): Promise<IpcResult<TeamTaskWithKanban | null>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  return wrapTeamHandler('getTask', () =>
-    getTeamDataService().getTask(validatedTeamName.value!, validatedTaskId.value!)
-  );
-}
-
-async function handleUpdateKanban(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  patch: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  if (!isUpdateKanbanPatch(patch)) {
-    return { success: false, error: 'Invalid kanban patch' };
-  }
-
-  return wrapTeamHandler('updateKanban', async () => {
-    await getTeamDataService().updateKanban(
-      validatedTeamName.value!,
-      validatedTaskId.value!,
-      patch
-    );
-  });
-}
-
-function validateKanbanColumnId(
-  value: unknown
-): { valid: true; value: KanbanColumnId } | { valid: false; error: string } {
-  if (typeof value !== 'string' || !KANBAN_COLUMN_IDS.includes(value as KanbanColumnId)) {
-    return { valid: false, error: `columnId must be one of: ${KANBAN_COLUMN_IDS.join(', ')}` };
-  }
-  return { valid: true, value: value as KanbanColumnId };
-}
-
-async function handleUpdateKanbanColumnOrder(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  columnId: unknown,
-  orderedTaskIds: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-  const validatedColumnId = validateKanbanColumnId(columnId);
-  if (!validatedColumnId.valid) {
-    return { success: false, error: validatedColumnId.error ?? 'Invalid columnId' };
-  }
-  if (!Array.isArray(orderedTaskIds)) {
-    return { success: false, error: 'orderedTaskIds must be an array' };
-  }
-  const ids = orderedTaskIds.filter((id): id is string => typeof id === 'string');
-  return wrapTeamHandler('updateKanbanColumnOrder', () =>
-    getTeamDataService().updateKanbanColumnOrder(
-      validatedTeamName.value!,
-      validatedColumnId.value,
-      ids
-    )
-  );
-}
-
-const VALID_TASK_STATUSES: TeamTaskStatus[] = ['pending', 'in_progress', 'completed'];
-
-async function handleUpdateTaskStatus(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  status: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  if (typeof status !== 'string' || !VALID_TASK_STATUSES.includes(status as TeamTaskStatus)) {
-    return { success: false, error: `status must be one of: ${VALID_TASK_STATUSES.join(', ')}` };
-  }
-
-  return wrapTeamHandler('updateTaskStatus', () =>
-    getTeamDataService().updateTaskStatus(
-      validatedTeamName.value!,
-      validatedTaskId.value!,
-      status as TeamTaskStatus
-    )
-  );
-}
-
-async function handleSoftDeleteTask(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  return wrapTeamHandler('softDeleteTask', () =>
-    getTeamDataService().softDeleteTask(validatedTeamName.value!, validatedTaskId.value!)
-  );
-}
-
-async function handleRestoreTask(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  return wrapTeamHandler('restoreTask', () =>
-    getTeamDataService().restoreTask(validatedTeamName.value!, validatedTaskId.value!)
-  );
-}
-
-async function handleGetDeletedTasks(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<TeamTask[]>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  return wrapTeamHandler('getDeletedTasks', () =>
-    getTeamDataService().getDeletedTasks(validatedTeamName.value!)
-  );
-}
-
-const VALID_CLARIFICATION_VALUES = ['lead', 'user'] as const;
-
-async function handleSetTaskClarification(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  value: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  if (
-    value !== null &&
-    (typeof value !== 'string' || !VALID_CLARIFICATION_VALUES.includes(value as 'lead' | 'user'))
-  ) {
-    return {
-      success: false,
-      error: `value must be "lead", "user", or null`,
-    };
-  }
-
-  return wrapTeamHandler('setTaskClarification', () =>
-    getTeamDataService().setTaskNeedsClarification(
-      validatedTeamName.value!,
-      validatedTaskId.value!,
-      value as 'lead' | 'user' | null
-    )
-  );
-}
-
-async function handleUpdateTaskOwner(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  owner: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-
-  let nextOwner: string | null = null;
-  if (owner !== null) {
-    const validatedOwner = validateMemberName(owner);
-    if (!validatedOwner.valid) {
-      return { success: false, error: validatedOwner.error ?? 'Invalid owner' };
-    }
-    nextOwner = validatedOwner.value!;
-  }
-
-  return wrapTeamHandler('updateTaskOwner', () =>
-    getTeamDataService().updateTaskOwner(
-      validatedTeamName.value!,
-      validatedTaskId.value!,
-      nextOwner
-    )
-  );
-}
-
 async function handleProcessSend(
   _event: IpcMainInvokeEvent,
   teamName: unknown,
@@ -4370,63 +3834,6 @@ async function handleStopTeam(
     addMainBreadcrumb('team', 'stop', { teamName: validated.value! });
     await getTeamRuntimeApi().stopTeam(validated.value!);
   });
-}
-
-async function handleStartTask(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown
-): Promise<IpcResult<{ notifiedOwner: boolean }>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-  return wrapTeamHandler('startTask', () =>
-    getTeamDataService().startTask(validatedTeamName.value!, validatedTaskId.value!)
-  );
-}
-
-async function handleStartTaskByUser(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown
-): Promise<IpcResult<{ notifiedOwner: boolean }>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-  const validatedTaskId = validateTaskId(taskId);
-  if (!validatedTaskId.valid) {
-    return { success: false, error: validatedTaskId.error ?? 'Invalid taskId' };
-  }
-  return wrapTeamHandler('startTaskByUser', () =>
-    getTeamDataService().startTaskByUser(validatedTeamName.value!, validatedTaskId.value!)
-  );
-}
-
-async function handleGetAllTasks(_event: IpcMainInvokeEvent): Promise<IpcResult<GlobalTask[]>> {
-  setCurrentMainOp('team:getAllTasks');
-  const startedAt = Date.now();
-  try {
-    return await wrapTeamHandler('getAllTasks', () => {
-      const loadFresh = () => getTeamDataService().getAllTasks();
-      return launchIoGovernor
-        ? launchIoGovernor.runSummaryOperation('teams:getAllTasks', loadFresh, {
-            clone: cloneLaunchIoGovernorPayload,
-          })
-        : loadFresh();
-    });
-  } finally {
-    const ms = Date.now() - startedAt;
-    if (ms >= 1500) {
-      logger.warn(`[teams:getAllTasks] slow ms=${ms}`);
-    }
-    setCurrentMainOp(null);
-  }
 }
 
 async function handleAddMember(
@@ -4914,60 +4321,6 @@ async function handleRestoreMember(
   });
 }
 
-async function handleUpdateTaskFields(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  fields: unknown
-): Promise<IpcResult<void>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  const vTask = validateTaskId(taskId);
-  if (!vTask.valid) return { success: false, error: vTask.error ?? 'Invalid taskId' };
-  const tid = vTask.value!;
-  if (!fields || typeof fields !== 'object') {
-    return { success: false, error: 'fields must be an object' };
-  }
-  const { subject, description } = fields as { subject?: unknown; description?: unknown };
-  if (subject !== undefined) {
-    if (typeof subject !== 'string') return { success: false, error: 'subject must be a string' };
-    if (subject.trim().length === 0) return { success: false, error: 'subject cannot be empty' };
-    if (subject.length > 500)
-      return { success: false, error: 'subject must be 500 characters or less' };
-  }
-  if (description !== undefined && typeof description !== 'string') {
-    return { success: false, error: 'description must be a string' };
-  }
-
-  const validFields: { subject?: string; description?: string } = {};
-  if (typeof subject === 'string') validFields.subject = subject.trim();
-  if (typeof description === 'string') validFields.description = description;
-
-  if (Object.keys(validFields).length === 0) {
-    return { success: false, error: 'At least one field must be provided' };
-  }
-
-  return wrapTeamHandler('updateTaskFields', async () => {
-    const tn = vTeam.value!;
-    await getTeamDataService().updateTaskFields(tn, tid, validFields);
-
-    // Notify the lead about updated task fields
-    if (getTeamRuntimeApi().isTeamAlive(tn)) {
-      const changedParts: string[] = [];
-      if (validFields.subject) changedParts.push('title');
-      if (validFields.description !== undefined) changedParts.push('description');
-      const message =
-        `Task #${tid} has been updated by the user (changed: ${changedParts.join(', ')}). ` +
-        `New title: "${validFields.subject ?? '(unchanged)'}".`;
-      try {
-        await getTeamMessagingApi().sendMessageToTeam(tn, message);
-      } catch {
-        logger.warn(`Failed to notify lead about task fields update for #${tid} in ${tn}`);
-      }
-    }
-  });
-}
-
 async function handleUpdateMemberRole(
   _event: IpcMainInvokeEvent,
   teamName: unknown,
@@ -5174,143 +4527,6 @@ export function showTeamNativeNotification(opts: {
   });
 
   notification.show();
-}
-
-async function handleAddTaskComment(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  request: unknown
-): Promise<IpcResult<TaskComment>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  const vTask = validateTaskId(taskId);
-  if (!vTask.valid) return { success: false, error: vTask.error ?? 'Invalid taskId' };
-  if (!request || typeof request !== 'object') {
-    return { success: false, error: 'Invalid add task comment request' };
-  }
-  const payload = request as Partial<AddTaskCommentRequest>;
-  const text = payload.text;
-  if (typeof text !== 'string' || text.trim().length === 0)
-    return { success: false, error: 'Comment text must be non-empty' };
-  if (text.trim().length > MAX_TEXT_LENGTH)
-    return { success: false, error: `Comment exceeds ${MAX_TEXT_LENGTH} characters` };
-  const validatedTaskRefs = validateTaskRefs(payload.taskRefs);
-  if (!validatedTaskRefs.valid) {
-    return { success: false, error: validatedTaskRefs.error };
-  }
-
-  const rawAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
-  if (rawAttachments.length > MAX_ATTACHMENTS) {
-    return { success: false, error: `Maximum ${MAX_ATTACHMENTS} attachments per comment` };
-  }
-
-  return wrapTeamHandler('addTaskComment', async () => {
-    // Save comment attachments (images). Done inside wrapTeamHandler so failures return IpcResult.
-    let savedAttachments: TaskAttachmentMeta[] | undefined;
-    if (rawAttachments.length > 0) {
-      savedAttachments = [];
-      for (const att of rawAttachments) {
-        if (!att || typeof att !== 'object') {
-          throw new Error('Invalid attachment data');
-        }
-        const a = att as unknown as Record<string, unknown>;
-        if (
-          typeof a.id !== 'string' ||
-          typeof a.filename !== 'string' ||
-          !isValidStoredAttachmentMimeType(a.mimeType) ||
-          typeof a.base64Data !== 'string' ||
-          a.base64Data.length === 0
-        ) {
-          throw new Error('Invalid attachment data');
-        }
-        const safeId = a.id.trim();
-        if (safeId.includes('/') || safeId.includes('\\') || safeId.includes('..')) {
-          throw new Error('Invalid attachment ID');
-        }
-        const meta = await taskAttachmentStore.saveAttachment(
-          vTeam.value!,
-          vTask.value!,
-          safeId,
-          a.filename,
-          a.mimeType.trim(),
-          a.base64Data
-        );
-        savedAttachments.push(meta);
-      }
-    }
-
-    return getTeamDataService().addTaskComment(
-      vTeam.value!,
-      vTask.value!,
-      text.trim(),
-      savedAttachments,
-      validatedTaskRefs.value
-    );
-  });
-}
-
-const VALID_RELATIONSHIP_TYPES = ['blockedBy', 'blocks', 'related'] as const;
-type RelationshipType = (typeof VALID_RELATIONSHIP_TYPES)[number];
-
-async function handleAddTaskRelationship(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  targetId: unknown,
-  type: unknown
-): Promise<IpcResult<void>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  const vTask = validateTaskId(taskId);
-  if (!vTask.valid) return { success: false, error: vTask.error ?? 'Invalid taskId' };
-  const vTarget = validateTaskId(targetId);
-  if (!vTarget.valid) return { success: false, error: vTarget.error ?? 'Invalid targetId' };
-  if (typeof type !== 'string' || !VALID_RELATIONSHIP_TYPES.includes(type as RelationshipType)) {
-    return {
-      success: false,
-      error: `type must be one of: ${VALID_RELATIONSHIP_TYPES.join(', ')}`,
-    };
-  }
-
-  return wrapTeamHandler('addTaskRelationship', () =>
-    getTeamDataService().addTaskRelationship(
-      vTeam.value!,
-      vTask.value!,
-      vTarget.value!,
-      type as RelationshipType
-    )
-  );
-}
-
-async function handleRemoveTaskRelationship(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  targetId: unknown,
-  type: unknown
-): Promise<IpcResult<void>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  const vTask = validateTaskId(taskId);
-  if (!vTask.valid) return { success: false, error: vTask.error ?? 'Invalid taskId' };
-  const vTarget = validateTaskId(targetId);
-  if (!vTarget.valid) return { success: false, error: vTarget.error ?? 'Invalid targetId' };
-  if (typeof type !== 'string' || !VALID_RELATIONSHIP_TYPES.includes(type as RelationshipType)) {
-    return {
-      success: false,
-      error: `type must be one of: ${VALID_RELATIONSHIP_TYPES.join(', ')}`,
-    };
-  }
-
-  return wrapTeamHandler('removeTaskRelationship', () =>
-    getTeamDataService().removeTaskRelationship(
-      vTeam.value!,
-      vTask.value!,
-      vTarget.value!,
-      type as RelationshipType
-    )
-  );
 }
 
 // ---------------------------------------------------------------------------

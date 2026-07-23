@@ -134,12 +134,7 @@ function buildLiveReplacementPlan(
       .filter((member) => !member.removedAt)
       .map((member) => [member.name.trim().toLowerCase(), member])
   );
-  const nextByName = new Map(
-    members.map((member) => [
-      member.name.trim().toLowerCase(),
-      member as RuntimeRosterMutationMember,
-    ])
-  );
+  const nextByName = new Map(members.map((member) => [member.name.trim().toLowerCase(), member]));
   const removedOpenCodeMembers = previousMembers.filter((member) => {
     const name = member.name.trim().toLowerCase();
     return !member.removedAt && isOpenCodeRosterMutationMember(member) && !nextByName.has(name);

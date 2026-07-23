@@ -1,4 +1,4 @@
-import type { TeamProvisioningMemberInput } from '@shared/types';
+import type { TeamMember, TeamProvisioningMemberInput } from '@shared/types';
 
 export type RosterMemberInput = Omit<TeamProvisioningMemberInput, 'cwd'>;
 
@@ -8,7 +8,7 @@ export interface RuntimeRosterMutationMember extends TeamProvisioningMemberInput
 
 export interface MembersMetadataSnapshot {
   providerBackendId?: string;
-  members: RuntimeRosterMutationMember[];
+  members: TeamMember[];
 }
 
 export interface ReplaceMembersDiff {

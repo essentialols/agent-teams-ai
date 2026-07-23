@@ -74,6 +74,9 @@ export class ReplaceTeamRosterMembers {
 
       const summaryMessage = buildReplaceMembersSummaryMessage({
         ...plan.primaryDiff,
+        // Updated primary-owned members were already refreshed through the
+        // member_updated lifecycle attach above. Notify the lead only about
+        // removals that still require task reassignment.
         updated: [],
       });
       if (!summaryMessage) return;

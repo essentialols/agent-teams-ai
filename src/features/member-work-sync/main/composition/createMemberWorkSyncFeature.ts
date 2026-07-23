@@ -12,6 +12,8 @@ import {
   MemberWorkSyncReconciler,
   MemberWorkSyncReporter,
   MemberWorkSyncTeamOperationGate,
+  MemberWorkSyncTeamQuiescedError,
+  normalizeMemberWorkSyncTeamOperationKey,
   type RuntimeTurnSettledDrainSummary,
   RuntimeTurnSettledIngestor,
   type RuntimeTurnSettledTargetResolverPort,
@@ -65,6 +67,7 @@ import type {
   MemberWorkSyncProofMissingRecoveryGuardPort,
   MemberWorkSyncReviewPickupDeliveryPort,
   MemberWorkSyncReviewPickupEscalationPort,
+  MemberWorkSyncTeamOperationAdmission,
 } from '../../core/application';
 import type { RuntimeTurnSettledProvider } from '../../core/domain';
 import type { InternalStorageMemberWorkSyncBackend } from '@features/internal-storage/main';
@@ -77,6 +80,24 @@ import type { TeamChangeEvent } from '@shared/types';
 const STALE_STATUS_MAX_AGE_MS = 2 * 60_000;
 const CAUGHT_UP_STATUS_MAX_AGE_MS = 5 * 60_000;
 const PROOF_MISSING_RECOVERY_RECENT_WINDOW_MS = 10 * 60_000;
+
+function uniqueMemberWorkSyncTeamNames(teamNames: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const candidate of teamNames) {
+    const teamName = candidate.trim();
+    if (!teamName) {
+      continue;
+    }
+    const teamKey = normalizeMemberWorkSyncTeamOperationKey(teamName);
+    if (seen.has(teamKey)) {
+      continue;
+    }
+    seen.add(teamKey);
+    unique.push(teamName);
+  }
+  return unique;
+}
 
 function isAcceptedWorkLeaseStatus(status: MemberWorkSyncStatus): boolean {
   return (
@@ -425,98 +446,80 @@ export function createMemberWorkSyncFeature(deps: {
     retryable: left.retryable + right.retryable,
     terminal: left.terminal + right.terminal,
   });
-  const filterNudgeDispatchReadyTeamNames = async (
-    teamNames: string[],
-    signal?: AbortSignal
-  ): Promise<string[]> => {
-    const uniqueTeamNames = [...new Set(teamNames.map((name) => name.trim()).filter(Boolean))];
+  const isNudgeDispatchReady = async (teamName: string, signal?: AbortSignal): Promise<boolean> => {
     if (signal?.aborted) {
-      return [];
+      return false;
     }
     if (!deps.canDispatchNudges) {
-      return uniqueTeamNames;
+      return true;
     }
 
-    const readyTeamNames: string[] = [];
-    for (const teamName of uniqueTeamNames) {
-      if (signal?.aborted) {
-        break;
-      }
-      try {
-        const ready = await deps.canDispatchNudges(teamName);
-        if (signal?.aborted) {
-          break;
-        }
-        if (ready) {
-          readyTeamNames.push(teamName);
-        }
-      } catch (error) {
-        if (signal?.aborted) {
-          break;
-        }
+    try {
+      const ready = await deps.canDispatchNudges(teamName);
+      return signal?.aborted ? false : ready;
+    } catch (error) {
+      if (!signal?.aborted) {
         deps.logger?.warn('member work sync nudge dispatch readiness check failed', {
           teamName,
           error: String(error),
         });
       }
+      return false;
     }
-    return readyTeamNames;
   };
   const refreshBackgroundStaleStatuses = async (
-    teamNames: string[],
+    teamName: string,
     signal?: AbortSignal
   ): Promise<void> => {
     const nowMs = clock.now().getTime();
     let refreshed = 0;
-    for (const teamName of teamNames) {
+    if (signal?.aborted) {
+      return;
+    }
+    let memberNames: string[];
+    try {
+      memberNames = await agendaSource.loadActiveMemberNames(teamName);
+      if (signal?.aborted) {
+        return;
+      }
+    } catch (error) {
+      deps.logger?.warn('member work sync background refresh member scan failed', {
+        teamName,
+        error: String(error),
+      });
+      return;
+    }
+
+    for (const memberName of memberNames) {
       if (signal?.aborted) {
         break;
       }
-      let memberNames: string[];
       try {
-        memberNames = await agendaSource.loadActiveMemberNames(teamName);
+        const status = await store.read({ teamName, memberName });
         if (signal?.aborted) {
           break;
         }
+        if (status && !statusNeedsBackgroundRefresh(status, nowMs)) {
+          continue;
+        }
+        await reconciler.execute(
+          { teamName, memberName },
+          {
+            reconciledBy: 'queue',
+            triggerReasons: [status ? 'manual_refresh' : 'startup_scan'],
+            ...(signal ? { isCancelled: () => signal.aborted } : {}),
+          }
+        );
+        if (signal?.aborted) {
+          break;
+        }
+        refreshed += 1;
       } catch (error) {
-        deps.logger?.warn('member work sync background refresh member scan failed', {
+        deps.logger?.warn('member work sync background refresh failed', {
           teamName,
+          memberName,
           error: String(error),
         });
-        continue;
-      }
-
-      for (const memberName of memberNames) {
-        if (signal?.aborted) {
-          break;
-        }
-        try {
-          const status = await store.read({ teamName, memberName });
-          if (signal?.aborted) {
-            break;
-          }
-          if (status && !statusNeedsBackgroundRefresh(status, nowMs)) {
-            continue;
-          }
-          await reconciler.execute(
-            { teamName, memberName },
-            {
-              reconciledBy: 'queue',
-              triggerReasons: [status ? 'manual_refresh' : 'startup_scan'],
-              ...(signal ? { isCancelled: () => signal.aborted } : {}),
-            }
-          );
-          if (signal?.aborted) {
-            break;
-          }
-          refreshed += 1;
-        } catch (error) {
-          deps.logger?.warn('member work sync background refresh failed', {
-            teamName,
-            memberName,
-            error: String(error),
-          });
-        }
       }
     }
 
@@ -524,27 +527,66 @@ export function createMemberWorkSyncFeature(deps: {
       deps.logger?.debug('member work sync background stale refresh completed', { refreshed });
     }
   };
-  const dispatchNudgesForReadyTeams = async (
-    teamNames: string[],
+  const scheduledDispatchControllersByTeam = new Map<string, Set<AbortController>>();
+  const createScheduledTeamDispatchSignal = (
+    teamName: string,
+    schedulerSignal?: AbortSignal
+  ): { signal: AbortSignal; release(): void } => {
+    const controller = new AbortController();
+    const teamKey = normalizeMemberWorkSyncTeamOperationKey(teamName);
+    const controllers = scheduledDispatchControllersByTeam.get(teamKey) ?? new Set();
+    controllers.add(controller);
+    scheduledDispatchControllersByTeam.set(teamKey, controllers);
+    const abortForScheduler = (): void => controller.abort();
+    if (schedulerSignal?.aborted) {
+      controller.abort();
+    } else {
+      schedulerSignal?.addEventListener('abort', abortForScheduler, { once: true });
+    }
+
+    return {
+      signal: controller.signal,
+      release: () => {
+        schedulerSignal?.removeEventListener('abort', abortForScheduler);
+        controllers.delete(controller);
+        if (controllers.size === 0) {
+          scheduledDispatchControllersByTeam.delete(teamKey);
+        }
+      },
+    };
+  };
+  const cancelScheduledTeamDispatch = (teamName: string): void => {
+    for (const controller of scheduledDispatchControllersByTeam.get(
+      normalizeMemberWorkSyncTeamOperationKey(teamName)
+    ) ?? []) {
+      controller.abort();
+    }
+  };
+  const dispatchNudgesForAdmittedTeam = async (
+    teamName: string,
     claimedBy: string,
-    options: { refreshBackgroundStaleStatuses?: boolean; signal?: AbortSignal } = {}
+    admission: MemberWorkSyncTeamOperationAdmission,
+    options: {
+      refreshBackgroundStaleStatuses?: boolean;
+      signal?: AbortSignal;
+    } = {}
   ): Promise<MemberWorkSyncNudgeDispatchSummary> => {
-    const readyTeamNames = await filterNudgeDispatchReadyTeamNames(teamNames, options.signal);
-    if (readyTeamNames.length === 0 || options.signal?.aborted) {
+    if (!(await isNudgeDispatchReady(teamName, options.signal)) || options.signal?.aborted) {
       return emptyNudgeDispatchSummary();
     }
-    const dispatchReadyNudges = () =>
+    const dispatchReadyNudges = (): Promise<MemberWorkSyncNudgeDispatchSummary> =>
       nudgeDispatcher.dispatchDue({
-        teamNames: readyTeamNames,
+        teamNames: [teamName],
         claimedBy,
         ...(options.signal ? { signal: options.signal } : {}),
+        trackSettlingWork: (_settlingTeamName, work) => admission.trackSettling(work),
       });
     const initialSummary = await dispatchReadyNudges();
     if (options.signal?.aborted) {
       return initialSummary;
     }
     if (options.refreshBackgroundStaleStatuses !== false) {
-      await refreshBackgroundStaleStatuses(readyTeamNames, options.signal);
+      await refreshBackgroundStaleStatuses(teamName, options.signal);
       if (options.signal?.aborted) {
         return initialSummary;
       }
@@ -552,15 +594,70 @@ export function createMemberWorkSyncFeature(deps: {
     }
     return initialSummary;
   };
+  const dispatchNudgesForReadyTeams = async (
+    teamNames: string[],
+    claimedBy: string,
+    options: {
+      refreshBackgroundStaleStatuses?: boolean;
+      signal?: AbortSignal;
+      scheduled?: boolean;
+    } = {}
+  ): Promise<MemberWorkSyncNudgeDispatchSummary> => {
+    let summary = emptyNudgeDispatchSummary();
+    for (const teamName of uniqueMemberWorkSyncTeamNames(teamNames)) {
+      if (options.signal?.aborted) {
+        break;
+      }
+      const scheduledSignal = options.scheduled
+        ? createScheduledTeamDispatchSignal(teamName, options.signal)
+        : null;
+      try {
+        const teamSummary = await operationGate.run(teamName, (admission) =>
+          dispatchNudgesForAdmittedTeam(teamName, claimedBy, admission, {
+            ...(options.refreshBackgroundStaleStatuses != null
+              ? { refreshBackgroundStaleStatuses: options.refreshBackgroundStaleStatuses }
+              : {}),
+            ...(scheduledSignal?.signal
+              ? { signal: scheduledSignal.signal }
+              : options.signal
+                ? { signal: options.signal }
+                : {}),
+          })
+        );
+        summary = addNudgeDispatchSummaries(summary, teamSummary);
+      } catch (error) {
+        if (!(error instanceof MemberWorkSyncTeamQuiescedError)) {
+          deps.logger?.warn('member work sync team nudge dispatch failed', {
+            teamName,
+            error: String(error),
+          });
+        }
+      } finally {
+        scheduledSignal?.release();
+      }
+    }
+    return summary;
+  };
   const queue = new MemberWorkSyncEventQueue({
     reconcile: async (request, context: MemberWorkSyncReconcileContext) => {
-      await reconciler.execute(request, context);
-      if (context.isCancelled?.()) {
-        return;
+      try {
+        await operationGate.run(request.teamName, async (admission) => {
+          await reconciler.execute(request, context);
+          if (context.isCancelled?.()) {
+            return;
+          }
+          await dispatchNudgesForAdmittedTeam(
+            request.teamName,
+            `member-work-sync:${process.pid}`,
+            admission,
+            { refreshBackgroundStaleStatuses: false }
+          );
+        });
+      } catch (error) {
+        if (!(error instanceof MemberWorkSyncTeamQuiescedError)) {
+          throw error;
+        }
       }
-      await dispatchNudgesForReadyTeams([request.teamName], `member-work-sync:${process.pid}`, {
-        refreshBackgroundStaleStatuses: false,
-      });
     },
     isTeamActive: deps.isTeamActive ?? (() => true),
     reconcileInactiveTeams: true,
@@ -610,6 +707,7 @@ export function createMemberWorkSyncFeature(deps: {
         dispatchDue: (teamNames, signal) =>
           dispatchNudgesForReadyTeams(teamNames, `member-work-sync:${process.pid}:scheduled`, {
             signal,
+            scheduled: true,
           }),
         logger: deps.logger,
       })
@@ -738,7 +836,7 @@ export function createMemberWorkSyncFeature(deps: {
   };
 
   const resumeTeam = (teamName: string): void => {
-    deletionStates.delete(teamName.trim());
+    deletionStates.delete(normalizeMemberWorkSyncTeamOperationKey(teamName));
     operationGate.resumeTeam(teamName);
     auditJournal.resumeTeam(teamName);
     router.resumeTeam(teamName);
@@ -758,8 +856,9 @@ export function createMemberWorkSyncFeature(deps: {
     scheduleProofMissingRecovery: (request) =>
       operationGate.run(request.teamName, () => scheduleProofMissingRecovery(request)),
     prepareTeamDeletion: async (teamName) => {
-      deletionStates.set(teamName.trim(), 'deleting');
+      deletionStates.set(normalizeMemberWorkSyncTeamOperationKey(teamName), 'deleting');
       operationGate.beginTeamQuiesce(teamName);
+      cancelScheduledTeamDispatch(teamName);
       auditJournal.beginTeamQuiesce(teamName);
       const routerQuiesce = router.quiesceTeam(teamName);
       await operationGate.awaitTeamIdle(teamName);
@@ -771,21 +870,22 @@ export function createMemberWorkSyncFeature(deps: {
       await auditJournal.awaitTeamIdle(teamName);
     },
     completeTeamDeletion: (teamName) => {
-      deletionStates.set(teamName.trim(), 'deleted');
+      deletionStates.set(normalizeMemberWorkSyncTeamOperationKey(teamName), 'deleted');
     },
     resumeTeam,
     noteTeamChange: (event) => {
       toolActivityBusySignal.noteTeamChange(event);
       router.noteTeamChange(event);
       const teamName = event.teamName.trim();
+      const teamKey = teamName ? normalizeMemberWorkSyncTeamOperationKey(teamName) : '';
       if (
         event.type === 'config' &&
         event.detail === 'config.json' &&
-        deletionStates.get(teamName) === 'deleted'
+        deletionStates.get(teamKey) === 'deleted'
       ) {
         void access(path.join(deps.teamsBasePath, teamName, 'config.json'))
           .then(() => {
-            if (deletionStates.get(teamName) === 'deleted') {
+            if (deletionStates.get(teamKey) === 'deleted') {
               resumeTeam(teamName);
             }
           })
@@ -802,16 +902,20 @@ export function createMemberWorkSyncFeature(deps: {
       };
       for (const teamName of teamNames) {
         try {
-          const summary = await pendingReportReplayer.replayTeam(teamName);
+          const summary = await operationGate.run(teamName, () =>
+            pendingReportReplayer.replayTeam(teamName)
+          );
           accumulator.processed += summary.processed;
           accumulator.accepted += summary.accepted;
           accumulator.rejected += summary.rejected;
           accumulator.superseded += summary.superseded;
         } catch (error) {
-          deps.logger?.warn('member work sync pending report replay failed', {
-            teamName,
-            error: String(error),
-          });
+          if (!(error instanceof MemberWorkSyncTeamQuiescedError)) {
+            deps.logger?.warn('member work sync pending report replay failed', {
+              teamName,
+              error: String(error),
+            });
+          }
         }
       }
       return accumulator;

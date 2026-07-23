@@ -4,6 +4,7 @@ import {
   createMemberWorkSyncFeature,
 } from '@features/member-work-sync/main';
 import { TeamInboxMemberWorkSyncNudgeSink } from '@features/member-work-sync/main/adapters/output/TeamInboxMemberWorkSyncNudgeSink';
+import { BackendSelectingMemberWorkSyncStore } from '@features/member-work-sync/main/infrastructure/BackendSelectingMemberWorkSyncStore';
 import { HmacMemberWorkSyncReportTokenAdapter } from '@features/member-work-sync/main/infrastructure/HmacMemberWorkSyncReportTokenAdapter';
 import { JsonMemberWorkSyncStore } from '@features/member-work-sync/main/infrastructure/JsonMemberWorkSyncStore';
 import { MemberWorkSyncEventQueue } from '@features/member-work-sync/main/infrastructure/MemberWorkSyncEventQueue';
@@ -952,6 +953,125 @@ describe('createMemberWorkSyncFeature composition', () => {
     }
   });
 
+  it('cancels and drains admitted scheduled delivery before purging the team', async () => {
+    const claudeRoot = makeTempRoot();
+    setClaudeBasePathOverride(claudeRoot);
+    const teamsBasePath = getTeamsBasePath();
+    const teamName = 'team-scheduled-deletion';
+    const memberName = 'bob';
+    const wakeStarted = createDeferred();
+    const releaseWake = createDeferred();
+    const wakeCompletedAfterPurge: boolean[] = [];
+    let purged = false;
+    const purgeOriginal = BackendSelectingMemberWorkSyncStore.prototype.purgeTeam;
+    const purgeTeam = vi
+      .spyOn(BackendSelectingMemberWorkSyncStore.prototype, 'purgeTeam')
+      .mockImplementation(async function (this: BackendSelectingMemberWorkSyncStore, name) {
+        await purgeOriginal.call(this, name);
+        purged = true;
+      });
+    const scheduleWake = vi.fn(async () => {
+      wakeStarted.resolve();
+      await releaseWake.promise;
+      wakeCompletedAfterPurge.push(purged);
+    });
+    const selector = {
+      select: vi.fn((_sqlite: unknown, json: unknown) => Promise.resolve(json)),
+      getBackendInfo: vi.fn(() => null),
+    };
+    vi.useFakeTimers();
+    const feature = createMemberWorkSyncFeature({
+      teamsBasePath,
+      configReader: {
+        getConfig: vi.fn(() =>
+          Promise.resolve({
+            name: teamName,
+            members: [{ name: memberName, providerId: 'codex' }],
+          })
+        ),
+      } as never,
+      taskReader: {
+        getTasks: vi.fn(() =>
+          Promise.resolve([
+            {
+              id: 'task-1',
+              displayId: '11111111',
+              subject: 'Do not wake after permanent deletion',
+              status: 'pending',
+              owner: memberName,
+            },
+          ])
+        ),
+      } as never,
+      kanbanManager: {
+        getState: vi.fn(() =>
+          Promise.resolve({
+            teamName,
+            reviewers: [],
+            tasks: {},
+          })
+        ),
+      } as never,
+      membersMetaStore: {
+        getMembers: vi.fn(() => Promise.resolve([])),
+      } as never,
+      isTeamActive: vi.fn(() => Promise.resolve(true)),
+      canDispatchNudges: vi.fn(() => Promise.resolve(true)),
+      listLifecycleActiveTeamNames: vi.fn(() => Promise.resolve([teamName])),
+      nudgeDeliveryWake: { schedule: scheduleWake },
+      internalStorageBackend: {
+        selector,
+        gateway: {},
+      } as never,
+    });
+    let scheduledTick: Promise<unknown> | null = null;
+
+    try {
+      await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
+      const status = await feature.refreshStatus({ teamName, memberName });
+      const outboxInput = buildMemberWorkSyncOutboxEnsureInput({
+        status,
+        hash: new NodeHashAdapter(),
+        nowIso: status.evaluatedAt,
+      });
+      expect(outboxInput).not.toBeNull();
+      const jsonStore = new JsonMemberWorkSyncStore(new MemberWorkSyncStorePaths(teamsBasePath));
+      await expect(jsonStore.ensurePending(outboxInput!)).resolves.toMatchObject({
+        ok: true,
+        outcome: 'existing',
+      });
+
+      scheduledTick = vi.advanceTimersByTimeAsync(60_000);
+      await wakeStarted.promise;
+
+      let deletionSettled = false;
+      const deletion = feature.prepareTeamDeletion(teamName).then(() => {
+        deletionSettled = true;
+      });
+      await Promise.resolve();
+      expect(deletionSettled).toBe(false);
+      expect(purged).toBe(false);
+
+      releaseWake.resolve();
+      await Promise.all([scheduledTick, deletion]);
+      expect(deletionSettled).toBe(true);
+      expect(purgeTeam).toHaveBeenCalledOnce();
+      expect(purgeTeam).toHaveBeenCalledWith(teamName);
+      expect(purged).toBe(true);
+      expect(wakeCompletedAfterPurge).toEqual([false]);
+      expect(scheduleWake).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(scheduleWake).toHaveBeenCalledOnce();
+    } finally {
+      releaseWake.resolve();
+      await scheduledTick?.catch(() => undefined);
+      await feature.dispose();
+      purgeTeam.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('dispatches existing due nudges before background stale refresh work', async () => {
     const claudeRoot = makeTempRoot();
     setClaudeBasePathOverride(claudeRoot);
@@ -1003,6 +1123,7 @@ describe('createMemberWorkSyncFeature composition', () => {
       } as never,
     });
     let dispatchPromise: Promise<unknown> | null = null;
+    let deletionPromise: Promise<unknown> | null = null;
 
     try {
       await seedShadowReadyMetrics({ teamsBasePath, teamName, memberName });
@@ -1033,15 +1154,95 @@ describe('createMemberWorkSyncFeature composition', () => {
         expect.arrayContaining([expect.objectContaining({ messageId: outboxInput!.id })])
       );
 
-      releaseRefresh();
-      await expect(dispatchPromise).resolves.toMatchObject({
-        claimed: 1,
-        delivered: 1,
+      let deletionSettled = false;
+      deletionPromise = feature.prepareTeamDeletion(teamName).then(async () => {
+        await fs.promises.rm(path.join(teamsBasePath, teamName), {
+          recursive: true,
+          force: true,
+        });
+        deletionSettled = true;
       });
+      await Promise.resolve();
+      expect(deletionSettled).toBe(false);
+
+      releaseRefresh();
+      await expect(Promise.all([dispatchPromise, deletionPromise])).resolves.toEqual([
+        expect.objectContaining({ claimed: 1, delivered: 1 }),
+        undefined,
+      ]);
+      expect(deletionSettled).toBe(true);
+      await Promise.resolve();
+      expect(fs.existsSync(path.join(teamsBasePath, teamName))).toBe(false);
     } finally {
       releaseRefresh();
       await dispatchPromise?.catch(() => undefined);
+      await deletionPromise?.catch(() => undefined);
       await feature.dispose();
+    }
+  });
+
+  it('drains admitted pending-report replay persistence before deletion purge', async () => {
+    const teamsBasePath = path.join(makeTempRoot(), 'teams');
+    const teamName = 'team-replay-deletion';
+    const replayStarted = createDeferred();
+    const releaseReplay = createDeferred();
+    const replayWritePath = path.join(
+      teamsBasePath,
+      teamName,
+      'members',
+      'bob',
+      '.member-work-sync',
+      'replay-write.json'
+    );
+    const listPendingReports = vi
+      .spyOn(JsonMemberWorkSyncStore.prototype, 'listPendingReports')
+      .mockImplementation(async (requestedTeamName) => {
+        replayStarted.resolve();
+        await releaseReplay.promise;
+        await fs.promises.mkdir(path.dirname(replayWritePath), { recursive: true });
+        await fs.promises.writeFile(replayWritePath, requestedTeamName, 'utf8');
+        return [];
+      });
+    const feature = createMemberWorkSyncFeature({
+      teamsBasePath,
+      configReader: { getConfig: vi.fn(() => Promise.resolve(null)) } as never,
+      taskReader: { getTasks: vi.fn(() => Promise.resolve([])) } as never,
+      kanbanManager: { getState: vi.fn(() => Promise.resolve(null)) } as never,
+      membersMetaStore: { getMembers: vi.fn(() => Promise.resolve([])) } as never,
+    });
+    let replay: Promise<unknown> | null = null;
+    let deletion: Promise<unknown> | null = null;
+
+    try {
+      replay = feature.replayPendingReports([teamName]);
+      await replayStarted.promise;
+
+      let deletionSettled = false;
+      deletion = feature.prepareTeamDeletion(teamName).then(async () => {
+        await fs.promises.rm(path.join(teamsBasePath, teamName), {
+          recursive: true,
+          force: true,
+        });
+        deletionSettled = true;
+      });
+      await Promise.resolve();
+      expect(deletionSettled).toBe(false);
+
+      releaseReplay.resolve();
+      await expect(Promise.all([replay, deletion])).resolves.toEqual([
+        { processed: 0, accepted: 0, rejected: 0, superseded: 0 },
+        undefined,
+      ]);
+      expect(listPendingReports).toHaveBeenCalledWith(teamName);
+      expect(deletionSettled).toBe(true);
+      await Promise.resolve();
+      expect(fs.existsSync(path.join(teamsBasePath, teamName))).toBe(false);
+    } finally {
+      releaseReplay.resolve();
+      await replay?.catch(() => undefined);
+      await deletion?.catch(() => undefined);
+      await feature.dispose();
+      listPendingReports.mockRestore();
     }
   });
 

@@ -1,5 +1,3 @@
-import { describe, expect, it } from 'vitest';
-
 import {
   areTeamGraphSlotAssignmentsEqual,
   getDefaultTeamGraphSlotAssignmentsForMembers,
@@ -10,7 +8,8 @@ import {
   normalizeTeamGraphSlotAssignmentsForVisibleOwners,
   pruneTeamGraphSlotAssignmentsForVisibleOwners,
   seedStableSlotAssignmentsForMembers,
-} from '../../../src/renderer/store/team/teamGraphLayout';
+} from '@features/agent-graph';
+import { describe, expect, it } from 'vitest';
 
 describe('teamGraphLayout', () => {
   it('migrates legacy name-keyed assignments to stable owner ids', () => {
@@ -94,8 +93,11 @@ describe('teamGraphLayout', () => {
     );
 
     expect(normalized).toEqual({ a: { ringIndex: 0, sectorIndex: 0 } });
-    expect(pruneTeamGraphSlotAssignmentsForVisibleOwners({ hidden: { ringIndex: 4, sectorIndex: 4 } }, ['a']))
-      .toBeUndefined();
+    expect(
+      pruneTeamGraphSlotAssignmentsForVisibleOwners({ hidden: { ringIndex: 4, sectorIndex: 4 } }, [
+        'a',
+      ])
+    ).toBeUndefined();
   });
 
   it('normalizes grid owner order by filtering stale and duplicate ids then appending missing ids', () => {

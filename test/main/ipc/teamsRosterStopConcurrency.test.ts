@@ -25,6 +25,11 @@ import {
   removeTeamRosterMutationIpc,
 } from '../../../src/features/team-roster-mutations/main';
 import {
+  createTeamRuntimeOperationsFeature,
+  registerTeamRuntimeOperationsIpc,
+  removeTeamRuntimeOperationsIpc,
+} from '../../../src/features/team-runtime-operations/main';
+import {
   initializeTeamHandlers,
   registerTeamHandlers,
   removeTeamHandlers,
@@ -54,6 +59,7 @@ describe('team IPC roster mutation and stop concurrency', () => {
   afterEach(() => {
     removeTeamHandlers(ipcMain as never);
     removeTeamRosterMutationIpc(ipcMain as never);
+    removeTeamRuntimeOperationsIpc(ipcMain as never);
     handlers.clear();
     vi.restoreAllMocks();
   });
@@ -88,20 +94,27 @@ describe('team IPC roster mutation and stop concurrency', () => {
       invalidateMessageFeed: vi.fn(),
       invalidateTeamRuntimeAdvisories: vi.fn(),
     };
-    initializeTeamHandlers(
-      dataService as never,
-      {
-        runtime: {
-          stopTeam: lifecycleService.stopTeam.bind(lifecycleService),
-          isTeamAlive: () => true,
-        },
-        memberLifecycle: {
-          runLiveRosterMutation: lifecycleService.runLiveRosterMutation.bind(lifecycleService),
-          attachLiveRosterMember: lifecycleService.attachLiveRosterMember.bind(lifecycleService),
-        },
-      } as never
-    );
+    const runtime = {
+      getAliveTeams: () => ['ipc-lock-team'],
+      stopTeam: lifecycleService.stopTeam.bind(lifecycleService),
+      isTeamAlive: () => true,
+    };
+    initializeTeamHandlers(dataService as never, runtime as never);
     registerTeamHandlers(ipcMain as never);
+    registerTeamRuntimeOperationsIpc(
+      ipcMain as never,
+      createTeamRuntimeOperationsFeature({
+        data: dataService as never,
+        runtime,
+        lifecycle: {} as never,
+        diagnostics: {} as never,
+        claudeLogs: {} as never,
+        messaging: {} as never,
+        logsFinder: {} as never,
+        statsComputer: {} as never,
+        logger: { error: vi.fn(), warn: vi.fn() },
+      })
+    );
     registerTeamRosterMutationIpc(
       ipcMain as never,
       createTeamRosterMutationFeature({

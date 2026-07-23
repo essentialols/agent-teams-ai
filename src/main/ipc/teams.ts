@@ -3,45 +3,27 @@ import {
   TEAM_LIFECYCLE_READ_SCHEMA_VERSION,
   type TeamLifecycleReadFailure,
 } from '@features/team-lifecycle/contracts';
-import { addMainBreadcrumb } from '@main/sentry';
 import { setCurrentMainOp } from '@main/services/infrastructure/EventLoopLagMonitor';
-import {
-  getTeamDataWorkerClient,
-  isTeamDataWorkerFatalError,
-} from '@main/services/team/TeamDataWorkerClient';
+import { getTeamDataWorkerClient } from '@main/services/team/TeamDataWorkerClient';
 import { getAppIconPath } from '@main/utils/appIcon';
 import { getAppDataPath } from '@main/utils/pathDecoder';
 import { stripMarkdown } from '@main/utils/textFormatting';
 import {
-  TEAM_ALIVE_LIST,
   TEAM_CREATE_INITIAL_GIT_COMMIT,
   TEAM_DELETE_TASK_ATTACHMENT,
   TEAM_DELETE_TEAM,
-  TEAM_GET_AGENT_RUNTIME,
-  TEAM_GET_CLAUDE_LOGS,
-  TEAM_GET_LOGS_FOR_TASK,
-  TEAM_GET_MEMBER_LOGS,
-  TEAM_GET_MEMBER_STATS,
   TEAM_GET_PROJECT_BRANCH,
   TEAM_GET_TASK_ATTACHMENT,
   TEAM_GET_WORKTREE_GIT_STATUS,
   TEAM_INITIALIZE_GIT_REPOSITORY,
-  TEAM_KILL_PROCESS,
-  TEAM_LEAD_ACTIVITY,
-  TEAM_LEAD_CONTEXT,
   TEAM_LIST,
-  TEAM_MEMBER_SPAWN_STATUSES,
   TEAM_PERMANENTLY_DELETE,
-  TEAM_RESTART_MEMBER,
   TEAM_RESTORE,
-  TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES,
   TEAM_SAVE_TASK_ATTACHMENT,
   TEAM_SET_PROJECT_BRANCH_TRACKING,
   TEAM_SET_TASK_LOG_STREAM_TRACKING,
   TEAM_SET_TOOL_ACTIVITY_TRACKING,
   TEAM_SHOW_MESSAGE_NOTIFICATION,
-  TEAM_SKIP_MEMBER_FOR_LAUNCH,
-  TEAM_STOP,
   // eslint-disable-next-line boundaries/element-types -- IPC channel constants are shared between main and preload by design
 } from '@preload/constants/ipcChannels';
 import { createSafeAppError } from '@shared/contracts/hosted';
@@ -60,64 +42,29 @@ import {
 import { TeamTaskAttachmentStore } from '../services/team/TeamTaskAttachmentStore';
 import { TeamWorktreeGitService } from '../services/team/TeamWorktreeGitService';
 
-import { validateMemberName, validateTaskId, validateTeamName } from './guards';
+import { validateTaskId, validateTeamName } from './guards';
 
 import type {
   BranchStatusService,
-  MemberStatsComputer,
   TeamDataService,
   TeamLogSourceTracker,
   TeammateToolTracker,
-  TeamMemberLogsFinder,
 } from '../services';
-import type {
-  TeamClaudeLogsApi,
-  TeamDiagnosticsApi,
-  TeamIpcHandlerApis,
-  TeamMemberLifecycleApi,
-  TeamMessagingApi,
-  TeamRuntimeApi,
-} from '../services/team/contracts/TeamProvisioningApis';
+import type { TeamRuntimeApi } from '../services/team/contracts/TeamProvisioningApis';
 import type { TeamBackupService } from '../services/team/TeamBackupService';
 import type { TeamLifecycleReadHost } from '@main/composition/hosted/teamLifecycleReadComposition';
 import type {
   IpcResult,
-  LeadActivitySnapshot,
-  LeadContextUsageSnapshot,
-  MemberFullStats,
-  MemberLogSummary,
-  MemberSpawnStatusesSnapshot,
-  RetryFailedOpenCodeSecondaryLanesResult,
   TaskAttachmentMeta,
-  TeamAgentRuntimeSnapshot,
-  TeamClaudeLogsQuery,
-  TeamClaudeLogsResponse,
   TeamMessageNotificationData,
   TeamSummary,
   TeamWorktreeGitStatus,
 } from '@shared/types';
 
 const logger = createLogger('IPC:teams');
-function getWorkerErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function getFatalTeamDataWorkerFailureMessage(error: unknown): string | null {
-  if (!isTeamDataWorkerFatalError(error)) {
-    return null;
-  }
-  const message = getWorkerErrorMessage(error);
-  return `TEAM_DATA_WORKER_FAILED: ${message}`;
-}
 
 let teamDataService: TeamDataService | null = null;
-let teamRuntimeApi: TeamRuntimeApi | null = null;
-let teamMemberLifecycleApi: TeamMemberLifecycleApi | null = null;
-let teamDiagnosticsApi: TeamDiagnosticsApi | null = null;
-let teamClaudeLogsApi: TeamClaudeLogsApi | null = null;
-let teamMessagingApi: TeamMessagingApi | null = null;
-let teamMemberLogsFinder: TeamMemberLogsFinder | null = null;
-let memberStatsComputer: MemberStatsComputer | null = null;
+let teamRuntimeApi: Pick<TeamRuntimeApi, 'stopTeam'> | null = null;
 let teamBackupService: TeamBackupService | null = null;
 let teammateToolTracker: TeammateToolTracker | null = null;
 let teamLogSourceTracker: TeamLogSourceTracker | null = null;
@@ -173,9 +120,7 @@ export async function handleListTeamLifecycle(
 
 export function initializeTeamHandlers(
   service: TeamDataService,
-  teamHandlerApis: TeamIpcHandlerApis,
-  logsFinder?: TeamMemberLogsFinder,
-  statsComputer?: MemberStatsComputer,
+  runtimeApi: Pick<TeamRuntimeApi, 'stopTeam'>,
   backupService?: TeamBackupService,
   toolTracker?: TeammateToolTracker,
   logSourceTracker?: TeamLogSourceTracker,
@@ -183,13 +128,7 @@ export function initializeTeamHandlers(
   ioGovernor?: LaunchIoGovernor
 ): void {
   teamDataService = service;
-  teamRuntimeApi = teamHandlerApis.runtime;
-  teamMemberLifecycleApi = teamHandlerApis.memberLifecycle;
-  teamDiagnosticsApi = teamHandlerApis.diagnostics;
-  teamClaudeLogsApi = teamHandlerApis.claudeLogs;
-  teamMessagingApi = teamHandlerApis.messaging;
-  teamMemberLogsFinder = logsFinder ?? null;
-  memberStatsComputer = statsComputer ?? null;
+  teamRuntimeApi = runtimeApi;
   teamBackupService = backupService ?? null;
   teammateToolTracker = toolTracker ?? null;
   teamLogSourceTracker = logSourceTracker ?? null;
@@ -202,30 +141,13 @@ export function registerTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(TEAM_SET_PROJECT_BRANCH_TRACKING, handleSetProjectBranchTracking);
   ipcMain.handle(TEAM_SET_TASK_LOG_STREAM_TRACKING, handleSetTaskLogStreamTracking);
   ipcMain.handle(TEAM_SET_TOOL_ACTIVITY_TRACKING, handleSetToolActivityTracking);
-  ipcMain.handle(TEAM_GET_CLAUDE_LOGS, handleGetClaudeLogs);
   ipcMain.handle(TEAM_GET_WORKTREE_GIT_STATUS, handleGetWorktreeGitStatus);
   ipcMain.handle(TEAM_INITIALIZE_GIT_REPOSITORY, handleInitializeGitRepository);
   ipcMain.handle(TEAM_CREATE_INITIAL_GIT_COMMIT, handleCreateInitialGitCommit);
   ipcMain.handle(TEAM_DELETE_TEAM, handleDeleteTeam);
   ipcMain.handle(TEAM_RESTORE, handleRestoreTeam);
   ipcMain.handle(TEAM_PERMANENTLY_DELETE, handlePermanentlyDeleteTeam);
-  ipcMain.handle(TEAM_ALIVE_LIST, handleAliveList);
-  ipcMain.handle(TEAM_STOP, handleStopTeam);
-  ipcMain.handle(TEAM_GET_MEMBER_LOGS, handleGetMemberLogs);
-  ipcMain.handle(TEAM_GET_LOGS_FOR_TASK, handleGetLogsForTask);
-  ipcMain.handle(TEAM_GET_MEMBER_STATS, handleGetMemberStats);
   ipcMain.handle(TEAM_GET_PROJECT_BRANCH, handleGetProjectBranch);
-  ipcMain.handle(TEAM_KILL_PROCESS, handleKillProcess);
-  ipcMain.handle(TEAM_LEAD_ACTIVITY, handleLeadActivity);
-  ipcMain.handle(TEAM_LEAD_CONTEXT, handleLeadContext);
-  ipcMain.handle(TEAM_MEMBER_SPAWN_STATUSES, handleMemberSpawnStatuses);
-  ipcMain.handle(TEAM_GET_AGENT_RUNTIME, handleGetAgentRuntime);
-  ipcMain.handle(
-    TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES,
-    handleRetryFailedOpenCodeSecondaryLanes
-  );
-  ipcMain.handle(TEAM_RESTART_MEMBER, handleRestartMember);
-  ipcMain.handle(TEAM_SKIP_MEMBER_FOR_LAUNCH, handleSkipMemberForLaunch);
   ipcMain.handle(TEAM_SHOW_MESSAGE_NOTIFICATION, handleShowMessageNotification);
   ipcMain.handle(TEAM_SAVE_TASK_ATTACHMENT, handleSaveTaskAttachment);
   ipcMain.handle(TEAM_GET_TASK_ATTACHMENT, handleGetTaskAttachment);
@@ -238,27 +160,13 @@ export function removeTeamHandlers(ipcMain: IpcMain): void {
   ipcMain.removeHandler(TEAM_SET_PROJECT_BRANCH_TRACKING);
   ipcMain.removeHandler(TEAM_SET_TASK_LOG_STREAM_TRACKING);
   ipcMain.removeHandler(TEAM_SET_TOOL_ACTIVITY_TRACKING);
-  ipcMain.removeHandler(TEAM_GET_CLAUDE_LOGS);
   ipcMain.removeHandler(TEAM_GET_WORKTREE_GIT_STATUS);
   ipcMain.removeHandler(TEAM_INITIALIZE_GIT_REPOSITORY);
   ipcMain.removeHandler(TEAM_CREATE_INITIAL_GIT_COMMIT);
   ipcMain.removeHandler(TEAM_DELETE_TEAM);
   ipcMain.removeHandler(TEAM_RESTORE);
   ipcMain.removeHandler(TEAM_PERMANENTLY_DELETE);
-  ipcMain.removeHandler(TEAM_ALIVE_LIST);
-  ipcMain.removeHandler(TEAM_STOP);
-  ipcMain.removeHandler(TEAM_GET_MEMBER_LOGS);
-  ipcMain.removeHandler(TEAM_GET_LOGS_FOR_TASK);
-  ipcMain.removeHandler(TEAM_GET_MEMBER_STATS);
   ipcMain.removeHandler(TEAM_GET_PROJECT_BRANCH);
-  ipcMain.removeHandler(TEAM_KILL_PROCESS);
-  ipcMain.removeHandler(TEAM_LEAD_ACTIVITY);
-  ipcMain.removeHandler(TEAM_LEAD_CONTEXT);
-  ipcMain.removeHandler(TEAM_MEMBER_SPAWN_STATUSES);
-  ipcMain.removeHandler(TEAM_GET_AGENT_RUNTIME);
-  ipcMain.removeHandler(TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES);
-  ipcMain.removeHandler(TEAM_RESTART_MEMBER);
-  ipcMain.removeHandler(TEAM_SKIP_MEMBER_FOR_LAUNCH);
   ipcMain.removeHandler(TEAM_SHOW_MESSAGE_NOTIFICATION);
   ipcMain.removeHandler(TEAM_SAVE_TASK_ATTACHMENT);
   ipcMain.removeHandler(TEAM_GET_TASK_ATTACHMENT);
@@ -272,39 +180,11 @@ function getTeamDataService(): TeamDataService {
   return teamDataService;
 }
 
-function getTeamRuntimeApi(): TeamRuntimeApi {
+function getTeamRuntimeApi(): Pick<TeamRuntimeApi, 'stopTeam'> {
   if (!teamRuntimeApi) {
     throw new Error('Team runtime handlers are not initialized');
   }
   return teamRuntimeApi;
-}
-
-function getTeamMemberLifecycleApi(): TeamMemberLifecycleApi {
-  if (!teamMemberLifecycleApi) {
-    throw new Error('Team member lifecycle handlers are not initialized');
-  }
-  return teamMemberLifecycleApi;
-}
-
-function getTeamDiagnosticsApi(): TeamDiagnosticsApi {
-  if (!teamDiagnosticsApi) {
-    throw new Error('Team diagnostics handlers are not initialized');
-  }
-  return teamDiagnosticsApi;
-}
-
-function getTeamClaudeLogsApi(): TeamClaudeLogsApi {
-  if (!teamClaudeLogsApi) {
-    throw new Error('Team log handlers are not initialized');
-  }
-  return teamClaudeLogsApi;
-}
-
-function getTeamMessagingApi(): TeamMessagingApi {
-  if (!teamMessagingApi) {
-    throw new Error('Team messaging handlers are not initialized');
-  }
-  return teamMessagingApi;
 }
 
 function getTeammateToolTracker(): TeammateToolTracker {
@@ -547,320 +427,6 @@ async function handlePermanentlyDeleteTeam(
     // Mark in backup registry AFTER successful deletion
     if (teamBackupService) {
       await teamBackupService.markDeletedByUser(validated.value!);
-    }
-  });
-}
-
-async function handleGetClaudeLogs(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  query?: unknown
-): Promise<IpcResult<TeamClaudeLogsResponse>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-
-  let parsed: TeamClaudeLogsQuery | undefined;
-  if (query !== undefined) {
-    if (!query || typeof query !== 'object') {
-      return { success: false, error: 'query must be an object' };
-    }
-    const q = query as Record<string, unknown>;
-    parsed = {
-      offset: typeof q.offset === 'number' ? q.offset : undefined,
-      limit: typeof q.limit === 'number' ? q.limit : undefined,
-    };
-  }
-
-  return wrapTeamHandler('getClaudeLogs', async () => {
-    const data = await getTeamClaudeLogsApi().getClaudeLogs(validated.value!, parsed);
-    return {
-      lines: data.lines,
-      total: data.total,
-      hasMore: data.hasMore,
-      updatedAt: data.updatedAt,
-    };
-  });
-}
-
-function getTeamMemberLogsFinder(): TeamMemberLogsFinder {
-  if (!teamMemberLogsFinder) {
-    throw new Error('Team member logs finder is not initialized');
-  }
-  return teamMemberLogsFinder;
-}
-
-async function handleGetMemberLogs(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  memberName: unknown
-): Promise<IpcResult<MemberLogSummary[]>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) {
-    return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  }
-  const vMember = validateMemberName(memberName);
-  if (!vMember.valid) {
-    return { success: false, error: vMember.error ?? 'Invalid memberName' };
-  }
-  return wrapTeamHandler('getMemberLogs', () =>
-    getTeamMemberLogsFinder().findMemberLogs(vTeam.value!, vMember.value!)
-  );
-}
-
-async function handleGetLogsForTask(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  taskId: unknown,
-  options?: {
-    owner?: string;
-    status?: string;
-    intervals?: { startedAt: string; completedAt?: string }[];
-    since?: string;
-  }
-): Promise<IpcResult<MemberLogSummary[]>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) {
-    return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  }
-  const vTask = validateTaskId(taskId);
-  if (!vTask.valid) {
-    return { success: false, error: vTask.error ?? 'Invalid taskId' };
-  }
-  const opts =
-    options && typeof options === 'object'
-      ? {
-          owner: typeof options.owner === 'string' ? options.owner : undefined,
-          status: typeof options.status === 'string' ? options.status : undefined,
-          since: typeof options.since === 'string' ? options.since : undefined,
-          intervals: Array.isArray(options.intervals)
-            ? (options.intervals as unknown[]).filter(
-                (i): i is { startedAt: string; completedAt?: string } =>
-                  Boolean(i) &&
-                  typeof i === 'object' &&
-                  typeof (i as Record<string, unknown>).startedAt === 'string' &&
-                  ((i as Record<string, unknown>).completedAt === undefined ||
-                    typeof (i as Record<string, unknown>).completedAt === 'string')
-              )
-            : undefined,
-        }
-      : undefined;
-  // Prefer worker thread to keep main event loop responsive.
-  // Call worker directly (not via wrapTeamHandler) so that failures
-  // propagate to the catch block and trigger the main-thread fallback.
-  const worker = getTeamDataWorkerClient();
-  if (worker.isAvailable()) {
-    try {
-      const result = await worker.findLogsForTask(vTeam.value!, vTask.value!, opts);
-      return { success: true, data: result };
-    } catch (workerErr) {
-      const fatalError = getFatalTeamDataWorkerFailureMessage(workerErr);
-      if (fatalError) {
-        return { success: false, error: fatalError };
-      }
-      logger.warn(
-        `[teams:getLogsForTask] worker failed, falling back: ${getWorkerErrorMessage(workerErr)}`
-      );
-    }
-  }
-  return wrapTeamHandler('getLogsForTask', () =>
-    getTeamMemberLogsFinder().findLogsForTask(vTeam.value!, vTask.value!, opts)
-  );
-}
-
-function getMemberStatsComputer(): MemberStatsComputer {
-  if (!memberStatsComputer) {
-    throw new Error('Member stats computer is not initialized');
-  }
-  return memberStatsComputer;
-}
-
-async function handleGetMemberStats(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  memberName: unknown
-): Promise<IpcResult<MemberFullStats>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) {
-    return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  }
-  const vMember = validateMemberName(memberName);
-  if (!vMember.valid) {
-    return { success: false, error: vMember.error ?? 'Invalid memberName' };
-  }
-  return wrapTeamHandler('getMemberStats', () =>
-    getMemberStatsComputer().getStats(vTeam.value!, vMember.value!)
-  );
-}
-
-async function handleAliveList(_event: IpcMainInvokeEvent): Promise<IpcResult<string[]>> {
-  return wrapTeamHandler('aliveList', async () => getTeamRuntimeApi().getAliveTeams());
-}
-
-async function handleLeadActivity(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<LeadActivitySnapshot>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  return wrapTeamHandler('leadActivity', async () =>
-    getTeamDiagnosticsApi().getLeadActivityState(validated.value!)
-  );
-}
-
-async function handleLeadContext(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<LeadContextUsageSnapshot>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  return wrapTeamHandler('leadContext', async () =>
-    getTeamDiagnosticsApi().getLeadContextUsage(validated.value!)
-  );
-}
-
-async function handleMemberSpawnStatuses(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<MemberSpawnStatusesSnapshot>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  return wrapTeamHandler('memberSpawnStatuses', async () =>
-    getTeamMemberLifecycleApi().getMemberSpawnStatuses(validated.value!)
-  );
-}
-
-async function handleGetAgentRuntime(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<TeamAgentRuntimeSnapshot>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  return wrapTeamHandler('getAgentRuntime', async () =>
-    getTeamDiagnosticsApi().getTeamAgentRuntimeSnapshot(validated.value!)
-  );
-}
-
-async function handleRestartMember(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  memberName: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-  const validatedMemberName = validateMemberName(memberName);
-  if (!validatedMemberName.valid) {
-    return { success: false, error: validatedMemberName.error ?? 'Invalid memberName' };
-  }
-  return wrapTeamHandler('restartMember', async () => {
-    try {
-      await getTeamMemberLifecycleApi().restartMember(
-        validatedTeamName.value!,
-        validatedMemberName.value!
-      );
-    } finally {
-      getTeamDataService().invalidateMessageFeed(validatedTeamName.value!);
-    }
-  });
-}
-
-async function handleRetryFailedOpenCodeSecondaryLanes(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<RetryFailedOpenCodeSecondaryLanesResult>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-  return wrapTeamHandler('retryFailedOpenCodeSecondaryLanes', async () =>
-    getTeamMemberLifecycleApi().retryFailedOpenCodeSecondaryLanes(validatedTeamName.value!)
-  );
-}
-
-async function handleSkipMemberForLaunch(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  memberName: unknown
-): Promise<IpcResult<void>> {
-  const validatedTeamName = validateTeamName(teamName);
-  if (!validatedTeamName.valid) {
-    return { success: false, error: validatedTeamName.error ?? 'Invalid teamName' };
-  }
-  const validatedMemberName = validateMemberName(memberName);
-  if (!validatedMemberName.valid) {
-    return { success: false, error: validatedMemberName.error ?? 'Invalid memberName' };
-  }
-  return wrapTeamHandler('skipMemberForLaunch', async () =>
-    getTeamMemberLifecycleApi().skipMemberForLaunch(
-      validatedTeamName.value!,
-      validatedMemberName.value!
-    )
-  );
-}
-
-async function handleStopTeam(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown
-): Promise<IpcResult<void>> {
-  const validated = validateTeamName(teamName);
-  if (!validated.valid) {
-    return { success: false, error: validated.error ?? 'Invalid teamName' };
-  }
-  return wrapTeamHandler('stop', async () => {
-    addMainBreadcrumb('team', 'stop', { teamName: validated.value! });
-    await getTeamRuntimeApi().stopTeam(validated.value!);
-  });
-}
-
-async function handleKillProcess(
-  _event: IpcMainInvokeEvent,
-  teamName: unknown,
-  pid: unknown
-): Promise<IpcResult<void>> {
-  const vTeam = validateTeamName(teamName);
-  if (!vTeam.valid) return { success: false, error: vTeam.error ?? 'Invalid teamName' };
-  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
-    return { success: false, error: 'pid must be a positive integer' };
-  }
-  return wrapTeamHandler('killProcess', async () => {
-    const tn = vTeam.value!;
-    const pidNum = pid;
-
-    // Read process label before killing (for notification message)
-    let processLabel = `PID ${pidNum}`;
-    try {
-      const data = await getTeamDataService().getTeamData(tn);
-      const proc = data.processes?.find((p) => p.pid === pidNum);
-      if (proc) {
-        processLabel = proc.label + (proc.port != null ? ` (:${proc.port})` : '');
-      }
-    } catch {
-      // best-effort label lookup
-    }
-
-    await getTeamDataService().killProcess(tn, pidNum);
-
-    // Notify the team lead about the killed process
-    if (getTeamRuntimeApi().isTeamAlive(tn)) {
-      const message =
-        `Process "${processLabel}" (PID ${pidNum}) has been stopped by the user from the UI. ` +
-        `You may need to restart it if it was still needed.`;
-      try {
-        await getTeamMessagingApi().sendMessageToTeam(tn, message);
-      } catch {
-        logger.warn(`Failed to notify lead about killed process ${pidNum} in ${tn}`);
-      }
     }
   });
 }

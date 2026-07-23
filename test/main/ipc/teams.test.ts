@@ -159,6 +159,11 @@ import {
   removeTeamRosterMutationIpc,
 } from '../../../src/features/team-roster-mutations/main';
 import {
+  createTeamRuntimeOperationsFeature,
+  registerTeamRuntimeOperationsIpc,
+  removeTeamRuntimeOperationsIpc,
+} from '../../../src/features/team-runtime-operations/main';
+import {
   createTeamTaskBoardFeature,
   registerTeamTaskBoardIpc,
   removeTeamTaskBoardIpc,
@@ -407,6 +412,23 @@ const TEAM_ROSTER_MUTATION_HANDLER_KEYS = [
   TEAM_UPDATE_MEMBER_ROLE,
 ] as const;
 const TEAM_ROSTER_MUTATION_HANDLER_KEY_SET = new Set<string>(TEAM_ROSTER_MUTATION_HANDLER_KEYS);
+const TEAM_RUNTIME_OPERATION_HANDLER_KEYS = [
+  TEAM_GET_CLAUDE_LOGS,
+  TEAM_GET_MEMBER_LOGS,
+  TEAM_GET_LOGS_FOR_TASK,
+  TEAM_GET_MEMBER_STATS,
+  TEAM_ALIVE_LIST,
+  TEAM_LEAD_ACTIVITY,
+  TEAM_LEAD_CONTEXT,
+  TEAM_MEMBER_SPAWN_STATUSES,
+  TEAM_GET_AGENT_RUNTIME,
+  TEAM_RESTART_MEMBER,
+  TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES,
+  TEAM_SKIP_MEMBER_FOR_LAUNCH,
+  TEAM_STOP,
+  TEAM_KILL_PROCESS,
+] as const;
+const TEAM_RUNTIME_OPERATION_HANDLER_KEY_SET = new Set<string>(TEAM_RUNTIME_OPERATION_HANDLER_KEYS);
 const TEAM_HANDLER_KEYS = ALL_TEAM_HANDLER_KEYS.filter(
   (channel) =>
     !TEAM_TASK_BOARD_HANDLER_KEY_SET.has(channel) &&
@@ -414,7 +436,8 @@ const TEAM_HANDLER_KEYS = ALL_TEAM_HANDLER_KEYS.filter(
     !TEAM_CONFIGURATION_HANDLER_KEY_SET.has(channel) &&
     !TEAM_MESSAGE_DELIVERY_HANDLER_KEY_SET.has(channel) &&
     !TEAM_PROVISIONING_HANDLER_KEY_SET.has(channel) &&
-    !TEAM_ROSTER_MUTATION_HANDLER_KEY_SET.has(channel)
+    !TEAM_ROSTER_MUTATION_HANDLER_KEY_SET.has(channel) &&
+    !TEAM_RUNTIME_OPERATION_HANDLER_KEY_SET.has(channel)
 );
 
 describe('ipc teams handlers', () => {
@@ -436,6 +459,7 @@ describe('ipc teams handlers', () => {
   const teamMessageDeliveryLogger = createLogger('IPC:teams');
   const teamProvisioningLogger = { error: vi.fn() };
   const teamRosterMutationLogger = { error: vi.fn(), warn: vi.fn() };
+  const teamRuntimeOperationsLogger = { error: vi.fn(), warn: vi.fn() };
   let launchIoGovernor: LaunchIoGovernor;
 
   const service = {
@@ -816,9 +840,7 @@ describe('ipc teams handlers', () => {
     launchIoGovernor = new LaunchIoGovernor({ quietWindowMs: 100 });
     initializeTeamHandlers(
       service as never,
-      teamHandlerApis,
-      teamMemberLogsFinder as never,
-      memberStatsComputer as never,
+      teamHandlerApis.runtime,
       undefined,
       undefined,
       undefined,
@@ -826,6 +848,18 @@ describe('ipc teams handlers', () => {
       launchIoGovernor
     );
     registerTeamHandlers(ipcMain as never);
+    const teamRuntimeOperationsFeature = createTeamRuntimeOperationsFeature({
+      data: service as never,
+      runtime: teamHandlerApis.runtime,
+      lifecycle: teamHandlerApis.memberLifecycle,
+      diagnostics: teamHandlerApis.diagnostics,
+      claudeLogs: teamHandlerApis.claudeLogs,
+      messaging: teamHandlerApis.messaging,
+      logsFinder: teamMemberLogsFinder as never,
+      statsComputer: memberStatsComputer as never,
+      logger: teamRuntimeOperationsLogger,
+    });
+    registerTeamRuntimeOperationsIpc(ipcMain as never, teamRuntimeOperationsFeature);
     const teamConfigurationFeature = createTeamConfigurationFeature({
       repository: service as never,
       runtime: teamHandlerApis.runtime,
@@ -915,6 +949,9 @@ describe('ipc teams handlers', () => {
     for (const channel of TEAM_ROSTER_MUTATION_HANDLER_KEYS) {
       expect(legacyChannels.has(channel)).toBe(false);
     }
+    for (const channel of TEAM_RUNTIME_OPERATION_HANDLER_KEYS) {
+      expect(legacyChannels.has(channel)).toBe(false);
+    }
   });
 
   it('preserves legacy TEAM_LIST and wraps canonical success and failure in the IPC result envelope', async () => {
@@ -989,7 +1026,7 @@ describe('ipc teams handlers', () => {
     });
   });
 
-  it('preserves narrow facade receivers when a team handler invokes its runtime dependency', async () => {
+  it('preserves the runtime receiver and adds the stop breadcrumb before stopping', async () => {
     const runtimeCalls: string[] = [];
     const runtimeFacade = {
       ...teamHandlerApis.runtime,
@@ -1000,15 +1037,28 @@ describe('ipc teams handlers', () => {
       },
     };
 
-    initializeTeamHandlers(service as never, {
-      ...teamHandlerApis,
-      runtime: runtimeFacade,
-    });
+    registerTeamRuntimeOperationsIpc(
+      ipcMain as never,
+      createTeamRuntimeOperationsFeature({
+        data: service as never,
+        runtime: runtimeFacade,
+        lifecycle: teamHandlerApis.memberLifecycle,
+        diagnostics: teamHandlerApis.diagnostics,
+        claudeLogs: teamHandlerApis.claudeLogs,
+        messaging: teamHandlerApis.messaging,
+        logsFinder: teamMemberLogsFinder as never,
+        statsComputer: memberStatsComputer as never,
+        logger: teamRuntimeOperationsLogger,
+        effects: {
+          addStopBreadcrumb: () => runtimeCalls.push('breadcrumb'),
+        },
+      })
+    );
 
     const result = await handlers.get(TEAM_STOP)!({} as never, 'my-team');
 
     expect(result).toEqual({ success: true, data: undefined });
-    expect(runtimeCalls).toEqual(['stop:my-team']);
+    expect(runtimeCalls).toEqual(['breadcrumb', 'stop:my-team']);
   });
 
   it('preserves runtime-operation receivers across every dependency boundary', async () => {
@@ -1141,18 +1191,19 @@ describe('ipc teams handlers', () => {
       },
     };
 
-    initializeTeamHandlers(
-      dataFacade as never,
-      {
-        ...teamHandlerApis,
+    registerTeamRuntimeOperationsIpc(
+      ipcMain as never,
+      createTeamRuntimeOperationsFeature({
+        data: dataFacade as never,
         runtime: runtimeFacade,
-        memberLifecycle: lifecycleFacade,
+        lifecycle: lifecycleFacade,
         diagnostics: diagnosticsFacade,
         claudeLogs: claudeLogsFacade,
         messaging: messagingFacade,
-      },
-      logsFacade as never,
-      statsFacade as never
+        logsFinder: logsFacade as never,
+        statsComputer: statsFacade as never,
+        logger: teamRuntimeOperationsLogger,
+      })
     );
 
     await handlers.get(TEAM_GET_CLAUDE_LOGS)!({} as never, 'my-team');
@@ -1165,15 +1216,8 @@ describe('ipc teams handlers', () => {
     await handlers.get(TEAM_MEMBER_SPAWN_STATUSES)!({} as never, 'my-team');
     await handlers.get(TEAM_GET_AGENT_RUNTIME)!({} as never, 'my-team');
     await handlers.get(TEAM_RESTART_MEMBER)!({} as never, 'my-team', 'alice');
-    await handlers.get(TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES)!(
-      {} as never,
-      'my-team'
-    );
-    await handlers.get(TEAM_SKIP_MEMBER_FOR_LAUNCH)!(
-      {} as never,
-      'my-team',
-      'alice'
-    );
+    await handlers.get(TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES)!({} as never, 'my-team');
+    await handlers.get(TEAM_SKIP_MEMBER_FOR_LAUNCH)!({} as never, 'my-team', 'alice');
     await handlers.get(TEAM_STOP)!({} as never, 'my-team');
     await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 123);
 
@@ -1246,11 +1290,7 @@ describe('ipc teams handlers', () => {
       order.push('notify');
     });
 
-    const result = await handlers.get(TEAM_KILL_PROCESS)!(
-      {} as never,
-      'my-team',
-      321
-    );
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 321);
 
     expect(result).toEqual({ success: true, data: undefined });
     expect(order).toEqual(['lookup', 'kill', 'alive', 'notify']);
@@ -1260,17 +1300,19 @@ describe('ipc teams handlers', () => {
     );
   });
 
+  it('rejects an invalid process id before reading or killing a process', async () => {
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 0);
+
+    expect(result).toEqual({ success: false, error: 'pid must be a positive integer' });
+    expect(service.getTeamData).not.toHaveBeenCalled();
+    expect(service.killProcess).not.toHaveBeenCalled();
+  });
+
   it('keeps process label lookup and lead notification best-effort', async () => {
     service.getTeamData.mockRejectedValueOnce(new Error('snapshot unavailable'));
-    teamHandlerMocks.sendMessageToTeam.mockRejectedValueOnce(
-      new Error('notification unavailable')
-    );
+    teamHandlerMocks.sendMessageToTeam.mockRejectedValueOnce(new Error('notification unavailable'));
 
-    const result = await handlers.get(TEAM_KILL_PROCESS)!(
-      {} as never,
-      'my-team',
-      654
-    );
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 654);
 
     expect(result).toEqual({ success: true, data: undefined });
     expect(service.killProcess).toHaveBeenCalledWith('my-team', 654);
@@ -1284,11 +1326,7 @@ describe('ipc teams handlers', () => {
   it('does not check liveness or notify when killing a process fails', async () => {
     service.killProcess.mockRejectedValueOnce(new Error('kill failed'));
 
-    const result = await handlers.get(TEAM_KILL_PROCESS)!(
-      {} as never,
-      'my-team',
-      777
-    );
+    const result = await handlers.get(TEAM_KILL_PROCESS)!({} as never, 'my-team', 777);
 
     expect(result).toEqual({ success: false, error: 'kill failed' });
     expect(teamHandlerMocks.isTeamAlive).not.toHaveBeenCalled();
@@ -2557,7 +2595,9 @@ describe('ipc teams handlers', () => {
         calls.push('help');
         return Promise.resolve('Usage\n  --max-turns <count>');
       },
-      prepareForProvisioning(...args: Parameters<TeamIpcHandlerApis['preflight']['prepareForProvisioning']>) {
+      prepareForProvisioning(
+        ...args: Parameters<TeamIpcHandlerApis['preflight']['prepareForProvisioning']>
+      ) {
         if (this !== preflight) throw new Error('preflight receiver lost');
         calls.push('prepare');
         expect(args[0]).toBe(os.tmpdir());
@@ -2710,24 +2750,27 @@ describe('ipc teams handlers', () => {
   it.each([
     { channel: TEAM_CREATE, api: 'createTeam' as const, teamName: 'failed-cache-create' },
     { channel: TEAM_LAUNCH, api: 'launchTeam' as const, teamName: 'failed-cache-launch' },
-  ])('does not invalidate roster snapshots after failed $channel', async ({ channel, api, teamName }) => {
-    teamHandlerMocks[api].mockRejectedValueOnce(new Error('provisioning failed'));
+  ])(
+    'does not invalidate roster snapshots after failed $channel',
+    async ({ channel, api, teamName }) => {
+      teamHandlerMocks[api].mockRejectedValueOnce(new Error('provisioning failed'));
 
-    const result = await handlers.get(channel)!({ sender: { send: vi.fn() } } as never, {
-      teamName,
-      members: [{ name: 'alice' }],
-      cwd: os.tmpdir(),
-    });
+      const result = await handlers.get(channel)!({ sender: { send: vi.fn() } } as never, {
+        teamName,
+        members: [{ name: 'alice' }],
+        cwd: os.tmpdir(),
+      });
 
-    expect(result).toEqual({ success: false, error: 'provisioning failed' });
-    expect(service.invalidateMessageFeed).not.toHaveBeenCalledWith(teamName);
-    expect(service.invalidateTeamRuntimeAdvisories).not.toHaveBeenCalledWith(teamName);
-    expect(mockTeamDataWorkerClient.invalidateTeamConfig).not.toHaveBeenCalledWith(teamName);
-    expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).not.toHaveBeenCalledWith(
-      teamName
-    );
-    vi.mocked(console.error).mockClear();
-  });
+      expect(result).toEqual({ success: false, error: 'provisioning failed' });
+      expect(service.invalidateMessageFeed).not.toHaveBeenCalledWith(teamName);
+      expect(service.invalidateTeamRuntimeAdvisories).not.toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateTeamConfig).not.toHaveBeenCalledWith(teamName);
+      expect(mockTeamDataWorkerClient.invalidateMemberRuntimeAdvisory).not.toHaveBeenCalledWith(
+        teamName
+      );
+      vi.mocked(console.error).mockClear();
+    }
+  );
 
   it('returns cached TEAM_LIST data under active launch pressure without starting another scan', async () => {
     const first = (await handlers.get(TEAM_LIST)!({} as never)) as {
@@ -3649,6 +3692,7 @@ describe('ipc teams handlers', () => {
 
   it('does not fall back TEAM_GET_LOGS_FOR_TASK to main after worker OOM', async () => {
     mockTeamDataWorkerClient.isAvailable.mockReturnValue(true);
+    teamRuntimeOperationsLogger.error.mockClear();
     mockTeamDataWorkerClient.findLogsForTask.mockRejectedValueOnce(
       new Error('Worker terminated due to reaching memory limit: JS heap out of memory')
     );
@@ -3663,6 +3707,7 @@ describe('ipc teams handlers', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('TEAM_DATA_WORKER_FAILED');
     expect(teamMemberLogsFinder.findLogsForTask).not.toHaveBeenCalled();
+    expect(teamRuntimeOperationsLogger.error).not.toHaveBeenCalled();
   });
 
   it('returns TEAM_GET_LOGS_FOR_TASK worker results without a main-thread scan', async () => {
@@ -3671,46 +3716,37 @@ describe('ipc teams handlers', () => {
       { memberName: 'worker-result' },
     ]);
 
-    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!(
-      {} as never,
-      'my-team',
-      'task-1',
-      {
-        owner: 42,
-        status: 'in_progress',
-        since: '2026-07-22T10:00:00.000Z',
-        intervals: [
-          { startedAt: '2026-07-22T09:00:00.000Z' },
-          null,
-          { startedAt: '2026-07-22T09:30:00.000Z', completedAt: 42 },
-          {
-            startedAt: '2026-07-22T10:00:00.000Z',
-            completedAt: '2026-07-22T11:00:00.000Z',
-          },
-        ],
-      }
-    );
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1', {
+      owner: 42,
+      status: 'in_progress',
+      since: '2026-07-22T10:00:00.000Z',
+      intervals: [
+        { startedAt: '2026-07-22T09:00:00.000Z' },
+        null,
+        { startedAt: '2026-07-22T09:30:00.000Z', completedAt: 42 },
+        {
+          startedAt: '2026-07-22T10:00:00.000Z',
+          completedAt: '2026-07-22T11:00:00.000Z',
+        },
+      ],
+    });
 
     expect(result).toEqual({
       success: true,
       data: [{ memberName: 'worker-result' }],
     });
-    expect(mockTeamDataWorkerClient.findLogsForTask).toHaveBeenCalledWith(
-      'my-team',
-      'task-1',
-      {
-        owner: undefined,
-        status: 'in_progress',
-        since: '2026-07-22T10:00:00.000Z',
-        intervals: [
-          { startedAt: '2026-07-22T09:00:00.000Z' },
-          {
-            startedAt: '2026-07-22T10:00:00.000Z',
-            completedAt: '2026-07-22T11:00:00.000Z',
-          },
-        ],
-      }
-    );
+    expect(mockTeamDataWorkerClient.findLogsForTask).toHaveBeenCalledWith('my-team', 'task-1', {
+      owner: undefined,
+      status: 'in_progress',
+      since: '2026-07-22T10:00:00.000Z',
+      intervals: [
+        { startedAt: '2026-07-22T09:00:00.000Z' },
+        {
+          startedAt: '2026-07-22T10:00:00.000Z',
+          completedAt: '2026-07-22T11:00:00.000Z',
+        },
+      ],
+    });
     expect(teamMemberLogsFinder.findLogsForTask).not.toHaveBeenCalled();
   });
 
@@ -3720,11 +3756,7 @@ describe('ipc teams handlers', () => {
       { memberName: 'main-result' },
     ] as never);
 
-    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!(
-      {} as never,
-      'my-team',
-      'task-1'
-    );
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1');
 
     expect(result).toEqual({
       success: true,
@@ -3747,11 +3779,7 @@ describe('ipc teams handlers', () => {
       { memberName: 'fallback-result' },
     ] as never);
 
-    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!(
-      {} as never,
-      'my-team',
-      'task-1'
-    );
+    const result = await handlers.get(TEAM_GET_LOGS_FOR_TASK)!({} as never, 'my-team', 'task-1');
 
     expect(result).toEqual({
       success: true,
@@ -3770,11 +3798,11 @@ describe('ipc teams handlers', () => {
       internalCursor: 'do-not-expose',
     } as never);
 
-    const result = await handlers.get(TEAM_GET_CLAUDE_LOGS)!(
-      {} as never,
-      'my-team',
-      { offset: 2, limit: 1, ignored: true }
-    );
+    const result = await handlers.get(TEAM_GET_CLAUDE_LOGS)!({} as never, 'my-team', {
+      offset: 2,
+      limit: 1,
+      ignored: true,
+    });
 
     expect(result).toEqual({
       success: true,
@@ -6340,6 +6368,7 @@ describe('ipc teams handlers', () => {
     removeTeamMessageDeliveryIpc(ipcMain as never);
     removeTeamProvisioningIpc(ipcMain as never);
     removeTeamRosterMutationIpc(ipcMain as never);
+    removeTeamRuntimeOperationsIpc(ipcMain as never);
     removeTeamViewReadModelIpc(ipcMain as never);
     removeTeamTaskBoardIpc(ipcMain as never);
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(ALL_TEAM_HANDLER_KEYS.length);
@@ -6857,10 +6886,10 @@ describe('ipc teams handlers', () => {
         });
         teamHandlerMocks.createTeam.mockRejectedValueOnce(new Error('draft launch failed'));
 
-        const result = (await handlers.get(TEAM_LAUNCH)!(
-          { sender: { send: vi.fn() } } as never,
-          { teamName: 'draft-error', cwd: os.tmpdir() }
-        )) as { success: boolean; error?: string };
+        const result = (await handlers.get(TEAM_LAUNCH)!({ sender: { send: vi.fn() } } as never, {
+          teamName: 'draft-error',
+          cwd: os.tmpdir(),
+        })) as { success: boolean; error?: string };
 
         expect(result).toEqual({ success: false, error: 'draft launch failed' });
         expect(teamProvisioningLogger.error).toHaveBeenCalledWith(

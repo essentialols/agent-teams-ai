@@ -44,6 +44,11 @@ import {
   removeTeamRosterMutationIpc,
 } from '@features/team-roster-mutations/main';
 import {
+  createTeamRuntimeOperationsFeature,
+  registerTeamRuntimeOperationsIpc,
+  removeTeamRuntimeOperationsIpc,
+} from '@features/team-runtime-operations/main';
+import {
   createTeamTaskBoardFeature,
   registerTeamTaskBoardIpc,
   removeTeamTaskBoardIpc,
@@ -180,6 +185,7 @@ const teamConfigurationLogger = createLogger('IPC:teams');
 const teamMessageDeliveryLogger = createLogger('IPC:teams');
 const teamProvisioningLogger = createLogger('IPC:teams');
 const teamRosterMutationLogger = createLogger('IPC:teams');
+const teamRuntimeOperationsLogger = createLogger('IPC:teams');
 
 /**
  * Initializes IPC handlers with service registry.
@@ -276,6 +282,17 @@ export function initializeIpcHandlers(
     launchIoGovernor,
     logger: teamProvisioningLogger,
   });
+  const teamRuntimeOperationsFeature = createTeamRuntimeOperationsFeature({
+    data: teamDataService,
+    runtime: teamHandlerApis.runtime,
+    lifecycle: teamHandlerApis.memberLifecycle,
+    diagnostics: teamHandlerApis.diagnostics,
+    claudeLogs: teamHandlerApis.claudeLogs,
+    messaging: teamHandlerApis.messaging,
+    logsFinder: teamMemberLogsFinder,
+    statsComputer: memberStatsComputer,
+    logger: teamRuntimeOperationsLogger,
+  });
 
   // Initialize domain handlers with registry
   initializeProjectHandlers(registry);
@@ -287,9 +304,7 @@ export function initializeIpcHandlers(
   initializeContextHandlers(registry, contextCallbacks.rewire);
   initializeTeamHandlers(
     teamDataService,
-    teamHandlerApis,
-    teamMemberLogsFinder,
-    memberStatsComputer,
+    teamHandlerApis.runtime,
     teamBackupService,
     teammateToolTracker,
     teamLogSourceTracker,
@@ -352,6 +367,7 @@ export function initializeIpcHandlers(
   registerSshHandlers(ipcMain);
   registerContextHandlers(ipcMain);
   registerTeamHandlers(ipcMain);
+  registerTeamRuntimeOperationsIpc(ipcMain, teamRuntimeOperationsFeature);
   registerTeamProvisioningIpc(ipcMain, teamProvisioningFeature);
   registerTeamConfigurationIpc(ipcMain, teamConfigurationFeature);
   registerTeamMessageDeliveryIpc(ipcMain, teamMessageDeliveryFeature);
@@ -420,6 +436,7 @@ export function removeIpcHandlers(): void {
   removeSshHandlers(ipcMain);
   removeContextHandlers(ipcMain);
   removeTeamHandlers(ipcMain);
+  removeTeamRuntimeOperationsIpc(ipcMain);
   removeTeamProvisioningIpc(ipcMain);
   removeTeamConfigurationIpc(ipcMain);
   removeTeamMessageDeliveryIpc(ipcMain);

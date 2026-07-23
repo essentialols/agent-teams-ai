@@ -251,9 +251,6 @@ export const TEAM_SET_TOOL_ACTIVITY_TRACKING = 'team:setToolActivityTracking';
 /** Enable or disable task log stream invalidation tracking for an open task log panel */
 export const TEAM_SET_TASK_LOG_STREAM_TRACKING = 'team:setTaskLogStreamTracking';
 
-/** Get buffered Claude CLI logs (paged, newest-first) */
-export const TEAM_GET_CLAUDE_LOGS = 'team:getClaudeLogs';
-
 /** Team change events (main -> renderer) */
 export const TEAM_CHANGE = 'team:change';
 
@@ -296,16 +293,6 @@ export const TEAM_RESTORE = 'team:restoreTeam';
 /** Permanently delete a team and its associated task directory */
 export const TEAM_PERMANENTLY_DELETE = 'team:permanentlyDeleteTeam';
 
-/** Get list of teams with live CLI processes */
-export const TEAM_ALIVE_LIST = 'team:aliveList';
-export const TEAM_STOP = 'team:stop';
-
-/** Get member subagent logs */
-export const TEAM_GET_MEMBER_LOGS = 'team:getMemberLogs';
-
-/** Get session logs that reference a task */
-export const TEAM_GET_LOGS_FOR_TASK = 'team:getLogsForTask';
-
 export {
   TEAM_GET_TASK_ACTIVITY,
   TEAM_GET_TASK_ACTIVITY_DETAIL,
@@ -314,9 +301,22 @@ export {
   TEAM_GET_TASK_LOG_STREAM,
   TEAM_GET_TASK_LOG_STREAM_SUMMARY,
 } from '@features/task-log-observability/contracts';
-
-/** Get aggregated member stats */
-export const TEAM_GET_MEMBER_STATS = 'team:getMemberStats';
+export {
+  TEAM_ALIVE_LIST,
+  TEAM_GET_AGENT_RUNTIME,
+  TEAM_GET_CLAUDE_LOGS,
+  TEAM_GET_LOGS_FOR_TASK,
+  TEAM_GET_MEMBER_LOGS,
+  TEAM_GET_MEMBER_STATS,
+  TEAM_KILL_PROCESS,
+  TEAM_LEAD_ACTIVITY,
+  TEAM_LEAD_CONTEXT,
+  TEAM_MEMBER_SPAWN_STATUSES,
+  TEAM_RESTART_MEMBER,
+  TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES,
+  TEAM_SKIP_MEMBER_FOR_LAUNCH,
+  TEAM_STOP,
+} from '@features/team-runtime-operations/contracts';
 
 /** Get current git branch for a project path (live read from .git/HEAD) */
 export const TEAM_GET_PROJECT_BRANCH = 'team:getProjectBranch';
@@ -334,30 +334,6 @@ export {
   TEAM_RESTORE_MEMBER,
   TEAM_UPDATE_MEMBER_ROLE,
 } from '@features/team-roster-mutations/contracts';
-
-/** Kill a registered CLI process by PID */
-export const TEAM_KILL_PROCESS = 'team:killProcess';
-
-/** Get lead process activity state (active/idle/offline) */
-export const TEAM_LEAD_ACTIVITY = 'team:leadActivity';
-
-/** Get lead process context window usage */
-export const TEAM_LEAD_CONTEXT = 'team:leadContext';
-
-/** Get per-member spawn statuses for a team */
-export const TEAM_MEMBER_SPAWN_STATUSES = 'team:memberSpawnStatuses';
-
-/** Get live per-agent runtime stats for a team */
-export const TEAM_GET_AGENT_RUNTIME = 'team:getAgentRuntime';
-
-/** Restart a specific teammate runtime */
-export const TEAM_RESTART_MEMBER = 'team:restartMember';
-
-/** Retry failed OpenCode-owned secondary runtime lanes */
-export const TEAM_RETRY_FAILED_OPENCODE_SECONDARY_LANES = 'team:retryFailedOpenCodeSecondaryLanes';
-
-/** Skip a failed teammate for the current launch */
-export const TEAM_SKIP_MEMBER_FOR_LAUNCH = 'team:skipMemberForLaunch';
 
 /** Show native OS notification for a team message */
 export const TEAM_SHOW_MESSAGE_NOTIFICATION = 'team:showMessageNotification';

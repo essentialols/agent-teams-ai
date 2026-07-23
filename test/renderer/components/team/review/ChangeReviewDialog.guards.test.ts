@@ -538,7 +538,7 @@ describe('ChangeReviewDialog interaction guards', () => {
   it('keeps ordered review history beyond the former ten-action limit', () => {
     const actions = Array.from({ length: 100 }, (_, index) => `action-${index}`);
     let stack: string[] = [];
-    for (const action of actions) stack = appendOrderedReviewAction(stack, action, 10);
+    for (const action of actions) stack = appendOrderedReviewAction(stack, action);
     expect(stack).toEqual(actions);
   });
 

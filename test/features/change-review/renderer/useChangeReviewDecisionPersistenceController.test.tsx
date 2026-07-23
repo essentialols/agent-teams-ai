@@ -118,7 +118,10 @@ describe('useChangeReviewDecisionPersistenceController', () => {
     };
     const port = makePort(snapshotRef);
     const refresh = vi.fn(async () => {});
-    const render = async (snapshot: ChangeReviewDecisionPersistenceSnapshot, autoActive: boolean) => {
+    const render = async (
+      snapshot: ChangeReviewDecisionPersistenceSnapshot,
+      autoActive: boolean
+    ) => {
       snapshotRef.current = snapshot;
       await act(async () => {
         root.render(
@@ -144,7 +147,7 @@ describe('useChangeReviewDecisionPersistenceController', () => {
 
     const changedIdentity = {
       ...snapshotRef.current,
-      hunkDecisions: { h: 'accepted' },
+      hunkDecisions: { h: 'accepted' as const },
     };
     await render(changedIdentity, true);
     expect(port.schedule).toHaveBeenCalledTimes(1);
@@ -264,10 +267,7 @@ describe('useChangeReviewDecisionPersistenceController', () => {
     };
     const port = makePort(snapshotRef);
     const refresh = vi.fn(async () => {});
-    const render = async (
-      snapshot: ChangeReviewDecisionPersistenceSnapshot,
-      hasState: boolean
-    ) => {
+    const render = async (snapshot: ChangeReviewDecisionPersistenceSnapshot, hasState: boolean) => {
       snapshotRef.current = snapshot;
       await act(async () => {
         root.render(
@@ -366,10 +366,7 @@ describe('useChangeReviewDecisionPersistenceController', () => {
     vi.mocked(port.clear)
       .mockImplementationOnce(() => firstClear.promise)
       .mockResolvedValue(true);
-    const render = async (
-      snapshot: ChangeReviewDecisionPersistenceSnapshot,
-      hasState: boolean
-    ) => {
+    const render = async (snapshot: ChangeReviewDecisionPersistenceSnapshot, hasState: boolean) => {
       snapshotRef.current = snapshot;
       await act(async () => {
         root.render(
@@ -407,7 +404,16 @@ describe('useChangeReviewDecisionPersistenceController', () => {
   it('chooses save versus clear for close and reuses a pending clear', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const root = createRoot(document.body.appendChild(document.createElement('div')));
-    const nonempty = makeSnapshot({ reviewActionHistory: [{ id: 'a' }] });
+    const nonempty = makeSnapshot({
+      reviewActionHistory: [
+        {
+          id: 'a',
+          createdAt: '2026-07-23T00:00:00.000Z',
+          kind: 'hunk',
+          action: { filePath: '/repo/file.ts', originalIndex: 0 },
+        },
+      ],
+    });
     const snapshotRef = { current: nonempty };
     const port = makePort(snapshotRef);
     const refresh = vi.fn(async () => {});

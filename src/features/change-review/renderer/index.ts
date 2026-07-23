@@ -9,6 +9,10 @@ export {
 export type { ChangeReviewConflictStateBridge } from './adapters/createChangeReviewConflictStateBridge';
 export { createChangeReviewConflictStateBridge } from './adapters/createChangeReviewConflictStateBridge';
 export { createChangeReviewDraftHistoryPort } from './adapters/createChangeReviewDraftHistoryPort';
+export {
+  createChangeReviewHistoryMutationCommandPort,
+  createChangeReviewHistoryMutationStatePort,
+} from './adapters/createChangeReviewHistoryMutationPorts';
 export type { ChangeReviewActionHistoryController } from './hooks/useChangeReviewActionHistoryController';
 export { useChangeReviewActionHistoryController } from './hooks/useChangeReviewActionHistoryController';
 export type { ChangeReviewConflictDiscoveryController } from './hooks/useChangeReviewConflictDiscoveryController';
@@ -32,6 +36,11 @@ export type {
 export { useChangeReviewDraftHistoryController } from './hooks/useChangeReviewDraftHistoryController';
 export type { ChangeReviewKeyboardEditorContext } from './hooks/useChangeReviewHistoryKeyboardShortcuts';
 export { useChangeReviewHistoryKeyboardShortcuts } from './hooks/useChangeReviewHistoryKeyboardShortcuts';
+export type {
+  ChangeReviewHistoryMutationController,
+  ChangeReviewHistoryRestorePreview,
+} from './hooks/useChangeReviewHistoryMutationController';
+export { useChangeReviewHistoryMutationController } from './hooks/useChangeReviewHistoryMutationController';
 export { useChangeReviewLifecycleRegistration } from './hooks/useChangeReviewLifecycleRegistration';
 export { useChangeReviewOperationGeneration } from './hooks/useChangeReviewOperationGeneration';
 export { useChangeReviewScopeIdentity } from './hooks/useChangeReviewScopeIdentity';
@@ -52,6 +61,14 @@ export type {
   ChangeReviewDraftHistoryScope,
   ChangeReviewDraftHistoryVersion,
 } from './ports/changeReviewDraftHistoryPort';
+export type {
+  ChangeReviewHistoryMutationCommandPort,
+  ChangeReviewHistoryMutationScope,
+  ChangeReviewHistoryMutationStatePort,
+  ChangeReviewHistoryMutationViewPort,
+  ChangeReviewHistoryPersistenceScope,
+  ChangeReviewHistoryStateSnapshot,
+} from './ports/changeReviewHistoryMutationPorts';
 export type {
   RegisterChangeReviewAppCloseParticipant,
   RegisterChangeReviewLifecycleOwner,
@@ -81,6 +98,15 @@ export {
   describeReviewConflictDiscard,
   selectLatestReviewConflictCandidate,
 } from './utils/changeReviewConflicts';
+export type { ReviewHistoryRecoveryDisposition } from './utils/changeReviewHistoryMutation';
+export {
+  areReviewPersistedStatesEqual,
+  classifyReviewHistoryRecovery,
+  createReviewRedoAction,
+  getReviewActionAffectedPaths,
+  getReviewDiskMutationExpectedContent,
+  resolveReviewFile,
+} from './utils/changeReviewHistoryMutation';
 export type {
   BuildChangeReviewScopeProjectionInput,
   ChangeReviewScopeProjection,

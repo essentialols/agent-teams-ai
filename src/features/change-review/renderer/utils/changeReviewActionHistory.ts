@@ -25,11 +25,7 @@ export function createReviewUndoAction(input: ReviewUndoActionInput): ReviewUndo
   } as ReviewUndoAction;
 }
 
-export function appendOrderedReviewAction<T>(
-  stack: readonly T[],
-  action: T,
-  _legacyMaxDepth?: number
-): T[] {
+export function appendOrderedReviewAction<T>(stack: readonly T[], action: T): T[] {
   return [...stack, action];
 }
 

@@ -1,9 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import {
-  useChangeReviewActionHistoryController,
-} from '@features/change-review/renderer';
+import { useChangeReviewActionHistoryController } from '@features/change-review/renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -133,7 +131,7 @@ describe('useChangeReviewActionHistoryController', () => {
     await act(async () => root.unmount());
   });
 
-  it('restores redo only when the exact optimistic top action is discarded', async () => {
+  it('restores redo when a main-bound replacement of the optimistic action is discarded', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const root = createRoot(document.body.appendChild(document.createElement('div')));
     const store = createStore();
@@ -173,13 +171,21 @@ describe('useChangeReviewActionHistoryController', () => {
         />
       );
     });
-    const cloned = { ...optimistic };
-    let discardedClone = true;
+    const unrelated = { ...optimistic, id: 'other-action' };
+    let discardedUnrelated = true;
     await act(async () => {
-      discardedClone = latest!.discardLatestAction(cloned);
+      discardedUnrelated = latest!.discardLatestAction(unrelated);
     });
-    expect(discardedClone).toBe(false);
+    expect(discardedUnrelated).toBe(false);
     expect(store.redo).toEqual([]);
+    const committed = {
+      ...optimistic,
+      action: { filePath: '/repo/file.ts', originalIndex: 7 },
+    } as ReviewUndoAction;
+    await act(async () => {
+      latest!.bindCommittedAction(optimistic, committed);
+    });
+    expect(latest!.getLatestUndoAction()).toBe(committed);
     let discardedOptimistic = false;
     await act(async () => {
       discardedOptimistic = latest!.discardLatestAction(optimistic);

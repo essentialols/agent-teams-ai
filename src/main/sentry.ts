@@ -308,7 +308,9 @@ export function initializeMainSentry(): void {
     return;
   }
 
-  const dsn = process.env.SENTRY_DSN;
+  // Telemetry hard-disabled locally: force an empty DSN so Sentry never initializes.
+  // (Original: const dsn = process.env.SENTRY_DSN;)
+  const dsn = '';
   if (!isValidDsn(dsn)) {
     initFailureReason = null;
     return;

@@ -55,10 +55,9 @@ function normalizeEnvValue(value: unknown): string {
 }
 
 function getPostHogKey(): string {
-  if (typeof __OFFICIAL_POSTHOG_BUILD__ !== 'boolean' || __OFFICIAL_POSTHOG_BUILD__ !== true) {
-    return '';
-  }
-  return normalizeEnvValue(import.meta.env.VITE_POSTHOG_KEY);
+  // Telemetry hard-disabled locally: PostHog never receives a key, so it never initializes.
+  // (Original: gated on __OFFICIAL_POSTHOG_BUILD__ + VITE_POSTHOG_KEY.)
+  return '';
 }
 
 function getPostHogHost(): string {
